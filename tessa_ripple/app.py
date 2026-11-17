@@ -10,7 +10,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.lines import Line2D
+from matplotlib.transforms import IdentityTransform
 from matplotlib.widgets import Button, CheckButtons, RadioButtons, Slider
+from mpl_toolkits.mplot3d import proj3d
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from . import animate as anim
@@ -55,7 +58,7 @@ class App:
             # tier 3: post + animation
             ("Gain", 0.64, 0, 10, 3, None), ("Mask %", 0.61, 0, 100, 100, 1),
             ("Frames", 0.56, 2, 60, 12, 1), ("In-between", 0.53, 0, 30, 8, 1),
-            ("FPS", 0.50, 5, 60, 24, 1),
+            ("Speed (fps)", 0.50, 1, 60, 24, 1),
         ]:
             slider(name, y, lo, hi, init, step)
         self.w["Toggles"] = CheckButtons(fig.add_axes([0.71, 0.38, 0.14, 0.09]),
@@ -75,13 +78,20 @@ class App:
         for name in ("DRR", "Gain", "Mask %", "In-between", "Toggles"):
             w = self.w[name]
             (w.on_clicked if hasattr(w, "on_clicked") else w.on_changed)(self.redraw)
-        self.w["FPS"].on_changed(lambda v: setattr(self.anim.event_source, "interval", 1000 / v))
+        self.w["Speed (fps)"].on_changed(self.set_speed)
+        fig.canvas.mpl_connect("motion_notify_event", self.hover)
 
         self.coll = Poly3DCollection([], facecolor="#9ab8d8", edgecolor="#20304a", lw=0.5, alpha=0.9)
         self.ax.add_collection3d(self.coll)
         lim = 1.6
         self.ax.set(xlim=(-lim, lim), ylim=(-lim, lim), zlim=(-lim, lim), box_aspect=(1, 1, 1))
         self.ax.set_axis_off()
+        # hover readout (paused only), drawn in display pixels over the 3D view
+        px = IdentityTransform()
+        self.marker = fig.add_artist(Line2D([], [], marker="o", ms=9, mfc="none", mec="#d0342c",
+                                            mew=2, transform=px, visible=False))
+        self.tip = fig.text(0, 0, "", transform=px, fontsize=8, family="monospace", visible=False,
+                            bbox=dict(boxstyle="round", fc="white", ec="#888", alpha=0.95))
         self.anim = FuncAnimation(fig, self.tick, interval=1000 / 24, cache_frame_data=False)
         self.quantum_changed()
 
@@ -108,12 +118,14 @@ class App:
         preset = list(PRESETS[shape].items())[["low", "mid", "high"].index(self.val("Resolution"))]
         key = (shape, preset[0], p.encoder_key)
         if self.encoded is None or key != self.enc_key:
+            verts, faces = preset[1]()
             try:
-                self.verts, self.faces = preset[1]()
-                self.encoded, self.enc_key = encode_mesh(self.verts, p), key
-                self.raw = None
+                encoded = encode_mesh(verts, p)
             except ValueError as err:
                 return self.say(f"⚠ {err}")
+            # swap everything together, before say()/flush_events lets a tick draw
+            self.verts, self.faces, self.encoded, self.enc_key = verts, faces, encoded, key
+            self.raw, self.seq, self.idx = None, [verts], 0
         s = self.encoded.stats
         self.info.set_text(f"{shape} {preset[0]}: {len(self.verts)} verts\nlattice {s['lattice']}"
                            f"\nqubits {s['qubits']}\ncapacity {s['used']:.0f}/{s['capacity']}"
@@ -168,6 +180,8 @@ class App:
 
     def draw(self):
         v = self.seq[self.idx]
+        self.tip.set_visible(False)  # mesh moved, so any hover readout is stale
+        self.marker.set_visible(False)
         self.coll.set_verts([v[f] for f in self.faces])
         err = f"  mean err {self.err:.3f}" if self.raw is not None else ""
         self.ax.set_title(f"step {self.idx + 1}/{len(self.seq)}{err}", fontsize=9)
@@ -184,8 +198,44 @@ class App:
 
     def toggle(self, *_):
         self.playing = not self.playing
+        self.hide_tip()
         if self.playing and self.idx + 1 >= len(self.seq):
             self.idx = 0
+
+    def set_speed(self, fps):
+        # macOS timers ignore interval changes while running, so restart the timer
+        timer = self.anim.event_source
+        timer.stop()
+        timer.interval = 1000 / fps
+        timer.start()
+
+    def hide_tip(self):
+        if self.tip.get_visible():
+            self.tip.set_visible(False)
+            self.marker.set_visible(False)
+            self.fig.canvas.draw_idle()
+
+    def hover(self, event):
+        """While paused, show the nearest vertex's original vs current coordinates."""
+        if self.playing or event.inaxes is not self.ax:
+            return self.hide_tip()
+        v = self.seq[self.idx]
+        xs, ys, _ = proj3d.proj_transform(*v.T, self.ax.get_proj())
+        pix = self.ax.transData.transform(np.column_stack([xs, ys]))
+        dist = np.hypot(*(pix - (event.x, event.y)).T)
+        i = int(dist.argmin())
+        if dist[i] > 12:
+            return self.hide_tip()
+        o, n = self.verts[i], v[i]
+        fmt = lambda a: "(" + ", ".join(f"{c:+.4f}" for c in a) + ")"  # noqa: E731
+        self.tip.set_text(f"vertex {i}   (gain {self.val('Gain'):.1f}x, step {self.idx + 1})\n"
+                          f"original {fmt(o)}\ncurrent  {fmt(n)}\n"
+                          f"delta    {fmt(n - o)}\n|delta|  {np.linalg.norm(n - o):.4f}")
+        self.tip.set_position(pix[i] + (14, 6))
+        self.marker.set_data([pix[i][0]], [pix[i][1]])
+        self.tip.set_visible(True)
+        self.marker.set_visible(True)
+        self.fig.canvas.draw_idle()
 
     def say(self, msg):
         self.status.set_text(msg)
@@ -207,7 +257,7 @@ class App:
             self.draw()
 
         FuncAnimation(self.fig, frame, frames=len(self.seq), cache_frame_data=False).save(
-            path, writer=PillowWriter(fps=int(self.val("FPS"))))
+            path, writer=PillowWriter(fps=int(self.val("Speed (fps)"))))
         self.say(f"wrote {path}")
 
 

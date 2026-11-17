@@ -66,7 +66,7 @@ Controls fall into three tiers by how much work a change costs:
 |---|---|---|
 | Encoder | Shape, Resolution, Mode, Clamp θ, Clamp φ, Compression, Quant bits, Headroom | Rebuilds the circuit (milliseconds). Old frames are cleared. |
 | Readout | Backend, Shots, Noise ×, Seed | Needs a new decode: press **Run** or **Run frames**, or tick **Auto-run**. The status line says "frames stale" until you do. |
-| Post / animation | DRR, Gain, Mask %, Frames, In-between, FPS, Loop, Start from original | Applied to cached frames instantly. No quantum work (except **Frames**, which only takes effect on the next **Run frames**). |
+| Post / animation | DRR, Gain, Mask %, Frames, In-between, Speed, Loop, Start from original | Applied to cached frames instantly. No quantum work (except **Frames**, which only takes effect on the next **Run frames**). |
 
 The panel on the right shows the current mesh, lattice size, qubit count, capacity
 used and circuit depth. The title above the mesh shows the playback step and
@@ -230,8 +230,12 @@ used and circuit depth. The title above the mesh shows the playback step and
   raw flicker.
 - *In Tessa:* nothing. Linear interpolation with smoothstep easing.
 
-**FPS** (5–60)
-- *In practice:* playback speed, and the frame rate of the exported GIF.
+**Speed (fps)** (1–60; default 24)
+- *In practice:* playback speed in steps per second, changeable live while it
+  plays. It is also the frame rate of the exported GIF. One readout-to-readout
+  glide takes `(In-between + 1) / Speed` seconds, so lower Speed or raise
+  In-between for a slower, smoother ripple. Very high speeds on large meshes are
+  capped by how fast matplotlib can redraw.
 - *In Tessa:* nothing.
 
 **Loop** (on / off)
@@ -249,6 +253,22 @@ used and circuit depth. The title above the mesh shows the playback step and
   straight away instead of waiting for **Run**. Convenient on small meshes, but
   sluggish with noise on large ones.
 - *In Tessa:* calls `decode` once per change.
+
+### Inspecting a vertex (hover while paused)
+
+Pause playback (**Play/Pause**), or show a single **Run** result, then move the
+mouse over the mesh. The nearest vertex within a few pixels is circled in red,
+and a tooltip shows:
+
+- **original**: the pre-encoding coordinate from the mesh.
+- **current**: where that vertex is drawn at this step, after decoding, DRR,
+  gain and mask (the tooltip header shows the gain and step).
+- **delta** and **|delta|**: the movement, per axis and as a distance.
+
+The tooltip disappears when playback resumes or anything redraws the mesh.
+Because it picks the closest vertex on screen, a vertex at the back can be picked
+where it overlaps one at the front; rotate the view to reach it. At gain 1 the
+delta is exactly Tessa's readout error for that vertex.
 
 ### Buttons
 
