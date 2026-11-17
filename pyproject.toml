@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tessa-ripple"
+version = "0.1.0"
+description = "Animate a mesh with the readout noise of Tessa-encoded vertex coordinates."
+requires-python = ">=3.11"
+dependencies = [
+    "tessa-paper @ git+https://github.com/moth-quantum/Tessa@5812e9d04a454d3600cc61d4fb35ef22fa66c6b1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+tessa-ripple = "tessa_ripple.app:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
