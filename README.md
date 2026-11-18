@@ -171,6 +171,26 @@ Measured while building this; the README states them as measured, not as claims.
   | blob high | Fez | radial | 2.23 % | 1.11 % |
   | Suzanne | Phoenix | radial | 1.72 % | 0.95 % |
 
+- **Importance placement helps only once the good qubits run out.** It sends the
+  most curved vertices to the best of the chosen data qubits. Overall error stays
+  the same; the gain is at the 25 % most curved vertices (5 seeds):
+
+  | Mesh | Chip | Layout | Worst qubit used | Curved 25 %: quality → importance | All vertices |
+  |---|---|---|---|---|---|
+  | Suzanne | Phoenix | mesh | 0.62 | 1.47 % → 1.26 % | 1.37 % → 1.30 % |
+  | Suzanne | Phoenix | naive | 0.62 | 1.54 % → 1.11 % | 1.36 % → 1.30 % |
+  | blob high | Phoenix | mesh | 0.94 | 1.56 % → 1.59 % | 1.12 % → 1.10 % |
+  | blob high | Fez | mesh | 1.00 | 2.38 % → 2.42 % | 1.46 % → 1.47 % |
+  | cube 5 (xyz) | Fez | mesh | 0.38 | 11.10 % → 11.39 % | 9.46 % → 9.52 % |
+
+  Suzanne fills 64 % of Phoenix, so some of her data qubits are mediocre and it
+  matters which vertices sit there. The blob fits on near-perfect qubits, so
+  there is nothing to gain. The cube's corners did move to better-scoring
+  qubits but got no better. Two likely reasons, not yet tested: its xyz error
+  may be dominated by the shared value range rather than by which qubit holds a
+  vertex, and the probe's scores (about 32 test symbols per data qubit) are
+  coarse. So *quality* stays the default.
+
 - **Pair mode doubles the two-qubit gates.** Tessa's docstring says the second
   field comes "at no extra two-qubit gate cost". Tessa's own circuit builder
   (`core/encode.py`) appends a second RZ multiplexer with its own CX ladder, so
@@ -337,13 +357,16 @@ what the colours mean.
     (`build_local_noise_model`). The noise model is built once per chip and reused
     across seeds.
 
-**Placement** (best qubits first / Tessa's order; chip backends only)
+**Placement** (best qubits first / importance / Tessa's order; chip backends only)
 - *In practice:* where on the chip the mesh goes. *Best qubits first* (the
   default) puts it only on data qubits that read back well, so far fewer
   vertices misbehave. *Tessa's order* fills the chip from qubit 0 onward,
   whatever their quality. The info panel shows the mean quality of the data
   qubits used (1.00 = every test symbol read back right). Turn on
-  **Qubit map** to see where the mesh lands.
+  **Qubit map** to see where the mesh lands. *Importance* uses the same data
+  qubits but puts the most curved vertices (tips, ridges, creases, where noise
+  shows most) on the best of them. It only changes anything when the mesh is
+  big enough to need some mediocre qubits, such as Suzanne on Phoenix.
 - *In Tessa:* `probe_qubits(graph, sampler)` encodes random test symbols over the
   whole chip, decodes them on the calibrated simulator, and scores each data
   qubit by the fraction read back right. That folds in its address qubits'
@@ -355,6 +378,14 @@ what the colours mean.
   `.venv/bin/python -m tessa_ripple.bridge`; if the date doesn't match, the
   app probes on first use instead. Simulator backends have identical qubits,
   so the setting does nothing there.
+
+  *Importance*: `mesh.importance` scores each vertex by its distance from the
+  mean of its neighbours over its mean edge length (zero on a flat face,
+  highest at corners and tips). With the naive layout, vertices fill the
+  ranked slots most important first. With the mesh layout, the neighbourhood
+  patches are cut as usual. Then, among data qubits that hold the same number
+  of values, the patches with the highest mean importance swap onto the best
+  qubits, so every patch stays whole on one data qubit.
 
 **Shots** (2^8–2^16; default 4,096)
 - *In practice:* the main jitter control. Error falls as `1/√shots` (see **Curves**).
@@ -513,10 +544,9 @@ map with `bridge.qubit_map(e)`.
 
 ## Not done yet
 
-- **Importance-aware placement.** **Placement** puts the whole mesh on a chip's
-  best qubits but treats every vertex alike. A mesh that fills most of the chip
-  could still send its most important vertices (silhouette, high curvature) to
-  the very best ones.
+- **View-dependent importance.** *Importance* placement uses curvature only.
+  Silhouette edges for a chosen camera, or a user-painted weight, could feed the
+  same `weight` argument of `bridge.place`.
 - **Full-lattice coherences.** Hadamards on the address qubits of the whole
   encoded mesh, instead of isolated pairs.
 - **Real hardware.** Tessa would run whole circuits there with

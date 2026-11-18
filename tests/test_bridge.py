@@ -114,3 +114,19 @@ def test_qubit_count_is_only_what_the_mesh_uses():
     assert s["graph_qubits"] == 120 and s["qubits"] == len(e.used_qubits) < 120
     data = {e.graph.groups[i].data_qubit for i in e.used_groups}
     assert data == {e.graph.groups[g].data_qubit for g, _ in np.reshape(qubit_map(e)["vertices"], (-1, 2))}
+
+
+@pytest.mark.parametrize("layout", ["mesh", "naive"])
+def test_importance_placement_puts_curved_vertices_on_better_qubits(layout):
+    from tessa_ripple.mesh import importance, load_obj
+    v, f = load_obj("tessa_ripple/suzanne.obj")
+    w = importance(v, f)
+    top = w >= np.quantile(w, 0.75)
+    got = {}
+    for pl in ("quality", "importance"):
+        e = encode_mesh(v, f, Params(backend="phoenix", layout=layout, placement=pl))
+        cell = np.searchsorted(cells(e.graph)[:, 1], e.slots[:, 0], side="right")
+        got[pl] = (e.quality[cell][top].mean(), sorted(set(cell)))
+        assert sorted(e.slots.ravel()) == sorted(set(e.slots.ravel()))  # every value has its own slot
+    assert got["importance"][0] > got["quality"][0]
+    assert got["importance"][1] == got["quality"][1]  # same data qubits, only reassigned

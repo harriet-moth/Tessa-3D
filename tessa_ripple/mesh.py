@@ -75,6 +75,22 @@ def edges(faces) -> np.ndarray:
     return np.array(sorted(pairs))
 
 
+def importance(verts, faces) -> np.ndarray:
+    """Per-vertex curvature, scale-free: how far a vertex sits from the mean of its
+    neighbours, over its mean edge length. Flat and gently curved regions score
+    low; tips, ridges and creases (where noise shows most) score high."""
+    verts, E = np.asarray(verts, float), edges(faces)
+    n = len(verts)
+    deg = np.bincount(E.ravel(), minlength=n).astype(float)
+    nsum, elen = np.zeros_like(verts), np.zeros(n)
+    length = np.linalg.norm(verts[E[:, 0]] - verts[E[:, 1]], axis=1)
+    for a, b in ((E[:, 0], E[:, 1]), (E[:, 1], E[:, 0])):
+        np.add.at(nsum, a, verts[b])
+        np.add.at(elen, a, length)
+    deg = np.maximum(deg, 1)
+    return np.linalg.norm(verts - nsum / deg[:, None], axis=1) / np.maximum(elen / deg, 1e-12)
+
+
 def bfs_order(n_verts: int, faces) -> np.ndarray:
     """Vertices in breadth-first order over mesh edges, so consecutive vertices are
     mesh neighbours (the mesh-aware layout fills each Tessa cell from this order)."""

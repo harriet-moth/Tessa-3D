@@ -17,12 +17,14 @@ from tessa import (Lattice, build_local_noise_model, decode, encode, graph_from_
 from tessa.backends import DeviceSampler, aer_sampler, counts_of, device_of, noisy_sampler
 from tessa.hardware import devices
 
-from .mesh import bfs_order, edges
+from .mesh import bfs_order, edges, importance
 
 MAX_ROWS, MAX_COLS = 10, 12  # largest lattice: the whole 10x12 ibm_phoenix chip
 DEVICES = ("phoenix", "fez")  # Tessa's offline calibration snapshots
 BACKENDS = ("noiseless", "flat noise", *DEVICES)
-PLACEMENTS = ("graph", "quality")  # chip backends: Tessa's group order, or best data qubits first
+# chip backends: Tessa's group order | best data qubits first | best first, most curved vertices
+# on the very best (see place)
+PLACEMENTS = ("graph", "quality", "importance")
 QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores per chip snapshot
 DRR_METHODS = ("none", "min_max", "mean_std", "percentile", "abs_max", "min_avg_max")
 # Typical IBM-like machine averages (tessa.backend_rates fallbacks) for "flat noise".
@@ -41,7 +43,7 @@ class Params:
     compression: float = 0.0       # percent (0-100) of multiplexer coefficients dropped
     quant_bits: int | None = None
     headroom: float = 0.1          # padding on the value_range
-    placement: str = "quality"     # chips only: best data qubits first | "graph": Tessa's order
+    placement: str = "quality"     # chips only: one of PLACEMENTS
     # readout (changing these re-decodes; a chip backend also changes the graph)
     backend: str = "noiseless"     # one of BACKENDS
     shots: int = 4096
@@ -138,7 +140,7 @@ def cells(graph) -> np.ndarray:
     return np.column_stack([stops - [g.n_values for g in graph.groups], stops])
 
 
-def place(graph, n, comps, order=None, quality=None) -> np.ndarray:
+def place(graph, n, comps, order=None, quality=None, weight=None) -> np.ndarray:
     """Capacity slot of every value, shape (n, comps).
 
     ``order=None`` is the naive axis-major layout (all x, then all y, then all z).
@@ -149,25 +151,46 @@ def place(graph, n, comps, order=None, quality=None) -> np.ndarray:
     Cells are filled in graph order, or, given ``quality`` (one score per data
     qubit), in Tessa's ``slot_order``: best data qubit first, so a mesh smaller
     than the chip lands only on its best qubits.
+
+    ``weight`` (one importance score per vertex) also matches the most important
+    vertices to the best of those qubits. Naive layout: vertices fill the ranked
+    slots most important first. Mesh layout: the neighbourhood patches are cut
+    as usual, then within each patch size the patches with the highest mean
+    importance swap onto the best data qubits, so every patch stays whole.
     """
     ranked = np.arange(graph.capacity) if quality is None else slot_order(graph, quality)
     if order is None:
         if n * comps > graph.capacity:
             raise ValueError(f"{n * comps} values exceed capacity {graph.capacity}")
-        return ranked[np.arange(comps) * n + np.arange(n)[:, None]]
+        slots = np.empty((n, comps), int)
+        first = np.arange(n) if weight is None else np.argsort(-weight, kind="stable")
+        slots[first] = ranked[np.arange(comps) * n + np.arange(n)[:, None]]
+        return slots
     bounds = cells(graph)
     cell_of = np.searchsorted(bounds[:, 1], ranked, side="right")
     seq = cell_of[np.r_[True, cell_of[1:] != cell_of[:-1]]]  # cells in ranked order
-    slots, k = np.empty((n, comps), int), 0
-    for lo, hi in bounds[seq]:
-        m = min((hi - lo) // comps, n - k)
+    plan, k = [], 0  # (cell, vertices it takes), best cell first
+    for c in seq:
+        m = min((bounds[c, 1] - bounds[c, 0]) // comps, n - k)
         if m > 0:
-            slots[order[k:k + m]] = lo + np.arange(comps) * m + np.arange(m)[:, None]
+            plan.append((c, m))
             k += m
         if k == n:
-            return slots
-    raise ValueError(f"{n} vertices x {comps} values do not fit {graph.capacity} slots; "
-                     "try the radial payload (one value per vertex)")
+            break
+    else:
+        raise ValueError(f"{n} vertices x {comps} values do not fit {graph.capacity} slots; "
+                         "try the radial payload (one value per vertex)")
+    patches = np.split(order, np.cumsum([m for _, m in plan])[:-1])
+    if weight is not None:  # same-size patches: most important onto the best cells
+        for m in {m for _, m in plan}:
+            idx = [i for i, (_, mm) in enumerate(plan) if mm == m]  # best cell first
+            mine = sorted((patches[i] for i in idx), key=lambda p: -weight[p].mean())
+            for i, p in zip(idx, mine):
+                patches[i] = p
+    slots = np.empty((n, comps), int)
+    for (c, m), p in zip(plan, patches):
+        slots[p] = bounds[c, 0] + np.arange(comps) * m + np.arange(m)[:, None]
+    return slots
 
 
 def fill(graph, slots, vals) -> np.ndarray:
@@ -245,7 +268,9 @@ def encode_mesh(verts, faces, p: Params) -> Encoded:
     else:
         graph = fit_lattice(n, comps, order is not None)
         name = f"{graph.rows}x{graph.cols} lattice"
-    slots = place(graph, n, comps, order, quality if p.placement == "quality" else None)
+    ranked = p.placement in ("quality", "importance")
+    weight = importance(verts, faces) if p.placement == "importance" and quality is not None else None
+    slots = place(graph, n, comps, order, quality if ranked else None, weight)
     a = fill(graph, slots, flat.reshape(n, comps))
     kw = dict(value_range=rng, compression=p.compression)
     single, _ = encode(graph, a, clamp=p.clamp, **kw)

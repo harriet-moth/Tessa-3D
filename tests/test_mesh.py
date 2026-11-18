@@ -40,3 +40,12 @@ def test_load_obj_round_trip(tmp_path):
     v, f = cube(3)
     lv, lf = load_obj(write_obj(tmp_path / "c.obj", v, f))
     assert np.allclose(lv, v) and lf == [list(x) for x in f]
+
+
+def test_importance_is_high_at_cube_corners_and_zero_on_flat_faces():
+    from tessa_ripple.mesh import importance
+    v, f = cube(4)
+    w = importance(v, f)
+    corner = np.all(np.isclose(np.abs(v), np.abs(v).max()), axis=1)
+    flat = np.sum(np.isclose(np.abs(v), np.abs(v).max()), axis=1) == 1
+    assert w[corner].min() > w[~corner].max() * 0.99 and np.allclose(w[flat], 0, atol=1e-9)

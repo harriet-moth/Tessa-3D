@@ -28,7 +28,7 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from PIL import Image
 
 from . import animate as anim
-from .bridge import (BACKENDS, DRR_METHODS, PLACEMENTS, cells, Params, encode_mesh, fidelity_curves, mesh_error,
+from .bridge import (BACKENDS, DRR_METHODS, cells, Params, encode_mesh, fidelity_curves, mesh_error,
                      qubit_map, read_edges, resources, restore, vertex_qubits)
 from .mesh import PRESETS, load_obj
 
@@ -85,7 +85,7 @@ class App:
         radios(0.50, 0.98, [("Shape", list(PRESETS)), ("Resolution", RES),
                             ("Payload", ["radial", "xyz"]), ("Mode", ["single", "pair"]),
                             ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS),
-                            ("Placement", PLACEMENTS[::-1]), ("DRR", DRR_METHODS)])
+                            ("Placement", ["quality", "importance", "graph"]), ("DRR", DRR_METHODS)])
         y = radios(0.855, 0.98, [("View", ["fidelity", "material"]), ("Colour", COLOURS)])
         for name, y0, lo, hi, init, step in [
             # tier 1: encoder
