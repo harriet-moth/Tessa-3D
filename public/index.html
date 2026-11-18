@@ -16,11 +16,12 @@
 <body>
 <header>
   <h1>Tessa Ripple</h1>
-  <p>A mesh loaded into a quantum state with <a href="https://github.com/moth-quantum/Tessa">Tessa</a>, read back on a simulator or a calibrated IBM chip model, and moved only by readout noise.</p>
+  <p>A mesh loaded into a quantum state with Moth's Tessa encoder, read back on a simulator or a calibrated IBM chip model, and moved only by readout noise.</p>
 </header>
 <main>
   <section class="stage">
     <div class="caption" id="caption">Loading…</div>
+    <div class="legends"><div class="legend" id="faceLegend" hidden></div><div class="legend" id="edgeLegend" hidden></div></div>
     <div id="viewer"></div>
     <div id="tip" hidden></div>
     <div class="status" id="status" role="status">Starting…</div>
@@ -72,13 +73,13 @@
       <label>Speed (fps) <input id="fps" type="range" min="1" max="60" step="1" value="24"><output></output></label>
       <label class="check"><input id="loop" type="checkbox" checked> Loop</label>
       <label class="check"><input id="orig" type="checkbox" checked> Start from original</label>
+      <label class="check"><input id="shade" type="checkbox"> Shading (lighting darkens colours)</label>
     </fieldset>
   </aside>
 </main>
 
 <dialog id="dialog"><form method="dialog"><button class="close" aria-label="Close">×</button></form><div id="dialogBody"></div></dialog>
 
-<footer>Desktop app, source and findings: <a href="https://github.com/harriet-moth/Tessa-ripple">github.com/harriet-moth/Tessa-ripple</a></footer>
 <script type="module" src="app.js"></script>
 </body>
 </html>

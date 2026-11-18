@@ -26,8 +26,11 @@ sun.position.set(3, -3, 5);
 scene.add(sun);
 
 const geom = new THREE.BufferGeometry();
-const material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, roughness: 0.65, transparent: true });
-const mesh = new THREE.Mesh(geom, material);
+// Unlit by default, so every face shows its mapped colour exactly; lighting would darken
+// faces turned away from the light, which in error mode reads as "worse".
+const flat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true });
+const lit = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, roughness: 0.65, transparent: true });
+const mesh = new THREE.Mesh(geom, flat);
 const wireGeom = new THREE.BufferGeometry();
 const wire = new THREE.LineSegments(wireGeom, new THREE.LineBasicMaterial({ color: 0x1d2433, transparent: true, opacity: 0.22 }));
 const edgeGeom = new THREE.BufferGeometry();
@@ -44,14 +47,20 @@ function resize() {
 }
 new ResizeObserver(resize).observe(viewer);
 
-// ---------- colour ramps
-const stops = (hexes) => hexes.map((c) => new THREE.Color(c));
-const MAGMA = stops(['#fcfdbf', '#fe9f6d', '#de4968', '#8c2981', '#3b0f70']);
-const VIRIDIS = stops(['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725']);
-function ramp(cs, t) {
+// ---------- colour definitions, mirrored in tessa_ripple/app.py so both apps match
+const stops = (hexes) => hexes.map((h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16) / 255)); // sRGB
+const ERROR_HEX = ['#fcfdbf', '#fd9668', '#cf4070', '#752181', '#1a1042']; // magma_r on [0, 0.88]; light = no error
+const EDGE_HEX = ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725']; // viridis
+const ERROR = stops(ERROR_HEX), EDGE = stops(EDGE_HEX);
+const GOLDEN = 0.618034;
+// HSL is given in sRGB (what the eye sees), not three.js's linear working space.
+const hsl = (h, s, l) => new THREE.Color().setHSL(((h % 1) + 1) % 1, s, l, THREE.SRGBColorSpace);
+const hueCss = (h) => `hsl(${(h * 360).toFixed(0)} 75% 55%)`;
+function ramp(cs, t) { // blends in sRGB, like CSS gradients and matplotlib, so mesh and legend agree
   t = Math.min(1, Math.max(0, t));
-  const x = t * (cs.length - 1), i = Math.min(Math.floor(x), cs.length - 2);
-  return cs[i].clone().lerp(cs[i + 1], x - i);
+  const x = t * (cs.length - 1), i = Math.min(Math.floor(x), cs.length - 2), f = x - i;
+  const [r, g, b] = cs[i].map((c, k) => c + (cs[i + 1][k] - c) * f);
+  return new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
 }
 const PLAIN = new THREE.Color('#8fb0d6');
 
@@ -164,20 +173,33 @@ function colourise() {
       err[i] += Math.hypot(f[3 * i] - S.orig[3 * i], f[3 * i + 1] - S.orig[3 * i + 1], f[3 * i + 2] - S.orig[3 * i + 2]) / S.frames.length;
     }
     const top = Math.max(...err) || 1;
-    for (let i = 0; i < n; i++) set(i, ramp(MAGMA, 0.1 + 0.8 * err[i] / top));
-    S.colourLabel = `error per vertex (dark = ${top.toFixed(3)})`;
+    for (let i = 0; i < n; i++) set(i, ramp(ERROR, err[i] / top));
+    S.colourLabel = `error per vertex (mean of ${S.frames.length} readouts)`;
+    legend('faceLegend', ERROR_HEX, '0', top.toFixed(4), 'vertex error (distance, mesh units)');
   } else if (mode === 'qubit') {
-    for (let i = 0; i < n; i++) set(i, new THREE.Color().setHSL((d.qubits[i] * 0.618034) % 1, 0.55, 0.6));
-    S.colourLabel = 'data qubit holding each vertex';
+    const used = [...new Set(d.qubits)].sort((a, b) => a - b), rank = new Map(used.map((q, r) => [q, r]));
+    for (let i = 0; i < n; i++) set(i, hsl(rank.get(d.qubits[i]) * GOLDEN, 0.6, 0.55));
+    S.colourLabel = `${d.split ? "data qubit holding each vertex's x (naive layout splits x, y, z)" : 'data qubit holding each vertex'}, ${used.length} qubits`;
+    $('faceLegend').hidden = false;
+    $('faceLegend').innerHTML = `<div class="swatches">${used.map((q, r) => `<i title="qubit ${q}" style="background:hsl(${((r * GOLDEN) % 1 * 360).toFixed(0)} 60% 55%)"></i>`).join('')}</div>one colour per data qubit (${used.length}); hover a vertex for its qubit`;
   } else if (mode === 'phi' && d.colour) {
     const hue = d.colours ? d.colour.map((_, i) => d.colours.reduce((s, c) => s + c[i], 0) / d.colours.length) : d.colour;
-    for (let i = 0; i < n; i++) set(i, new THREE.Color().setHSL(hue[i], 0.75, 0.55));
-    S.colourLabel = 'vertex colour decoded from φ';
+    for (let i = 0; i < n; i++) set(i, hsl(hue[i], 0.75, 0.55));
+    S.colourLabel = d.colours ? `colour decoded from φ (mean of ${d.colours.length} readouts)` : 'original colour field';
+    legend('faceLegend', [0, 0.2, 0.4, 0.6, 0.8, 1].map(hueCss), '0', '1', 'colour value stored in φ');
   } else {
     for (let i = 0; i < n; i++) set(i, PLAIN);
     S.colourLabel = mode === 'phi' ? 'plain (φ colour needs pair mode)' : 'plain';
+    $('faceLegend').hidden = true;
   }
   geom.attributes.color.needsUpdate = true;
+}
+
+function legend(id, colours, lo, hi, caption) {
+  const el = $(id);
+  el.hidden = false;
+  el.innerHTML = `<div class="bar" style="background:linear-gradient(to right, ${colours.join(', ')})"></div>`
+    + `<div class="ends"><span>${lo}</span><span>${hi}</span></div>${caption}`;
 }
 
 function copyEnds(target, pairs, v) {
@@ -197,7 +219,8 @@ function draw() {
     edgeGeom.attributes.position.needsUpdate = true;
   }
   edgeLines.visible = !!S.edges;
-  material.opacity = S.edges ? 0.35 : 1;
+  mesh.material = $('shade').checked ? lit : flat;
+  mesh.material.opacity = S.edges ? 0.35 : 1;
   marker.visible = false;
   $('tip').hidden = true;
   const head = val('view') === 'fidelity' ? 'Fidelity · gain 1 (true decoded positions)'
@@ -240,13 +263,15 @@ async function run(frames) {
 function setEdges(r) {
   S.edges = r;
   $('edges').textContent = r ? 'Hide edges' : 'Read edges';
+  $('edgeLegend').hidden = !r;
   if (!r) return;
-  const lo = Math.min(...r.exact), span = Math.max(...r.exact) - lo || 1;
+  const lo = Math.min(...r.exact), hi = Math.max(...r.exact), span = hi - lo || 1; // true edge range
+  legend('edgeLegend', EDGE_HEX, lo.toFixed(3), hi.toFixed(3), 'edge length read from coherences');
   r.ends = r.edges.flat();
   edgeGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(r.ends.length * 3), 3));
   const col = new Float32Array(r.ends.length * 3);
   r.measured.forEach((m, k) => {
-    const c = ramp(VIRIDIS, (m - lo) / span);
+    const c = ramp(EDGE, (m - lo) / span); // off-range lengths clip to the ends
     for (const j of [2 * k, 2 * k + 1]) { col[3 * j] = c.r; col[3 * j + 1] = c.g; col[3 * j + 2] = c.b; }
   });
   edgeGeom.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -379,6 +404,7 @@ for (const id of ['shape', 'resolution', 'payload', 'mode', 'layout', 'clamp', '
   $(id).addEventListener('input', draw);
 }
 for (const id of ['view', 'colour', 'gain', 'mask', 'between', 'loop', 'orig', 'seed']) $(id).addEventListener('input', rebuild);
+$('shade').addEventListener('input', draw);
 $('run').onclick = () => run(1);
 $('runFrames').onclick = () => run(num('frames'));
 $('play').onclick = () => { S.playing = !S.playing; hideTip(); if (S.playing && S.step + 1 >= S.seq.length) S.step = 0; };
@@ -407,6 +433,7 @@ function frame(now) {
   last = now;
   renderer.render(scene, camera);
 }
+window.tessaRipple = { state: S, geometry: geom }; // read-only handle for debugging in the console
 resize();
 requestAnimationFrame(frame);
 status('Loading Tessa on the server (a cold start can take ~10 s)…');

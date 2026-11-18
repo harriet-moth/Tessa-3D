@@ -7,6 +7,7 @@ Two views: **Fidelity** (gain 1, vertices coloured by error: the technical case)
 and **Material** (gain exaggerates the noise: the artistic mode).
 """
 
+import colorsys
 import io
 import sys
 import time
@@ -15,6 +16,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colormaps
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap, Normalize
 from matplotlib.animation import FuncAnimation
 from matplotlib.lines import Line2D
 from matplotlib.transforms import IdentityTransform
@@ -24,7 +27,7 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from PIL import Image
 
 from . import animate as anim
-from .bridge import (BACKENDS, DRR_METHODS, Params, encode_mesh, fidelity_curves, mesh_error,
+from .bridge import (BACKENDS, DRR_METHODS, cells, Params, encode_mesh, fidelity_curves, mesh_error,
                      read_edges, resources, restore, vertex_qubits)
 from .mesh import PRESETS, load_obj
 
@@ -32,6 +35,27 @@ OUT = Path("exports")
 RES = ("low", "mid", "high")
 COLOURS = ("error", "qubit", "φ colour", "plain")
 PLAIN = np.array(colormaps["Blues"](0.45))
+
+# Colour definitions, mirrored in public/app.js so both apps colour identically.
+# Error: magma_r on [0, 0.88], lightest = no error (pure black is avoided so faces stay readable).
+ERROR_CMAP = LinearSegmentedColormap.from_list(
+    "error", ["#fcfdbf", "#fd9668", "#cf4070", "#752181", "#1a1042"])
+EDGE_CMAP = colormaps["viridis"]
+GOLDEN = 0.618034
+
+
+def hls_rgba(hues, lightness, saturation):
+    return np.array([(*colorsys.hls_to_rgb(h % 1, lightness, saturation), 1.0) for h in hues])
+
+
+def qubit_rgba(qubits):
+    """One colour per data qubit in use: hues spread by the golden ratio over each
+    qubit's rank, so no two qubits share a colour and neighbouring ranks contrast."""
+    rank = np.unique(qubits, return_inverse=True)[1]
+    return hls_rgba(rank * GOLDEN, 0.55, 0.6)
+
+
+HUE_CMAP = ListedColormap(hls_rgba(np.linspace(0, 1, 256), 0.55, 0.75))  # φ colour value -> hue
 
 
 class App:
@@ -100,6 +124,8 @@ class App:
         self.w["Speed (fps)"].on_changed(self.set_speed)
         fig.canvas.mpl_connect("motion_notify_event", self.hover)
 
+        self.cax = fig.add_axes([0.04, 0.085, 0.19, 0.012])  # face colour legend
+        self.eax = fig.add_axes([0.27, 0.085, 0.19, 0.012])  # edge colour legend
         self.coll = Poly3DCollection([], edgecolor="#20304a", lw=0.4)
         self.edge_coll = Line3DCollection([np.zeros((2, 3))], linewidths=2.5, visible=False)
         self.ax.add_collection3d(self.coll)
@@ -277,26 +303,51 @@ class App:
         return keys if len(keys) == 1 else anim.timeline(keys, int(self.val("In-between")), t["loop"])
 
     def vertex_rgba(self):
-        """Per-vertex colours for the Colour mode, and a label for the title."""
+        """Per-vertex colours for the Colour mode, a title label, and a legend spec
+        (cmap, low, high, caption) or None."""
         mode, e = self.val("Colour"), self.encoded
-        if mode == "error" and self.decoded:
+        if mode == "error" and self.decoded:  # true decoded error, whatever the view's gain
             err = np.mean([np.linalg.norm(d - self.verts, axis=1) for d in self.decoded], 0)
-            top = err.max() or 1
-            return colormaps["magma_r"](0.1 + 0.8 * err / top), f"error per vertex (dark = {top:.3f})"
+            top = err.max() or 1.0
+            return (ERROR_CMAP(err / top), f"error per vertex (mean of {len(self.decoded)} readouts)",
+                    (ERROR_CMAP, 0, top, "vertex error (distance, mesh units)"))
         if mode == "qubit":
-            return colormaps["tab20"](self.vq % 20 / 19), "data qubit holding each vertex"
+            cell = np.searchsorted(cells(e.graph)[:, 1], e.slots, side="right")
+            split = (cell != cell[:, :1]).any()  # naive xyz puts x, y, z on different qubits
+            what = "data qubit holding each vertex's x (naive layout splits x, y, z)" if split \
+                else "data qubit holding each vertex"
+            return qubit_rgba(self.vq), f"{what}, {len(np.unique(self.vq))} qubits", None
         if mode == "φ colour" and e.colour is not None:
-            c = e.colour if self.colours is None else self.colours.mean(0)
-            src = "original" if self.colours is None else "decoded from φ"
-            return colormaps["hsv"](c), f"vertex colour {src}"
+            if self.colours is None:
+                c, src = e.colour, "original colour field"
+            else:
+                c, src = self.colours.mean(0), f"colour decoded from φ (mean of {len(self.colours)} readouts)"
+            return hls_rgba(c, 0.55, 0.75), src, (HUE_CMAP, 0, 1, "colour value stored in φ")
         why = {"error": " (run to see error)", "φ colour": " (pair mode only)"}.get(mode, "")
-        return np.tile(PLAIN, (len(self.verts), 1)), "plain" + why
+        return np.tile(PLAIN, (len(self.verts), 1)), "plain" + why, None
+
+    def legend(self, ax, spec):
+        ax.clear()
+        ax.set_visible(spec is not None)
+        if spec:
+            cmap, lo, hi, caption = spec
+            self.fig.colorbar(ScalarMappable(Normalize(lo, hi), cmap), cax=ax, orientation="horizontal")
+            ax.tick_params(labelsize=7)
+            ax.set_xlabel(caption, fontsize=7, labelpad=1)
 
     def redraw(self, *_):
         self.seq = self.positions()
         self.idx %= len(self.seq)
-        rgba, self.colour_label = self.vertex_rgba()
+        rgba, self.colour_label, spec = self.vertex_rgba()
         self.face_rgba = np.array([rgba[f].mean(0) for f in self.faces])
+        self.legend(self.cax, spec)
+        if self.edge_data:
+            E, measured, exact = self.edge_data
+            norm = Normalize(exact.min(), exact.max())  # true edge range; off-range values clip
+            self.edge_rgba = EDGE_CMAP(norm(measured))
+            self.legend(self.eax, (EDGE_CMAP, exact.min(), exact.max(), "edge length read from coherences"))
+        else:
+            self.legend(self.eax, None)
         self.draw()
 
     def draw(self):
@@ -305,14 +356,14 @@ class App:
         self.marker.set_visible(False)
         self.coll.set_verts([v[f] for f in self.faces])
         rgba = self.face_rgba.copy()
-        rgba[:, 3] = 0.35 if self.edge_data else 0.92
+        rgba[:, 3] = 0.35 if self.edge_data else 1.0
         self.coll.set_facecolor(rgba)
         edge_txt = ""
         if self.edge_data:
             E, measured, exact = self.edge_data
             self.edge_coll.set_segments(v[E])
-            self.edge_coll.set_color(colormaps["viridis"]((measured - exact.min()) / (np.ptp(exact) or 1)))
-            edge_txt = " · edges: length read from coherences (viridis)"
+            self.edge_coll.set_color(self.edge_rgba)
+            edge_txt = " · edges: length read from coherences"
         self.edge_coll.set_visible(bool(self.edge_data))
         if self.fidelity:
             head = "Fidelity · gain 1 (true decoded positions)"

@@ -74,6 +74,7 @@ Differences from the desktop app:
   Vercel's 60 s limit. On the chip backends a frame takes about 7 s there, so
   expect about 6 frames.
 - There's no GIF export; **Download OBJ** saves the current step.
+- Faces are unlit by default so colours are exact; tick **Shading** for lighting.
 
 To run the web version locally:
 
@@ -332,13 +333,27 @@ what the colours mean.
   "gain 3.0× (noise exaggerated)".
 
 **Colour** (error / qubit / φ colour / plain)
-- *Error*: each vertex's mean distance from its original position over the frames,
-  with darker meaning worse. On a chip backend this shows the bad qubits.
-- *Qubit*: which data qubit holds each vertex (20 cycling colours). With the mesh
-  layout, cells show up as patches, so the mesh becomes a picture of the chip.
-- *φ colour*: pair mode's colour field, original before a run and decoded from φ
-  after one.
+- *Error*: each vertex's mean distance from its original position over the
+  readouts, in mesh units. The scale runs from light (no error) to dark (the
+  largest error in this run); the legend shows the values. It is always the
+  true decoded error, even in the material view. On a chip backend it shows the
+  bad qubits.
+- *Qubit*: which data qubit holds each vertex, one distinct colour per qubit in
+  use (hues spread by the golden ratio). With the mesh layout, cells show up as
+  patches, so the mesh becomes a picture of the chip. With the naive layout on
+  xyz, a vertex's x, y and z sit on different qubits, so the colour shows the
+  qubit holding x (the title says so). Hover a vertex for its qubit number.
+- *φ colour*: pair mode's colour field as a hue (0 to 1 around the colour wheel):
+  the original field before a run, and the field decoded from φ, averaged over
+  the readouts, after one.
 - *Plain*: a single colour.
+
+Both apps use the same colour scales and show a legend for every scale (error,
+φ colour, and edge length when edges are shown). The edge scale spans the true
+edge lengths, so a measured length outside that range shows as the end colour.
+The web view is unlit by default so every face shows its exact mapped colour;
+**Shading** turns lighting on to read the shape, at the cost of darker faces
+on the far side.
 
 ### Post-processing and animation (instant, no quantum work)
 
