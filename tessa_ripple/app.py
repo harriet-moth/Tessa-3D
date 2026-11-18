@@ -19,6 +19,7 @@ from matplotlib import colormaps
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap, Normalize
 from matplotlib.animation import FuncAnimation
+from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 from matplotlib.transforms import IdentityTransform
 from matplotlib.widgets import Button, CheckButtons, RadioButtons, Slider
@@ -27,8 +28,8 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from PIL import Image
 
 from . import animate as anim
-from .bridge import (BACKENDS, DRR_METHODS, cells, Params, encode_mesh, fidelity_curves, mesh_error,
-                     read_edges, resources, restore, vertex_qubits)
+from .bridge import (BACKENDS, DRR_METHODS, PLACEMENTS, cells, Params, encode_mesh, fidelity_curves, mesh_error,
+                     qubit_map, read_edges, resources, restore, vertex_qubits)
 from .mesh import PRESETS, load_obj
 
 OUT = Path("exports")
@@ -55,6 +56,7 @@ def qubit_rgba(qubits):
     return hls_rgba(rank * GOLDEN, 0.55, 0.6)
 
 
+HOT = "#e69600"  # qubit map: the hovered data qubit, its address qubits and its vertices
 HUE_CMAP = ListedColormap(hls_rgba(np.linspace(0, 1, 256), 0.55, 0.75))  # φ colour value -> hue
 
 
@@ -82,7 +84,8 @@ class App:
 
         radios(0.50, 0.98, [("Shape", list(PRESETS)), ("Resolution", RES),
                             ("Payload", ["radial", "xyz"]), ("Mode", ["single", "pair"]),
-                            ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS), ("DRR", DRR_METHODS)])
+                            ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS),
+                            ("Placement", PLACEMENTS[::-1]), ("DRR", DRR_METHODS)])
         y = radios(0.855, 0.98, [("View", ["fidelity", "material"]), ("Colour", COLOURS)])
         for name, y0, lo, hi, init, step in [
             # tier 1: encoder
@@ -100,8 +103,13 @@ class App:
             self.w[name] = s = Slider(fig.add_axes([0.665, y0, 0.12, 0.02]), name, lo, hi,
                                       valinit=init, valstep=step)
             s.label.set_fontsize(8)
-        self.w["Toggles"] = CheckButtons(fig.add_axes([0.665, 0.44, 0.15, 0.09]),
-                                         ["Loop", "Start from original", "Auto-run"], [True, True, False])
+        self.w["Toggles"] = CheckButtons(fig.add_axes([0.665, 0.42, 0.15, 0.115]),
+                                         ["Loop", "Start from original", "Auto-run", "Qubit map"],
+                                         [True, True, False, False])
+        # qubit map: the lattice or chip, with the hovered vertex's qubits in orange
+        self.max = fig.add_axes([0.60, 0.15, 0.245, 0.255], visible=False)
+        self.map_text = fig.text(0.60, 0.14, "", fontsize=7, family="monospace", va="top")
+        self.focus = None
         buttons = [("Run", self.run), ("Run frames", self.run_frames), ("Play/Pause", self.toggle),
                    ("Read edges", self.on_edges), ("Curves", self.on_curves),
                    ("Why Tessa", self.on_resources), ("Export OBJ", self.export_obj),
@@ -113,7 +121,7 @@ class App:
         self.info = fig.text(0.855, y - 0.06 - len(buttons) * 0.045, "", fontsize=8,
                              family="monospace", va="top")
 
-        for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Clamp θ (π)",
+        for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Placement", "Clamp θ (π)",
                      "Clamp φ (π)", "Compression %", "Quant bits", "Headroom", "Shots (log2)",
                      "Noise × (flat)", "Seed"):
             w = self.w[name]
@@ -130,6 +138,7 @@ class App:
         self.edge_coll = Line3DCollection([np.zeros((2, 3))], linewidths=2.5, visible=False)
         self.ax.add_collection3d(self.coll)
         self.ax.add_collection3d(self.edge_coll, autolim=False)
+        self.mates, = self.ax.plot([], [], [], "o", ms=8, mfc=HOT, mec="#14161e", mew=1.5, zorder=10)
         lim = 1.4
         self.ax.set(xlim=(-lim, lim), ylim=(-lim, lim), zlim=(-lim, lim), box_aspect=(1, 1, 1))
         self.ax.set_axis_off()
@@ -153,11 +162,12 @@ class App:
                       clamp=clamp("Clamp θ (π)"), clamp_b=clamp("Clamp φ (π)"),
                       compression=self.val("Compression %"), quant_bits=qb or None,
                       headroom=self.val("Headroom"), backend=self.val("Backend"),
+                      placement=self.val("Placement"),
                       shots=2 ** int(self.val("Shots (log2)")),
                       noise_strength=self.val("Noise × (flat)"), seed=int(self.val("Seed")))
 
     def toggles(self):
-        return dict(zip(["loop", "orig", "auto"], self.w["Toggles"].get_status()))
+        return dict(zip(["loop", "orig", "auto", "map"], self.w["Toggles"].get_status()))
 
     @property
     def fidelity(self):
@@ -176,14 +186,15 @@ class App:
                 return self.say(f"⚠ {err}")
             # swap everything together, before say()/flush_events lets a tick draw
             self.verts, self.faces, self.encoded, self.enc_key = verts, faces, encoded, key
-            self.vq = vertex_qubits(encoded)
+            self.vq, self.qmap, self.focus = vertex_qubits(encoded), qubit_map(encoded), None
             self.raw = self.colours = None
             if "Read edges" in self.w:  # a new mesh drops the old mesh's edges
                 self.set_edges(None)
             self.seq, self.idx = [verts], 0
         s = self.encoded.stats
         lines = [f"{shape} {name}: {len(self.verts)} verts", f"payload {p.payload}, {p.layout} layout",
-                 s["graph"], f"{s['values']} values on {s['qubits']} qubits",
+                 s["graph"], *([f"data-qubit quality {s['quality']:.2f}"] if s["quality"] is not None else []),
+                 f"{s['values']} values on {s['qubits']} qubits",
                  f"= {s['ratio']:.2f} values / qubit", f"(angle encoding: {s['values']} qubits)",
                  f"capacity used {s['values']}/{s['capacity']}",
                  f"depth {s['depth']}, 2q gates {s['twoq']}"]
@@ -348,6 +359,9 @@ class App:
             self.legend(self.eax, (EDGE_CMAP, exact.min(), exact.max(), "edge length read from coherences"))
         else:
             self.legend(self.eax, None)
+        if not self.toggles()["map"]:
+            self.focus = None
+        self.draw_map()
         self.draw()
 
     def draw(self):
@@ -365,6 +379,8 @@ class App:
             self.edge_coll.set_color(self.edge_rgba)
             edge_txt = " · edges: length read from coherences"
         self.edge_coll.set_visible(bool(self.edge_data))
+        mates = self.focus["mates"] if self.focus else []
+        self.mates.set_data_3d(*v[mates].T) if len(mates) else self.mates.set_data_3d([], [], [])
         if self.fidelity:
             head = "Fidelity · gain 1 (true decoded positions)"
         else:
@@ -402,9 +418,96 @@ class App:
             self.marker.set_visible(False)
             self.fig.canvas.draw_idle()
 
+    # --- qubit map -------------------------------------------------------------
+    # qmap["vertices"][i][c] = [group, address]: value c of vertex i is in data qubit
+    # groups[group]["data"], in the slot where address qubit groups[group]["addresses"][j]
+    # reads bit j of address (Tessa's decoder bit order).
+    def set_focus(self, vertex=None, group=None):
+        """Highlight a vertex's data qubit(s), or one data qubit, on the map and mesh."""
+        focus = None
+        if self.toggles()["map"] and (vertex is not None or group is not None):
+            vs = self.qmap["vertices"]
+            groups = sorted({g for g, _ in vs[vertex]}) if vertex is not None else [group]
+            focus = {"vertex": vertex, "groups": groups,
+                     "mates": [i for i, v in enumerate(vs) if any(g in groups for g, _ in v)]}
+        if focus == self.focus:
+            return
+        self.focus = focus
+        self.draw_map()
+        self.draw()
+
+    def draw_map(self):
+        ax, on = self.max, self.toggles()["map"]
+        ax.clear()
+        ax.set_visible(on)
+        self.map_text.set_visible(on)
+        if not on:
+            return
+        m, f = self.qmap, self.focus
+        xy = np.array(m["coords"], float)
+        hot_groups = set(f["groups"]) if f else set()
+        hot_data = {m["groups"][g]["data"] for g in hot_groups}
+        bits = {q: None for g in hot_groups for q in m["groups"][g]["addresses"]}
+        if f and f["vertex"] is not None and len(m["vertices"][f["vertex"]]) == 1:
+            g, a = m["vertices"][f["vertex"]][0]  # one value: label each address bit
+            bits.update({q: (a >> j) & 1 for j, q in enumerate(m["groups"][g]["addresses"])})
+        hot_edge = [(a in hot_data and b in bits) or (b in hot_data and a in bits) for a, b in m["edges"]]
+        ax.add_collection(LineCollection(xy[m["edges"]], colors=[HOT if h else "#c9c6bf" for h in hot_edge],
+                                         linewidths=[2.2 if h else 1.0 for h in hot_edge], zorder=1))
+        span = xy.max(0) + 1
+        w, h = ax.get_window_extent().size
+        step = min(w / span[0], h / span[1]) * 72 / self.fig.dpi  # points per lattice step
+        data = [g["data"] for g in m["groups"]]
+        addr = [q for q in range(len(xy)) if q not in set(data)]
+        ax.scatter(*xy[addr].T, marker="s", s=[(step * (0.5 if q in bits else 0.34)) ** 2 for q in addr],
+                   c=[HOT if q in bits else "#6b6f78" for q in addr], zorder=2)
+        used = {g for v in m["vertices"] for g, _ in v}
+        ax.scatter(*xy[data].T, s=(step * 0.6) ** 2, zorder=3,
+                   c=[HOT if k in hot_groups else "#3d5a98" if k in used else "#dcdad4"
+                      for k in range(len(data))])
+        for q, b in bits.items():
+            if b is not None:
+                ax.text(*xy[q], str(b), ha="center", va="center", fontsize=max(5, step * 0.35),
+                        color="white", weight="bold", zorder=4)
+        ax.set(xlim=(-0.6, span[0] - 0.4), ylim=(span[1] - 0.4, -0.6), aspect="equal")
+        ax.set_axis_off()
+        self.map_text.set_text(self.focus_text() + "\n● data qubit (2^k slots, k = its address "
+                               "qubits)  ■ address qubit\nblue ● = holds part of this mesh")
+
+    def focus_text(self):
+        f, m = self.focus, self.qmap
+        pair = " (θ: shape, φ: colour)" if self.encoded.pair else ""
+        if not f:
+            return "Hover a vertex on the mesh, or a data qubit here."
+        addrs = lambda g: m["groups"][g]["addresses"]  # noqa: E731
+        if f["vertex"] is None:
+            g = f["groups"][0]
+            held = sum(gg == g for v in m["vertices"] for gg, _ in v)
+            return (f"data q{m['groups'][g]['data']} · address " + " ".join(f"q{q}" for q in addrs(g))
+                    + f"\n{2 ** len(addrs(g))} slots, {held} hold values of this mesh{pair}"
+                    + f"\n{len(f['mates'])} vertices on it (orange on the mesh)")
+        names = ["r"] if len(m["vertices"][0]) == 1 else ["x", "y", "z"]
+        lines = [f"{names[c]} → data q{m['groups'][g]['data']}, slot {a} of {2 ** len(addrs(g))}, address "
+                 + " ".join(f"q{q}={(a >> j) & 1}" for j, q in enumerate(addrs(g)))
+                 for c, (g, a) in enumerate(m["vertices"][f["vertex"]])]
+        share = "these data qubits" if len(f["groups"]) > 1 else "this data qubit"
+        return (f"vertex {f['vertex']}{pair}\n" + "\n".join(lines)
+                + f"\n{len(f['mates'])} vertices share {share} (orange)")
+
+    def hover_map(self, event):
+        xy = np.array(self.qmap["coords"], float)
+        data = np.array([g["data"] for g in self.qmap["groups"]])
+        d = np.hypot(*(xy[data] - (event.xdata, event.ydata)).T)
+        self.set_focus(group=int(d.argmin()) if d.min() < 0.45 else None)
+
     def hover(self, event):
-        """While paused, show the nearest vertex's original vs current coordinates."""
-        if self.playing or event.inaxes is not self.ax:
+        """Nearest vertex: original vs current coordinates while paused; with the qubit
+        map on, also its data and address qubits (while playing too)."""
+        map_on = self.toggles()["map"]
+        if map_on and event.inaxes is self.max:
+            return self.hover_map(event)
+        if event.inaxes is not self.ax or (self.playing and not map_on):
+            self.set_focus(None)
             return self.hide_tip()
         v = self.seq[self.idx]
         xs, ys, _ = proj3d.proj_transform(*v.T, self.ax.get_proj())
@@ -412,6 +515,10 @@ class App:
         dist = np.hypot(*(pix - (event.x, event.y)).T)
         i = int(dist.argmin())
         if dist[i] > 12:
+            self.set_focus(None)
+            return self.hide_tip()
+        self.set_focus(vertex=i)
+        if self.playing:
             return self.hide_tip()
         o, n = self.verts[i], v[i]
         fmt = lambda a: "(" + ", ".join(f"{c:+.4f}" for c in a) + ")"  # noqa: E731

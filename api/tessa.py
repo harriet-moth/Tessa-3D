@@ -56,7 +56,7 @@ def run(req):
             "frames": [rounded(f) for f in frames], "requested": want,
             "colours": None if colours[0] is None else rounded(colours, 4),
             "colour": None if e.colour is None else rounded(e.colour, 4),
-            "qubits": bridge.vertex_qubits(e).tolist(), "stats": e.stats,
+            "qubits": bridge.vertex_qubits(e).tolist(), "map": bridge.qubit_map(e), "stats": e.stats,
             "split": bool((np.diff(np.searchsorted(bridge.cells(e.graph)[:, 1], e.slots, side="right"), axis=1) != 0).any()),
             "error": float(np.mean([bridge.mesh_error(verts, f) for f in frames])),
             "seconds": time.time() - t0}

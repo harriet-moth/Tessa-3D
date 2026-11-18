@@ -38,6 +38,10 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; pa
   border-top: 1px solid var(--line); }
 #tip { position: absolute; pointer-events: none; background: var(--tip); border: 1px solid var(--line);
   border-radius: 6px; padding: 6px 8px; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre; }
+#qmap { position: absolute; left: 12px; bottom: 44px; max-width: 270px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; opacity: 0.96; }
+#qmap canvas { display: block; margin: 0 auto 6px; cursor: crosshair; }
+#qtext { font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); white-space: pre-wrap; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px;
   max-height: calc(100vh - 100px); overflow: auto; }
 .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -70,5 +74,6 @@ svg text { fill: var(--muted); font-size: 11px; }
   main { grid-template-columns: 1fr; padding: 0 16px; }
   .stage { min-height: 60vh; }
   .panel { max-height: none; }
+  #qmap { position: static; max-width: none; margin: 0 8px 8px; }
   header, footer { padding: 12px 16px; }
 }

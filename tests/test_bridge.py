@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from tessa_ripple.animate import blend
-from tessa_ripple.bridge import (Params, cells, encode_mesh, fit_lattice, mesh_error, read_edges,
+from tessa_ripple.bridge import (Params, cells, encode_mesh, fit_lattice, mesh_error, qubit_map, read_edges,
                                  read_mesh, resources, decode_raw)
 from tessa_ripple.mesh import blob, cube, uv_sphere
 
@@ -76,3 +76,32 @@ def test_cube_xyz_still_works():
     v, f = cube(3)
     p = Params(payload="xyz")
     assert mesh_error(v, read_mesh(encode_mesh(v, f, p), p)) < 0.05
+
+
+@pytest.mark.parametrize("backend", ["noiseless", "phoenix"])
+def test_qubit_map_points_each_value_at_its_slot(backend):
+    v, f = blob(12, 8)
+    e = encode_mesh(v, f, Params(backend=backend, payload="xyz"))
+    m, bounds = qubit_map(e), cells(e.graph)
+    assert len(m["coords"]) == e.graph.n_qubits
+    for (g, addr), slot in zip(np.reshape(m["vertices"], (-1, 2)), e.slots.ravel()):
+        assert bounds[g, 0] + addr == slot and addr < 2 ** len(m["groups"][g]["addresses"])
+    data = {grp["data"] for grp in m["groups"]}
+    assert all(a not in data for grp in m["groups"] for a in grp["addresses"])
+    assert all({a, b} & data for a, b in m["edges"])  # every coupler touches a data qubit
+
+
+@pytest.mark.parametrize("layout", ["mesh", "naive"])
+def test_quality_placement_uses_only_the_best_data_qubits(layout):
+    from tessa_ripple.bridge import chip_quality, probe_chip, snapshot_json, QUALITY_FILE  # noqa: F401
+    import json
+    stored = json.loads(QUALITY_FILE.read_text())["phoenix"]
+    assert stored["calibrated_at"] == snapshot_json("phoenix")["calibrated_at"]  # file is current
+    q = chip_quality("phoenix")
+    v, f = blob(12, 8)
+    e = encode_mesh(v, f, Params(backend="phoenix", layout=layout, placement="quality"))
+    used = np.unique(np.searchsorted(cells(e.graph)[:, 1], e.slots, side="right"))
+    assert q[used].min() >= np.sort(q)[::-1][len(used) - 1]  # no better data qubit was skipped
+    g = encode_mesh(v, f, Params(backend="phoenix", layout=layout, placement="graph"))
+    assert e.stats["quality"] > g.stats["quality"]
+    assert Params(placement="quality").encoder_key == Params(placement="graph").encoder_key  # lattice: no effect

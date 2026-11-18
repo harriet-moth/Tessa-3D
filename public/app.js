@@ -38,19 +38,25 @@ const edgeLines = new THREE.LineSegments(edgeGeom, new THREE.LineBasicMaterial({
 const marker = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), new THREE.MeshBasicMaterial({ color: 0xd0342c }));
 // Faces get one flat colour each (the mean of their vertices, as in the desktop app);
 // each vertex's exact colour is shown on its own dot, so no value is smeared across faces.
-const dotTexture = (() => {
+const discTexture = (fill, ring, width) => {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const x = c.getContext('2d');
-  x.beginPath(); x.arc(32, 32, 26, 0, 2 * Math.PI);
-  x.fillStyle = '#fff'; x.fill();
-  x.lineWidth = 7; x.strokeStyle = 'rgba(20, 22, 30, 0.75)'; x.stroke();
-  return new THREE.CanvasTexture(c);
-})();
+  x.beginPath(); x.arc(32, 32, 30 - width / 2, 0, 2 * Math.PI);
+  x.fillStyle = fill; x.fill();
+  x.lineWidth = width; x.strokeStyle = ring; x.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; // so the orange matches the qubit map's exactly
+  return t;
+};
+const dotTexture = discTexture('#fff', 'rgba(20, 22, 30, 0.75)', 7);
 const dotGeom = new THREE.BufferGeometry();
 const dots = new THREE.Points(dotGeom, new THREE.PointsMaterial({ vertexColors: true, map: dotTexture, alphaTest: 0.5, size: 0.06 }));
-edgeLines.visible = marker.visible = false;
-scene.add(mesh, wire, edgeLines, dots, marker);
+// Qubit map: every vertex on the hovered data qubit gets an orange dot.
+const mateGeom = new THREE.BufferGeometry();
+const mates = new THREE.Points(mateGeom, new THREE.PointsMaterial({ map: discTexture('rgb(230, 150, 0)', '#14161e', 12), alphaTest: 0.5, size: 0.08 }));
+edgeLines.visible = marker.visible = mates.visible = false;
+scene.add(mesh, wire, edgeLines, dots, marker, mates);
 
 function resize() {
   const w = viewer.clientWidth, h = viewer.clientHeight;
@@ -83,7 +89,7 @@ function params() {
     shape: val('shape'), resolution: num('resolution'), payload: val('payload'), layout: val('layout'),
     mode: val('mode'), clamp: num('clamp') * Math.PI || null, clamp_b: num('clamp_b') * Math.PI || null,
     compression: num('compression'), quant_bits: num('quant_bits') || null, headroom: num('headroom'),
-    backend: val('backend'), shots: 2 ** num('shots'), noise_strength: num('noise_strength'),
+    backend: val('backend'), placement: val('placement'), shots: 2 ** num('shots'), noise_strength: num('noise_strength'),
     seed: num('seed'), drr: val('drr'),
   };
 }
@@ -130,6 +136,7 @@ function buildMesh(d) {
     len += Math.hypot(...[0, 1, 2].map((c) => d.verts[a][c] - d.verts[b][c]));
   }
   dots.material.size = 0.6 * len / (S.wire.length / 2);
+  mates.material.size = 2 * dots.material.size;
 }
 
 function mulberry32(a) {
@@ -263,6 +270,7 @@ function draw() {
   mesh.material.opacity = S.edges ? 0.35 : 1;
   marker.visible = false;
   $('tip').hidden = true;
+  placeMates();
   const head = val('view') === 'fidelity' ? 'Fidelity · gain 1 (true decoded positions)'
     : `Material · gain ${num('gain').toFixed(1)}× (noise exaggerated)`;
   const stale = S.run && JSON.stringify(params()) !== S.run ? ' · settings changed: press Run' : '';
@@ -274,7 +282,7 @@ function showInfo(d, p) {
   const s = d.stats;
   $('info').textContent = [
     `${p.shape} · ${d.verts.length} verts · ${p.payload}, ${p.layout} layout`,
-    s.graph,
+    s.graph + (s.quality != null ? ` · data-qubit quality ${s.quality.toFixed(2)}` : ''),
     `${s.values} values on ${s.qubits} qubits = ${s.ratio.toFixed(2)} / qubit`,
     `(angle encoding would need ${s.values} qubits)`,
     `capacity used ${s.values}/${s.capacity}`,
@@ -292,7 +300,9 @@ async function run(frames) {
     Object.assign(S, { data: d, run: JSON.stringify(p), orig: new Float32Array(d.verts.flat()),
       frames: d.frames.map((f) => new Float32Array(f.flat())), step: 0 });
     showInfo(d, p);
+    S.focus = null;
     rebuild();
+    drawMap();
     S.playing = d.frames.length > 1;
     if (!S.playing) { S.step = S.seq.length - 1; draw(); }
     const cut = d.frames.length < d.requested ? ` (stopped at the time limit; asked for ${d.requested})` : '';
@@ -407,19 +417,122 @@ function downloadObj() {
   URL.revokeObjectURL(a.href);
 }
 
-// ---------- hover (paused only)
+// ---------- qubit map: which data and address qubits hold each vertex
+// map.vertices[i][c] = [group, address]: value c of vertex i sits in data qubit
+// groups[group].data, in the slot where address qubit groups[group].addresses[j]
+// reads bit j of address (Tessa's decoder bit order).
+const HOT = 'rgb(230, 150, 0)';
+const mapOn = () => $('qmapOn').checked && !!S.data;
+const comps = () => (S.data.map.vertices[0].length === 1 ? ['r'] : ['x', 'y', 'z']);
+
+function mapGeometry() {
+  const m = S.data.map, xs = m.coords.map((c) => c[0]), ys = m.coords.map((c) => c[1]);
+  const nx = Math.max(...xs) + 1, ny = Math.max(...ys) + 1, step = Math.min(250 / nx, 220 / ny);
+  return { m, step, w: nx * step, h: ny * step, pos: (q) => [(m.coords[q][0] + 0.5) * step, (m.coords[q][1] + 0.5) * step] };
+}
+
+function drawMap() {
+  $('qmap').hidden = !mapOn();
+  if (!mapOn()) return;
+  const { m, step, w, h, pos } = mapGeometry(), c = $('qcanvas'), dpr = devicePixelRatio || 1;
+  c.width = w * dpr; c.height = h * dpr; c.style.width = `${w}px`; c.style.height = `${h}px`;
+  const ctx = c.getContext('2d'), css = getComputedStyle(document.documentElement);
+  const [muted, accent, line, panel] = ['--muted', '--accent', '--line', '--panel'].map((v) => css.getPropertyValue(v).trim());
+  ctx.scale(dpr, dpr);
+  const f = S.focus, hotGroups = new Set(f ? f.groups : []);
+  const hotAddr = new Map(); // address qubit -> bit, when one value is hovered
+  for (const g of hotGroups) for (const q of m.groups[g].addresses) hotAddr.set(q, null);
+  if (f && f.vertex !== null && f.groups.length === 1 && S.data.map.vertices[f.vertex].length === 1) {
+    const [g, a] = S.data.map.vertices[f.vertex][0];
+    m.groups[g].addresses.forEach((q, j) => hotAddr.set(q, (a >> j) & 1));
+  }
+  const hotData = new Set([...hotGroups].map((g) => m.groups[g].data));
+  for (const [a, b] of m.edges) {
+    const hot = (hotData.has(a) && hotAddr.has(b)) || (hotData.has(b) && hotAddr.has(a));
+    ctx.strokeStyle = hot ? HOT : line; ctx.lineWidth = hot ? 2.5 : 1.5;
+    ctx.beginPath(); ctx.moveTo(...pos(a)); ctx.lineTo(...pos(b)); ctx.stroke();
+  }
+  const used = new Set(S.data.map.vertices.flat().map((v) => v[0]));
+  const data = new Set(m.groups.map((g) => g.data));
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `600 ${Math.max(8, step * 0.32)}px ui-monospace, Menlo, monospace`;
+  m.coords.forEach((_, q) => {
+    if (data.has(q)) return;
+    const [x, y] = pos(q), half = step * (hotAddr.has(q) ? 0.24 : 0.17);
+    ctx.fillStyle = hotAddr.has(q) ? HOT : muted;
+    ctx.fillRect(x - half, y - half, 2 * half, 2 * half);
+    if (hotAddr.get(q) != null) { ctx.fillStyle = panel; ctx.fillText(hotAddr.get(q), x, y + 0.5); }
+  });
+  m.groups.forEach((g, k) => {
+    const [x, y] = pos(g.data);
+    ctx.beginPath(); ctx.arc(x, y, step * 0.3, 0, 2 * Math.PI);
+    ctx.fillStyle = hotGroups.has(k) ? HOT : used.has(k) ? accent : line;
+    ctx.fill();
+  });
+  $('qtext').textContent = focusText() + '\n● data qubit (2^k slots, k = its address qubits) ■ address qubit\nfilled ● = holds part of this mesh';
+}
+
+function focusText() {
+  const f = S.focus, m = S.data.map, pair = S.data.colour ? ' (θ: shape, φ: colour)' : '';
+  if (!f) return 'Hover a vertex on the mesh, or a data qubit here.';
+  const qs = (g) => m.groups[g].addresses.map((q) => `q${q}`).join(' ');
+  if (f.vertex === null) {
+    const g = f.groups[0], held = m.vertices.flat().filter((v) => v[0] === g).length;
+    return `data q${m.groups[g].data} · address ${qs(g)}\n${2 ** m.groups[g].addresses.length} slots, ${held} hold values of this mesh${pair}\n${f.mates.length} vertices on it (orange on the mesh)`;
+  }
+  const lines = m.vertices[f.vertex].map(([g, a], c) => {
+    const bits = m.groups[g].addresses.map((q, j) => `q${q}=${(a >> j) & 1}`).join(' ');
+    return `${comps()[c]} → data q${m.groups[g].data}, slot ${a} of ${2 ** m.groups[g].addresses.length}\n    address ${bits}`;
+  });
+  return `vertex ${f.vertex}${pair}\n${lines.join('\n')}\n${f.mates.length} vertices share ${f.groups.length > 1 ? 'these data qubits' : 'this data qubit'} (orange)`;
+}
+
+function setFocus(vertex, group = null) {
+  if (!mapOn() || (vertex === null && group === null)) S.focus = null;
+  else {
+    const groups = vertex !== null ? [...new Set(S.data.map.vertices[vertex].map((v) => v[0]))] : [group];
+    if (S.focus && S.focus.vertex === vertex && S.focus.groups.join() === groups.join()) return;
+    const mates = [];
+    S.data.map.vertices.forEach((vs, i) => { if (vs.some((v) => groups.includes(v[0]))) mates.push(i); });
+    S.focus = { vertex, groups, mates };
+  }
+  placeMates();
+  drawMap();
+}
+
+function placeMates() {
+  mates.visible = !!(S.focus && S.seq.length);
+  if (!mates.visible) return;
+  const v = S.seq[S.step], pts = new Float32Array(S.focus.mates.length * 3);
+  S.focus.mates.forEach((i, k) => pts.set(v.subarray(3 * i, 3 * i + 3), 3 * k));
+  mateGeom.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  mateGeom.computeBoundingSphere();
+}
+
+$('qcanvas').addEventListener('pointermove', (e) => {
+  if (!mapOn()) return;
+  const { m, step, pos } = mapGeometry(), r = e.currentTarget.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const k = m.groups.findIndex((g) => Math.hypot(pos(g.data)[0] - x, pos(g.data)[1] - y) < step * 0.45);
+  if (k >= 0) setFocus(null, k);
+});
+$('qcanvas').addEventListener('pointerleave', () => setFocus(null));
+
+// ---------- hover: coordinates while paused; the qubit map (if on) also while playing
 const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
 function hideTip() { marker.visible = false; $('tip').hidden = true; }
+function clearHover() { hideTip(); if (S.focus) setFocus(null); }
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (S.playing || !S.data) return hideTip();
+  if (!S.data || (S.playing && !mapOn())) return clearHover();
   const r = renderer.domElement.getBoundingClientRect();
   ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ptr, camera);
   const hit = ray.intersectObject(mesh)[0];
-  if (!hit) return hideTip();
+  if (!hit) return clearHover();
   const v = S.seq[S.step], o = S.orig;
   const at = (i, a) => new THREE.Vector3(a[3 * i], a[3 * i + 1], a[3 * i + 2]);
   const i = [hit.face.a, hit.face.b, hit.face.c].map((c) => S.corner[c]).sort((p, q) => at(p, v).distanceTo(hit.point) - at(q, v).distanceTo(hit.point))[0];
+  setFocus(i);
+  if (S.playing) return hideTip();
   const cur = at(i, v), org = at(i, o), d = cur.clone().sub(org);
   const f = (p) => `(${[p.x, p.y, p.z].map((c) => (c >= 0 ? '+' : '') + c.toFixed(4)).join(', ')})`;
   const gain = val('view') === 'fidelity' ? 1 : num('gain');
@@ -431,7 +544,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   tip.style.top = `${e.clientY - stage.top + 10}px`;
   tip.hidden = false;
 });
-renderer.domElement.addEventListener('pointerleave', hideTip);
+renderer.domElement.addEventListener('pointerleave', clearHover);
 
 // ---------- wiring
 document.querySelectorAll('input[type=range]').forEach((el) => {
@@ -440,12 +553,13 @@ document.querySelectorAll('input[type=range]').forEach((el) => {
   el.addEventListener('input', show);
   show();
 });
-for (const id of ['shape', 'resolution', 'payload', 'mode', 'layout', 'clamp', 'clamp_b', 'compression', 'quant_bits', 'headroom', 'backend', 'shots', 'noise_strength', 'drr']) {
+for (const id of ['shape', 'resolution', 'payload', 'mode', 'layout', 'clamp', 'clamp_b', 'compression', 'quant_bits', 'headroom', 'backend', 'placement', 'shots', 'noise_strength', 'drr']) {
   $(id).addEventListener('input', draw);
 }
 for (const id of ['view', 'colour', 'gain', 'mask', 'between', 'loop', 'orig', 'seed']) $(id).addEventListener('input', rebuild);
 $('shade').addEventListener('input', draw);
 $('dots').addEventListener('input', draw);
+$('qmapOn').addEventListener('input', () => setFocus(null));
 $('run').onclick = () => run(1);
 $('runFrames').onclick = () => run(num('frames'));
 $('play').onclick = () => { S.playing = !S.playing; hideTip(); if (S.playing && S.step + 1 >= S.seq.length) S.step = 0; };

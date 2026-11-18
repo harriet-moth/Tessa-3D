@@ -49,7 +49,8 @@ the same way. Blender's Suzanne is included:
 Suzanne has 507 vertices, measured at 4,096 shots:
 - **Radial on a 9×9 lattice:** 507 values on 81 qubits (6.3 per qubit), 0.5 % error.
 - **Pair mode (shape + colour):** 1,014 values on the same 81 qubits, 0.8 % error.
-- **Whole `ibm_phoenix` chip with calibrated noise:** 1.7 % error, or 2.3 % in pair mode.
+- **Whole `ibm_phoenix` chip with calibrated noise:** 0.95 % error, or 1.5 % in pair mode,
+  with **Placement** *quality* (1.7 % and 2.2 % with Tessa's own order).
 - **Read edges:** all 1,005 edges in about 6 s, with 3.1 % error noiseless.
 
 As xyz (1,521 values) she is too big for any lattice here.
@@ -97,7 +98,8 @@ Then open http://localhost:8000.
      is a piece of a real device.
    - On a chip backend, that chip's whole coupling graph from Tessa's calibration
      snapshot: `ibm_phoenix` (120 qubits, capacity 792) or `ibm_fez` (156 qubits,
-     capacity 448).
+     capacity 448). A mesh usually fills only part of the chip, so by default its
+     values go on the best data qubits first (see **Placement**).
    - A data qubit with `k` address neighbours holds `2^k` values, so capacity is
      the sum of `2^k` over data qubits. That is why there are more values than
      qubits.
@@ -128,7 +130,7 @@ add-on can reuse them.
 | A second field in the phase | **Mode** *pair*: vertex colour rides in φ (**Colour** *φ colour*) |
 | Smooth data compresses | **Curves**: error and depth against compression for both layouts |
 | Coherences carry differences | **Read edges**: edge lengths read from the state |
-| Real devices have good and bad qubits | **Backend** *phoenix* / *fez*, **Colour** *error* or *qubit* |
+| Real devices have good and bad qubits | **Backend** *phoenix* / *fez*, **Placement**, **Colour** *error* or *qubit* |
 
 Example: the default blob (86 values, radial), **Why Tessa**, 4,096 shots.
 
@@ -148,6 +150,24 @@ Tessa uses a few values per qubit, no SWAPs, and modest depth.
 ## Findings worth knowing
 
 Measured while building this; the README states them as measured, not as claims.
+
+- **Where the mesh lands on a chip matters more than the chip's average.** Tessa's
+  own group order starts the low-resolution blob in a bad corner of Phoenix:
+  - one address qubit there reads out at 50 % error;
+  - its couplers average 13.6 % CZ error.
+
+  Filling the best data qubits first (**Placement** *quality*) cuts the error by
+  1.5–4.3× (radial, 4,096 shots, 3 seeds):
+
+  | Mesh | Chip | Payload | Tessa's order | Best qubits first |
+  |---|---|---|---|---|
+  | blob low | Phoenix | radial | 3.38 % | 0.79 % |
+  | blob low | Phoenix | xyz | 9.36 % | 3.14 % |
+  | blob low | Fez | radial | 1.49 % | 0.98 % |
+  | blob low | Fez | xyz | 6.35 % | 3.56 % |
+  | blob high | Phoenix | radial | 3.19 % | 0.87 % |
+  | blob high | Fez | radial | 2.23 % | 1.11 % |
+  | Suzanne | Phoenix | radial | 1.72 % | 0.95 % |
 
 - **Pair mode doubles the two-qubit gates.** Tessa's docstring says the second
   field comes "at no extra two-qubit gate cost". Tessa's own circuit builder
@@ -310,6 +330,25 @@ what the colours mean.
     (`build_local_noise_model`). The noise model is built once per chip and reused
     across seeds.
 
+**Placement** (best qubits first / Tessa's order; chip backends only)
+- *In practice:* where on the chip the mesh goes. *Best qubits first* (the
+  default) puts it only on data qubits that read back well, so far fewer
+  vertices misbehave. *Tessa's order* fills the chip from qubit 0 onward,
+  whatever their quality. The info panel shows the mean quality of the data
+  qubits used (1.00 = every test symbol read back right). Turn on
+  **Qubit map** to see where the mesh lands.
+- *In Tessa:* `probe_qubits(graph, sampler)` encodes random test symbols over the
+  whole chip, decodes them on the calibrated simulator, and scores each data
+  qubit by the fraction read back right. That folds in its address qubits'
+  readout and its couplers' CZ errors. `slot_order(graph, quality)` then ranks
+  the slots best data qubit first, and `bridge.place` fills them in that order;
+  the mesh layout still keeps each patch on one data qubit. Probing takes about
+  8 s per chip, so the scores are stored in `tessa_ripple/quality.json`, keyed
+  by the snapshot's calibration date. Regenerate them with
+  `.venv/bin/python -m tessa_ripple.bridge`; if the date doesn't match, the
+  app probes on first use instead. Simulator backends have identical qubits,
+  so the setting does nothing there.
+
 **Shots** (2^8–2^16; default 4,096)
 - *In practice:* the main jitter control. Error falls as `1/√shots` (see **Curves**).
 - *In Tessa:* `decode(shots=...)`, measurements per cell circuit and basis.
@@ -385,10 +424,12 @@ on the far side.
 - *In practice:* playback speed, changeable live while it plays. It is also the
   GIF frame rate.
 
-**Loop**, **Start from original**, **Auto-run**
+**Loop**, **Start from original**, **Auto-run**, **Qubit map**
 - *Loop*: playback repeats from the first frame.
 - *Start from original*: the animation begins at the undistorted mesh.
 - *Auto-run*: every encoder or readout change decodes a single frame straight away.
+- *Qubit map*: draws the lattice or chip; hovering a vertex shows its data and
+  address qubits. See [Qubit map](#qubit-map).
 
 ### Buttons
 
@@ -432,10 +473,43 @@ vertex is circled. Its tooltip shows the data qubit that holds it, its original
 and current coordinates, and the delta. In the fidelity view, the delta is
 exactly Tessa's readout error for that vertex.
 
+### Qubit map
+
+Tick **Qubit map** (under View on the web, with the toggles in the desktop
+window) to draw the qubits Tessa used, in the style of
+the Tessa web app: the fitted lattice for the simulator backends, or the
+whole Phoenix (square) or Fez (heavy-hex) chip. Circles are data qubits and
+squares are address qubits. A filled circle holds part of this mesh.
+
+Hover a vertex on the mesh (this works while playing too, since the mapping
+never changes):
+
+- Its data qubit and that qubit's address qubits turn orange on the map.
+- For one value per vertex (radial), each address square shows the bit it reads
+  in that vertex's slot.
+- The text gives every value's slot, for example
+  `r → data q8, slot 3 of 16, address q3=1 q7=1 q9=0 q13=0`. With xyz there is
+  one line each for x, y and z.
+- Every vertex that shares the same data qubit gets an orange disc on the mesh.
+  That is the patch one multiplexer encodes. The mesh layout keeps it compact;
+  the naive layout spreads it out.
+
+Hovering a data qubit on the map does the reverse: it shows that qubit's slots
+and marks its vertices on the mesh.
+
+Slot k of a data qubit is the address state where address qubit j reads bit j
+of k. That is the bit order Tessa's decoder uses (`_table_expectation`). In pair
+mode the same slot also carries the vertex colour in φ. In the desktop window the
+orange discs on the back of the mesh show through, because matplotlib has no
+depth test. The server builds the
+map with `bridge.qubit_map(e)`.
+
 ## Not done yet
 
-- **Quality-aware placement.** Tessa's `slot_order(graph, quality)` could put
-  important vertices (silhouette, high curvature) on a chip's best qubits.
+- **Importance-aware placement.** **Placement** puts the whole mesh on a chip's
+  best qubits but treats every vertex alike. A mesh that fills most of the chip
+  could still send its most important vertices (silhouette, high curvature) to
+  the very best ones.
 - **Full-lattice coherences.** Hadamards on the address qubits of the whole
   encoded mesh, instead of isolated pairs.
 - **Real hardware.** Tessa would run whole circuits there with

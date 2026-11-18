@@ -4,14 +4,16 @@ decode it per seed, compare resources, and read edge lengths from coherences.
 Pure functions, numpy in and numpy out, so a Blender add-on can reuse them.
 """
 
+import json
 from dataclasses import dataclass, replace
 from functools import cache
+from pathlib import Path
 
 import numpy as np
 from qiskit import ClassicalRegister, QuantumCircuit, transpile
 from qiskit.circuit.library import StatePreparation, UCRYGate
 from tessa import (Lattice, build_local_noise_model, decode, encode, graph_from_coupling,
-                   prepare_field, restore_field)
+                   prepare_field, probe_qubits, restore_field, slot_order)
 from tessa.backends import DeviceSampler, aer_sampler, counts_of, device_of, noisy_sampler
 from tessa.hardware import devices
 
@@ -20,6 +22,8 @@ from .mesh import bfs_order, edges
 MAX_ROWS, MAX_COLS = 10, 12  # largest lattice: the whole 10x12 ibm_phoenix chip
 DEVICES = ("phoenix", "fez")  # Tessa's offline calibration snapshots
 BACKENDS = ("noiseless", "flat noise", *DEVICES)
+PLACEMENTS = ("graph", "quality")  # chip backends: Tessa's group order, or best data qubits first
+QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores per chip snapshot
 DRR_METHODS = ("none", "min_max", "mean_std", "percentile", "abs_max", "min_avg_max")
 # Typical IBM-like machine averages (tessa.backend_rates fallbacks) for "flat noise".
 IBM_LIKE_RATES = {"sx_error": 3e-4, "cz_error": 8e-3, "readout_error": 1e-2,
@@ -37,6 +41,7 @@ class Params:
     compression: float = 0.0       # percent (0-100) of multiplexer coefficients dropped
     quant_bits: int | None = None
     headroom: float = 0.1          # padding on the value_range
+    placement: str = "quality"     # chips only: best data qubits first | "graph": Tessa's order
     # readout (changing these re-decodes; a chip backend also changes the graph)
     backend: str = "noiseless"     # one of BACKENDS
     shots: int = 4096
@@ -47,7 +52,8 @@ class Params:
     def encoder_key(self):
         graph = self.backend if self.backend in DEVICES else "lattice"
         return (self.payload, self.layout, self.mode, self.clamp, self.clamp_b,
-                self.compression, self.quant_bits, self.headroom, graph)
+                self.compression, self.quant_bits, self.headroom, graph,
+                self.placement if graph != "lattice" else "graph")
 
     @property
     def readout_key(self):
@@ -69,6 +75,7 @@ class Encoded:
     dirs: np.ndarray | None
     colour: np.ndarray | None   # original colour field in [0, 1] (pair mode)
     single_twoq: int            # two-qubit gates of the theta-only circuit
+    quality: np.ndarray | None = None  # chip only: probe_qubits score per data qubit
 
     @property
     def pair(self) -> bool:
@@ -77,7 +84,9 @@ class Encoded:
     @property
     def stats(self) -> dict:
         n = self.slots.size * (2 if self.pair else 1)
-        return {"graph": self.name, "qubits": self.graph.n_qubits, "values": n,
+        used = np.unique(np.searchsorted(cells(self.graph)[:, 1], self.slots, side="right"))
+        q = None if self.quality is None else float(self.quality[used].mean())
+        return {"graph": self.name, "quality": q, "qubits": self.graph.n_qubits, "values": n,
                 "capacity": self.graph.capacity * (2 if self.pair else 1),
                 "ratio": n / self.graph.n_qubits, "depth": self.circuit.depth(),
                 "twoq": two_qubit(self.circuit), "twoq_single": self.single_twoq}
@@ -117,20 +126,28 @@ def cells(graph) -> np.ndarray:
     return np.column_stack([stops - [g.n_values for g in graph.groups], stops])
 
 
-def place(graph, n, comps, order=None) -> np.ndarray:
+def place(graph, n, comps, order=None, quality=None) -> np.ndarray:
     """Capacity slot of every value, shape (n, comps).
 
     ``order=None`` is the naive axis-major layout (all x, then all y, then all z).
     Otherwise each cell takes the next mesh-neighbouring vertices from ``order``
     and stores them as [x1..xm, y1..ym, z1..zm], so a vertex's components share a
     cell and every cell holds a smooth patch of the surface.
+
+    Cells are filled in graph order, or, given ``quality`` (one score per data
+    qubit), in Tessa's ``slot_order``: best data qubit first, so a mesh smaller
+    than the chip lands only on its best qubits.
     """
+    ranked = np.arange(graph.capacity) if quality is None else slot_order(graph, quality)
     if order is None:
         if n * comps > graph.capacity:
             raise ValueError(f"{n * comps} values exceed capacity {graph.capacity}")
-        return np.arange(comps) * n + np.arange(n)[:, None]
+        return ranked[np.arange(comps) * n + np.arange(n)[:, None]]
+    bounds = cells(graph)
+    cell_of = np.searchsorted(bounds[:, 1], ranked, side="right")
+    seq = cell_of[np.r_[True, cell_of[1:] != cell_of[:-1]]]  # cells in ranked order
     slots, k = np.empty((n, comps), int), 0
-    for lo, hi in cells(graph):
+    for lo, hi in bounds[seq]:
         m = min((hi - lo) // comps, n - k)
         if m > 0:
             slots[order[k:k + m]] = lo + np.arange(comps) * m + np.arange(m)[:, None]
@@ -173,6 +190,33 @@ def vertex_qubits(e: Encoded) -> np.ndarray:
     return np.array([e.graph.groups[i].data_qubit for i in cell])
 
 
+def qubit_map(e: Encoded) -> dict:
+    """Where every value sits on the qubits, for drawing the lattice or chip.
+
+    ``coords``/``edges`` draw the qubits and couplers (the chip's own drawing for a
+    device, rows and columns for a lattice). ``groups`` lists each data qubit with its
+    address qubits. ``vertices[i][c] = [group, address]``: value ``c`` of vertex ``i``
+    is in that group's slot whose address qubit ``groups[g].addresses[j]`` reads bit
+    ``j`` of ``address`` (the bit order Tessa's decoder uses). In pair mode the same
+    slot also holds the vertex colour in φ.
+    """
+    g = e.graph
+    if isinstance(g, Lattice):
+        coords = [list(g.site_of_qubit(q))[::-1] for q in range(g.n_qubits)]
+        couplers = [(g.qubit_index(r, c), g.qubit_index(r + dr, c + dc))
+                    for r in range(g.rows) for c in range(g.cols)
+                    for dr, dc in ((0, 1), (1, 0)) if r + dr < g.rows and c + dc < g.cols]
+    else:
+        coords = snapshot_json(e.name.split()[0].removeprefix("ibm_"))["coords"]
+        couplers = sorted(tuple(sorted(c)) for c in g.edges)
+    bounds = cells(g)
+    cell = np.searchsorted(bounds[:, 1], e.slots, side="right")
+    return {"coords": coords, "edges": [list(map(int, c)) for c in couplers],
+            "groups": [{"data": grp.data_qubit, "addresses": list(grp.address_qubits)}
+                       for grp in g.groups],
+            "vertices": np.stack([cell, e.slots - bounds[cell, 0]], -1).tolist()}
+
+
 # --- encode / decode -------------------------------------------------------------
 def encode_mesh(verts, faces, p: Params) -> Encoded:
     verts = np.asarray(verts, dtype=float)
@@ -182,12 +226,14 @@ def encode_mesh(verts, faces, p: Params) -> Encoded:
     top = float(np.abs(flat).max() or 1.0) * (1 + p.headroom)
     rng = (-top, top) if p.payload == "xyz" else (0.0, top)
     order = bfs_order(n, faces) if p.layout == "mesh" else None
+    quality = None
     if p.backend in DEVICES:
         graph, name = devices.graph(p.backend), f"ibm_{p.backend} (whole chip)"
+        quality = chip_quality(p.backend)
     else:
         graph = fit_lattice(n, comps, order is not None)
         name = f"{graph.rows}x{graph.cols} lattice"
-    slots = place(graph, n, comps, order)
+    slots = place(graph, n, comps, order, quality if p.placement == "quality" else None)
     a = fill(graph, slots, flat.reshape(n, comps))
     kw = dict(value_range=rng, compression=p.compression)
     single, _ = encode(graph, a, clamp=p.clamp, **kw)
@@ -200,7 +246,40 @@ def encode_mesh(verts, faces, p: Params) -> Encoded:
     else:
         circuit, enc = single, _
     return Encoded(verts, faces, graph, name, circuit, enc, prep, slots, p.payload, centre,
-                   dirs, colour, two_qubit(single))
+                   dirs, colour, two_qubit(single), quality)
+
+
+@cache
+def snapshot_json(device: str) -> dict:
+    """Tessa's stored calibration snapshot of ``device`` ("phoenix" or "fez")."""
+    return json.loads((devices.SNAPSHOT_DIR / f"ibm_{device}.json").read_text())
+
+
+def probe_chip(device: str) -> np.ndarray:
+    """Tessa's probe_qubits on the calibrated simulator: per data qubit, the fraction
+    of test symbols read back right (about 8 s per chip)."""
+    graph = devices.graph(device)
+    return probe_qubits(graph, sampler(graph, Params(backend=device), 0))
+
+
+@cache
+def chip_quality(device: str) -> np.ndarray:
+    """Quality per data qubit, from QUALITY_FILE when it matches the snapshot's
+    calibration date, otherwise probed now."""
+    try:
+        stored = json.loads(QUALITY_FILE.read_text())[device]
+        if stored["calibrated_at"] == snapshot_json(device)["calibrated_at"]:
+            return np.array(stored["quality"])
+    except (FileNotFoundError, KeyError):
+        pass
+    return probe_chip(device)
+
+
+def write_quality():
+    """Regenerate QUALITY_FILE: ``python -m tessa_ripple.bridge``."""
+    QUALITY_FILE.write_text(json.dumps({d: {"calibrated_at": snapshot_json(d)["calibrated_at"],
+                                            "quality": probe_chip(d).round(4).tolist()}
+                                        for d in DEVICES}, indent=1) + "\n")
 
 
 @cache
@@ -370,3 +449,7 @@ def read_edges(verts, faces, p: Params, seed: int | None = None):
     dv = 2 * np.arccos(np.clip(K, -1, 1)) / np.pi * (2 * half)  # |v_i - v_j| per axis
     measured = np.sqrt((dv.reshape(-1, 3) ** 2).sum(1))
     return E, measured, np.linalg.norm(verts[E[:, 0]] - verts[E[:, 1]], axis=1)
+
+
+if __name__ == "__main__":
+    write_quality()
