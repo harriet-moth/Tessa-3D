@@ -105,3 +105,12 @@ def test_quality_placement_uses_only_the_best_data_qubits(layout):
     g = encode_mesh(v, f, Params(backend="phoenix", layout=layout, placement="graph"))
     assert e.stats["quality"] > g.stats["quality"]
     assert Params(placement="quality").encoder_key == Params(placement="graph").encoder_key  # lattice: no effect
+
+
+def test_qubit_count_is_only_what_the_mesh_uses():
+    v, f = blob(16, 10)
+    e = encode_mesh(v, f, Params(backend="phoenix"))
+    s = e.stats
+    assert s["graph_qubits"] == 120 and s["qubits"] == len(e.used_qubits) < 120
+    data = {e.graph.groups[i].data_qubit for i in e.used_groups}
+    assert data == {e.graph.groups[g].data_qubit for g, _ in np.reshape(qubit_map(e)["vertices"], (-1, 2))}

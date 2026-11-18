@@ -124,7 +124,7 @@ add-on can reuse them.
 
 | Tessa property | Where to see it |
 |---|---|
-| Capacity is the sum of `2^degree`, more values than qubits | Info panel: "86 values on 20 qubits = 4.30 values / qubit (angle encoding: 86 qubits)" |
+| Capacity is the sum of `2^degree`, more values than qubits | Info panel: "86 values on 19 qubits (of 20) = 4.53 values / qubit (angle encoding: 86 qubits)" |
 | Runs on the chip's own couplers: no SWAPs, shallow | **Why Tessa** table, transpiled onto the Phoenix snapshot |
 | One measurement setting reads every value (two in pair mode), with at most 16 outcomes per cell | **Why Tessa**: settings, outcomes per cell, shots per value |
 | A second field in the phase | **Mode** *pair*: vertex colour rides in φ (**Colour** *φ colour*) |
@@ -136,11 +136,11 @@ Example: the default blob (86 values, radial), **Why Tessa**, 4,096 shots.
 
 | encoding | qubits | 2q gates | depth | SWAPs | outcomes per cell | shots per value |
 |---|---|---|---|---|---|---|
-| Tessa (4×5 lattice) | 20 | 96 | 84 | 0 | 16 | 256 |
+| Tessa (4×5 lattice) | 19 | 88 | 84 | 0 | 16 | 256 |
 | Angle (1 value per qubit) | 86 | 0 | 1 | 0 | 1 | 4096 |
 | QCrank (parallel QPIXL) | 8 | 141 | 493 | 15 | 32 | 128 |
-| FRQI | 8 | 176 | 687 | 16 | 128 | 32 |
-| Amplitude | 7 | 189 | 788 | 23 | 128 | 32 |
+| FRQI | 8 | 176 | 686 | 16 | 128 | 32 |
+| Amplitude | 7 | 189 | 782 | 23 | 128 | 32 |
 
 Tessa sits between the extremes. Angle encoding needs a qubit per value (86 here,
 and more than the chip has for big meshes). The compact encodings (QCrank, FRQI,
@@ -157,7 +157,9 @@ Measured while building this; the README states them as measured, not as claims.
   - its couplers average 13.6 % CZ error.
 
   Filling the best data qubits first (**Placement** *quality*) cuts the error by
-  1.5–4.3× (radial, 4,096 shots, 3 seeds):
+  1.5–4.3× (radial, 4,096 shots, 3 seeds). The trade-off is a few more qubits:
+  the best data qubits are scattered and include smaller 8-slot ones, so they
+  share fewer address qubits (mid blob on Phoenix: 40 qubits instead of 31).
 
   | Mesh | Chip | Payload | Tessa's order | Best qubits first |
   |---|---|---|---|---|
@@ -216,7 +218,12 @@ Controls fall into three tiers by how much work a change costs:
 The **info panel** shows:
 - the mesh, payload and layout;
 - the graph (lattice size or chip);
-- values on qubits, as values per qubit and against angle encoding;
+- values on qubits, as values per qubit and against angle encoding. Only the
+  qubits the mesh uses count: the data qubits holding its values plus their
+  address qubits. On a chip the rest hold constant padding (one rotation each,
+  no two-qubit gates), so the panel adds "(of 120)" for the whole chip. The
+  same count is Tessa's row in **Why Tessa**, whose random test data also goes
+  only in the mesh's own slots;
 - capacity used;
 - circuit depth and two-qubit gates (in pair mode, also the θ field alone).
 

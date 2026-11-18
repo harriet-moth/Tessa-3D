@@ -283,7 +283,7 @@ function showInfo(d, p) {
   $('info').textContent = [
     `${p.shape} · ${d.verts.length} verts · ${p.payload}, ${p.layout} layout`,
     s.graph + (s.quality != null ? ` · data-qubit quality ${s.quality.toFixed(2)}` : ''),
-    `${s.values} values on ${s.qubits} qubits = ${s.ratio.toFixed(2)} / qubit`,
+    `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`,
     `(angle encoding would need ${s.values} qubits)`,
     `capacity used ${s.values}/${s.capacity}`,
     `depth ${s.depth} · 2q gates ${s.twoq}` + (p.mode === 'pair' ? ` (θ alone ${s.twoq_single})` : ''),

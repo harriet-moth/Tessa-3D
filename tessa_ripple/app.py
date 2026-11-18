@@ -194,7 +194,8 @@ class App:
         s = self.encoded.stats
         lines = [f"{shape} {name}: {len(self.verts)} verts", f"payload {p.payload}, {p.layout} layout",
                  s["graph"], *([f"data-qubit quality {s['quality']:.2f}"] if s["quality"] is not None else []),
-                 f"{s['values']} values on {s['qubits']} qubits",
+                 f"{s['values']} values on {s['qubits']} qubits"
+                 + (f" (of {s['graph_qubits']})" if s["qubits"] < s["graph_qubits"] else ""),
                  f"= {s['ratio']:.2f} values / qubit", f"(angle encoding: {s['values']} qubits)",
                  f"capacity used {s['values']}/{s['capacity']}",
                  f"depth {s['depth']}, 2q gates {s['twoq']}"]

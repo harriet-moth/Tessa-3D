@@ -82,13 +82,25 @@ class Encoded:
         return self.enc.mode == "pair"
 
     @property
+    def used_groups(self) -> np.ndarray:
+        """Indices (graph.groups order) of the data qubits holding mesh values."""
+        return np.unique(np.searchsorted(cells(self.graph)[:, 1], self.slots, side="right"))
+
+    @property
+    def used_qubits(self) -> list[int]:
+        """The data qubits holding mesh values plus their address qubits. The rest of a
+        chip only holds constant padding: one rotation each, no two-qubit gates."""
+        gs = [self.graph.groups[i] for i in self.used_groups]
+        return sorted({q for g in gs for q in (g.data_qubit, *g.address_qubits)})
+
+    @property
     def stats(self) -> dict:
         n = self.slots.size * (2 if self.pair else 1)
-        used = np.unique(np.searchsorted(cells(self.graph)[:, 1], self.slots, side="right"))
-        q = None if self.quality is None else float(self.quality[used].mean())
-        return {"graph": self.name, "quality": q, "qubits": self.graph.n_qubits, "values": n,
-                "capacity": self.graph.capacity * (2 if self.pair else 1),
-                "ratio": n / self.graph.n_qubits, "depth": self.circuit.depth(),
+        q = None if self.quality is None else float(self.quality[self.used_groups].mean())
+        used = len(self.used_qubits)
+        return {"graph": self.name, "quality": q, "qubits": used, "graph_qubits": self.graph.n_qubits,
+                "values": n, "capacity": self.graph.capacity * (2 if self.pair else 1),
+                "ratio": n / used, "depth": self.circuit.depth(),
                 "twoq": two_qubit(self.circuit), "twoq_single": self.single_twoq}
 
 
@@ -362,8 +374,9 @@ def resources(e: Encoded) -> list[dict]:
         cz = two_qubit(tq)
         return {"twoq": cz, "depth": tq.depth(), "swaps": max(0, round((cz - two_qubit(free)) / 3))}
 
-    # generic random data for every row, so no encoding gets credit for this mesh
-    rand = [rng.random(e.graph.capacity) for _ in range(2 if e.pair else 1)]
+    # generic random data for every row, so no encoding gets credit for this mesh; Tessa's
+    # goes in the mesh's own slots, the rest of the graph padded as in encode_mesh
+    rand = [fill(e.graph, e.slots, rng.random(e.slots.shape)) for _ in range(2 if e.pair else 1)]
     generic, _ = encode(e.graph, *rand)
     if isinstance(e.graph, Lattice):  # lattice site (r, c) -> ibm_phoenix qubit (10 per row)
         r, c = np.divmod(np.arange(e.graph.n_qubits), e.graph.cols)
@@ -386,7 +399,7 @@ def resources(e: Encoded) -> list[dict]:
         qcrank.append(UCRYGate(list(rng.random(2 ** a))), [a + d, *range(a)])
     max_deg = max(g.degree for g in e.graph.groups)
     rows = [
-        dict(name="Tessa", qubits=e.graph.n_qubits, settings=2 if e.pair else 1, configs=2 ** max_deg, **tessa),
+        dict(name="Tessa", qubits=len(e.used_qubits), settings=2 if e.pair else 1, configs=2 ** max_deg, **tessa),
         dict(name="Angle (1 value/qubit)", qubits=n, settings=1, configs=1, twoq=0, depth=1, swaps=0),
         dict(name="QCrank (parallel QPIXL)", qubits=a + m, settings=1, configs=2 ** a, **routed(qcrank)),
         dict(name="FRQI", qubits=k + 1, settings=1, configs=2 ** k, **routed(frqi)),
