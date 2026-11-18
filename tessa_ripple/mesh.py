@@ -113,35 +113,6 @@ def bfs_order(n_verts: int, faces) -> np.ndarray:
     return np.array(order)
 
 
-def subdivided_size(n_verts: int, faces) -> int:
-    """Vertex count after :func:`subdivide`, without doing it: one new vertex per
-    edge, plus a centre for every face with four or more corners."""
-    return n_verts + len(edges(faces)) + sum(len(f) >= 4 for f in faces)
-
-
-def subdivide(verts, faces):
-    """Linear subdivision: every edge gets its midpoint; a triangle becomes four
-    triangles, a quad (or n-gon) becomes one quad per corner around its centre. The
-    shape is unchanged; there are just more vertices to encode."""
-    verts = np.asarray(verts, float)
-    E = edges(faces)
-    mid = {(int(a), int(b)): len(verts) + k for k, (a, b) in enumerate(E)}
-    out_v, out_f = [verts, verts[E].mean(1)], []
-    m = lambda a, b: mid[(min(a, b), max(a, b))]  # noqa: E731
-    nxt = len(verts) + len(E)
-    for f in faces:
-        k = len(f)
-        if k == 3:
-            a, b, c = f
-            out_f += [[a, m(a, b), m(c, a)], [b, m(b, c), m(a, b)],
-                      [c, m(c, a), m(b, c)], [m(a, b), m(b, c), m(c, a)]]
-        else:
-            out_v.append(verts[f].mean(0, keepdims=True))
-            out_f += [[f[i], m(f[i], f[(i + 1) % k]), nxt, m(f[i - 1], f[i])] for i in range(k)]
-            nxt += 1
-    return np.concatenate(out_v), out_f
-
-
 def _normal(p):
     """Newell normal of a polygon (unnormalised)."""
     q = np.roll(p, -1, 0)

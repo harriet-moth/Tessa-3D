@@ -46,9 +46,9 @@ the same way. Blender's Suzanne is included:
 .venv/bin/tessa-ripple tessa_ripple/suzanne.obj
 ```
 
-Suzanne opens at **Resolution** *mid*, the file as exported; *low* decimates her
-to 254 vertices, and *high* is refused because she would need 1,980 (see
-**Resolution**). At mid she has 507 vertices, measured at 4,096 shots:
+Suzanne opens at **Resolution** *high*, the file as exported; *mid* and *low*
+decimate her to 254 and 127 vertices (see **Resolution**). As exported she has
+507 vertices, measured at 4,096 shots:
 - **Radial on a 9×9 lattice:** 507 values on 81 qubits (6.3 per qubit), 0.5 % error.
 - **Pair mode (shape + colour):** 1,014 values on the same 81 qubits, 0.8 % error.
 - **Whole `ibm_phoenix` chip with calibrated noise:** 0.95 % error, or 1.5 % in pair mode,
@@ -270,23 +270,16 @@ what the colours mean.
 | Blob (segments × rings) | 12×8 → 86 verts | 16×10 → 146 verts | 24×12 → 266 verts |
 | Sphere | 8×6 → 42 verts | 12×8 → 86 verts | 16×8 → 114 verts |
 | Cube (per edge) | 3 → 26 verts | 4 → 56 verts | 5 → 98 verts |
-| OBJ file (desktop app) | decimated to about half | the file as it is | subdivided (each face into four) |
+| OBJ file (desktop app) | decimated twice (about a quarter) | decimated once (about half) | the file as it is |
 
-For an OBJ file, Resolution switches to *mid* whenever you pick that shape, so
+For an OBJ file, Resolution switches to *high* whenever you pick that shape, so
 it opens exactly as exported.
-- *Low* collapses the shortest edges, one at a time, merging each pair of ends
-  at their midpoint, until about half the vertices are left. A collapse is
-  skipped if it would tear the surface, turn a face over, merge opposite corners
-  of a quad, or touch an open edge (so Suzanne's eye holes keep their shape).
-  Suzanne goes from 507 to 254 vertices.
-- *High* splits every triangle into four triangles and every quad into four
-  quads, adding a vertex at each edge midpoint and each quad's centre. The
-  shape stays exactly the same; there are just more vertices to encode.
-- Before subdividing, the app counts how many vertices *high* would make
-  (vertices + edges + quads). If that is more than 792, the most any graph here
-  holds (radial on the 10×12 lattice or Phoenix), it stays on *mid* and says
-  so. Suzanne would become 1,980, so *high* is refused for her; an 86-vertex OBJ
-  becomes 338.
+- Each decimation collapses the shortest edges, one at a time, merging each
+  pair of ends at their midpoint, until about half the vertices are left. A
+  collapse is skipped if it would tear the surface, turn a face over, merge
+  opposite corners of a quad, or touch an open edge (so Suzanne's eye holes
+  keep their shape).
+- Suzanne: 507 vertices at *high*, 254 at *mid*, 127 at *low*.
 - The web app has no OBJ resolutions; Suzanne is always the file as exported there.
 
 ### Encoder

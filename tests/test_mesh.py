@@ -68,10 +68,9 @@ def test_decimate_halves_suzanne_without_tearing_or_losing_her_shape():
     assert np.allclose(np.ptp(dv, 0), np.ptp(v, 0), atol=0.1)
 
 
-def test_subdivide_keeps_shape_and_matches_the_predicted_count():
-    from tessa_ripple.mesh import subdivide, subdivided_size
-    for v, f in (cube(3), load_obj("tessa_ripple/suzanne.obj")):
-        sv, sf = subdivide(v, f)
-        assert len(sv) == subdivided_size(len(v), f)
-        assert np.allclose(sv.min(0), v.min(0)) and np.allclose(sv.max(0), v.max(0))
-        assert max(_edge_use(sf).values()) <= 2
+
+def test_decimating_twice_quarters_suzanne():
+    from tessa_ripple.mesh import decimate
+    v, f = load_obj("tessa_ripple/suzanne.obj")
+    lv, lf = decimate(*decimate(v, f))
+    assert len(lv) == round(round(len(v) / 2) / 2) and max(_edge_use(lf).values()) <= 2
