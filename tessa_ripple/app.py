@@ -56,6 +56,9 @@ def qubit_rgba(qubits):
     return hls_rgba(rank * GOLDEN, 0.55, 0.6)
 
 
+# curves: one fixed colour and line style per layout, mirrored in public/app.js
+LAYOUT_STYLE = {"mesh": dict(c="#3d5a98", ls="-", marker="o", ms=9, mfc="none", mew=1.8, zorder=3),
+                "naive": dict(c="#e07b39", ls="--", marker="s", ms=4, zorder=4)}
 HOT = "#e69600"  # qubit map: the hovered data qubit, its address qubits and its vertices
 HUE_CMAP = ListedColormap(hls_rgba(np.linspace(0, 1, 256), 0.55, 0.75))  # φ colour value -> hue
 
@@ -255,7 +258,7 @@ class App:
     def on_resources(self, *_):
         self.say("transpiling Tessa and four baselines onto ibm_phoenix …")
         rows, shots = resources(self.encoded), self.params().shots
-        fig = plt.figure("Why Tessa", figsize=(11, 3.8))
+        fig = plt.figure("Why Tessa", figsize=(11, 3.8), clear=True)
         ax = fig.add_axes([0.01, 0.2, 0.98, 0.68])
         ax.axis("off")
         cols = ["encoding", "qubits", "fits on chip", "2q gates", "depth", "SWAPs",
@@ -281,22 +284,26 @@ class App:
     def on_curves(self, *_):
         prog = lambda k, n: self.say(f"curves: run {k} / {n} …")  # noqa: E731
         data = fidelity_curves(self.verts, self.faces, self.params(), progress=prog)
-        fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4), num="Fidelity curves")
+        fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(14, 4.4), num="Fidelity curves", clear=True)
         s, err = map(np.array, zip(*data["shots"]))
-        a1.loglog(s, err, "o-", label="measured")
+        a1.loglog(s, err, "o-", c=LAYOUT_STYLE["mesh"]["c"], label="measured")
         a1.loglog(s, err[0] * np.sqrt(s[0] / s), ":", c="grey", label="1/√shots")
         a1.set(xlabel="shots", ylabel="mean error (fraction of bbox)", title="error vs shots")
-        a1.legend()
-        a3 = a2.twinx()
-        for layout, mark in (("mesh", "o"), ("naive", "s")):
-            c, depth, e = zip(*data[layout])
-            a2.plot(c, e, f"{mark}-", label=f"{layout} layout: error")
-            a3.plot(c, depth, f"{mark}:", alpha=0.6, label=f"{layout} layout: depth")
-        a2.set(xlabel="compression %", ylabel="mean error", title="compression: error and depth")
-        a3.set_ylabel("circuit depth")
-        a2.legend(loc="upper left", fontsize=8)
-        a3.legend(loc="upper center", fontsize=8)
-        fig.tight_layout()
+        a1.legend(fontsize=8)
+        for layout in ("mesh", "naive"):  # mesh: solid, hollow circles; naive: dashed squares,
+            c, depth, e = zip(*data[layout])  # so both show even where the lines coincide
+            kw = dict(LAYOUT_STYLE[layout], label=f"{layout} layout")
+            a2.plot(c, e, **kw)
+            a3.plot(c, depth, **kw)
+        a2.set(xlabel="compression %", ylabel="mean error (fraction of bbox)", title="error vs compression")
+        a3.set(xlabel="compression %", ylabel="circuit depth", title="depth vs compression")
+        for ax in (a2, a3):
+            ax.legend(fontsize=8)
+        if data["same"]:
+            fig.text(0.5, 0.01, "Mesh and naive layouts place every value identically for this mesh "
+                     "(radial on a mesh numbered ring by ring), so their lines coincide.",
+                     ha="center", fontsize=8, color="#6b6f78")
+        fig.tight_layout(rect=(0, 0.04 if data["same"] else 0, 1, 1))
         fig.show()
         self.say("Fidelity curves opened")
 

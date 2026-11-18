@@ -374,6 +374,8 @@ def fidelity_curves(verts, faces, p: Params, progress=None) -> dict:
     for s in shots:
         progress and progress(k := k + 1, total)
         out["shots"].append((s, mesh_error(verts, read_mesh(e, replace(p, shots=s)))))
+    placed = {lay: encode_mesh(verts, faces, replace(p, layout=lay)).slots for lay in ("mesh", "naive")}
+    out["same"] = bool(np.array_equal(placed["mesh"], placed["naive"]))  # e.g. radial on a ring-ordered mesh
     for layout in ("mesh", "naive"):
         out[layout] = []
         for c in comps:

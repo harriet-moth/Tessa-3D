@@ -494,8 +494,12 @@ on the far side.
   - This follows the paper's coherence experiment B (isolated pairs plus a
     reference circuit), not the full-lattice version. Edges are read from xyz
     whatever the payload.
-- **Curves**: opens a window with error against shots (with a `1/√shots` guide),
-  and error and depth against compression for both layouts. It takes 15 decodes.
+- **Curves**: opens three charts: error against shots (with a `1/√shots` guide),
+  then error and circuit depth against compression for both layouts. It takes
+  15 decodes. Mesh layout is blue and solid with hollow circles; naive is
+  orange and dashed with squares, so both stay visible where they coincide. A
+  note says when the two layouts place every value identically (radial on the
+  built-in sphere and blob), which is why their lines then match exactly.
 - **Why Tessa**: opens the resource table.
   - The current values are encoded with Tessa, angle encoding, QCrank (parallel
     QPIXL, Tessa's stated prior art), FRQI and amplitude encoding, and transpiled

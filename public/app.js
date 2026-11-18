@@ -366,7 +366,7 @@ async function why() {
 }
 
 function chart({ title, xlabel, ylabel, series, logx = false, logy = false }) {
-  const W = 420, H = 260, m = { l: 58, r: 12, t: 26, b: 42 };
+  const W = 420, H = 270, m = { l: 58, r: 12, t: 42, b: 42 };
   const fx = logx ? Math.log10 : (x) => x, fy = logy ? Math.log10 : (y) => y;
   const pts = series.flatMap((s) => s.points);
   const [x0, x1] = [Math.min(...pts.map((p) => fx(p[0]))), Math.max(...pts.map((p) => fx(p[0])))];
@@ -376,9 +376,21 @@ function chart({ title, xlabel, ylabel, series, logx = false, logy = false }) {
   const Y = (y) => H - m.b - ((fy(y) - y0) / (y1 - y0)) * (H - m.t - m.b);
   const fmt = (v) => (Math.abs(v) >= 1000 ? v.toExponential(0) : +v.toPrecision(2)).toString();
   const ticks = (a, b, log) => [0, 1, 2, 3].map((k) => { const t = a + (k / 3) * (b - a); return log ? 10 ** t : t; });
-  const lines = series.map((s) => `<polyline fill="none" stroke="${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="4 3"' : ''} points="${s.points.map((p) => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>`
-    + s.points.map((p) => (s.dash ? '' : `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="3" fill="${s.color}"/>`)).join('')).join('');
-  const legend = series.map((s, i) => `<text x="${W - m.r - 4}" y="${m.t + 12 + 14 * i}" text-anchor="end" style="fill:${s.color}">${s.label}</text>`).join('');
+  // mark: 'ring' (hollow circle), 'square' or 'none'; dashed series draw on top, so
+  // two series that coincide both stay visible
+  const markAt = (s, x, y) => (s.mark === 'none' ? '' : s.mark === 'square'
+    ? `<rect x="${x - 3}" y="${y - 3}" width="6" height="6" fill="${s.color}"/>`
+    : `<circle cx="${x}" cy="${y}" r="5" fill="none" stroke="${s.color}" stroke-width="1.8"/>`);
+  const mark = (s, p) => markAt(s, X(p[0]), Y(p[1]));
+  const lines = series.map((s) => `<polyline fill="none" stroke="${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${s.points.map((p) => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>`
+    + s.points.map((p) => mark(s, p)).join('')).join('');
+  // legend in a row under the title, clear of the data
+  const legend = series.map((s, i) => {
+    const x = m.l + 150 * i;
+    return `<line x1="${x}" y1="29" x2="${x + 22}" y2="29" stroke="${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`
+      + markAt(s, x + 11, 29)
+      + `<text x="${x + 28}" y="33">${s.label}</text>`;
+  }).join('');
   const xt = ticks(x0, x1, logx).map((t) => `<text x="${X(t)}" y="${H - m.b + 16}" text-anchor="middle">${fmt(t)}</text>`).join('');
   const yt = ticks(y0, y1, logy).map((t) => `<text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}">
@@ -399,14 +411,15 @@ async function curves() {
     const guide = shots.map(([s]) => [s, shots[0][1] * Math.sqrt(shots[0][0] / s)]);
     const err = (k) => r[k].map(([c, , e]) => [c, e]);
     const depth = (k) => r[k].map(([c, d]) => [c, d]);
+    // fixed per layout, as in the desktop app: mesh solid with rings, naive dashed with squares
+    const layouts = (pick) => [{ label: 'mesh layout', color: A, points: pick('mesh') },
+      { label: 'naive layout', color: B, dash: true, mark: 'square', points: pick('naive') }];
     openDialog(`<h2>Fidelity curves</h2><div class="charts">
       ${chart({ title: 'error vs shots', xlabel: 'shots', ylabel: 'mean error (of bbox)', logx: true, logy: true,
-        series: [{ label: 'measured', color: A, points: shots }, { label: '1/√shots', color: G, dash: true, points: guide }] })}
-      ${chart({ title: 'error vs compression', xlabel: 'compression %', ylabel: 'mean error',
-        series: [{ label: 'mesh layout', color: A, points: err('mesh') }, { label: 'naive layout', color: B, points: err('naive') }] })}
-      ${chart({ title: 'depth vs compression', xlabel: 'compression %', ylabel: 'circuit depth',
-        series: [{ label: 'mesh layout', color: A, points: depth('mesh') }, { label: 'naive layout', color: B, points: depth('naive') }] })}
-      </div><p class="note">Error is the mean coordinate error as a fraction of the bounding box. Compression drops the smallest Walsh–Hadamard coefficients of each Tessa cell.</p>`);
+        series: [{ label: 'measured', color: A, points: shots }, { label: '1/√shots', color: G, dash: true, mark: 'none', points: guide }] })}
+      ${chart({ title: 'error vs compression', xlabel: 'compression %', ylabel: 'mean error (of bbox)', series: layouts(err) })}
+      ${chart({ title: 'depth vs compression', xlabel: 'compression %', ylabel: 'circuit depth', series: layouts(depth) })}
+      </div>${r.same ? '<p class="note"><b>Mesh and naive layouts place every value identically for this mesh</b> (radial on a mesh numbered ring by ring), so their lines coincide.</p>' : ''}<p class="note">Error is the mean coordinate error as a fraction of the bounding box. Compression drops the smallest Walsh–Hadamard coefficients of each Tessa cell.</p>`);
     status('Fidelity curves opened');
   });
 }
