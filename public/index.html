@@ -47,7 +47,7 @@
 
     <fieldset><legend>Encoder <small>(needs Run)</small></legend>
       <label>Payload <select id="payload"><option>radial</option><option>xyz</option></select></label>
-      <label>Mode <select id="mode"><option>single</option><option value="pair">pair (colour in φ)</option></select></label>
+      <label>Mode <select id="mode"><option value="theta">shape in θ</option><option value="colour">shape θ, colour φ</option><option value="split">shape over θ+φ (2 per slot)</option></select></label>
       <label>Layout <select id="layout"><option>mesh</option><option>naive</option></select></label>
       <label>Clamp θ <input id="clamp" type="range" min="0" max="0.45" step="0.01" value="0"><output></output></label>
       <label>Clamp φ <input id="clamp_b" type="range" min="0" max="0.45" step="0.01" value="0"><output></output></label>

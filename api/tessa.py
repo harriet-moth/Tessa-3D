@@ -73,7 +73,7 @@ def edges(req):
 def resources(req):
     verts, faces = mesh_of(req)
     e = bridge.encode_mesh(verts, faces, params_of(req))
-    return {"rows": bridge.resources(e), "stats": e.stats, "payload": e.payload, "mode": e.enc.mode}
+    return {"rows": bridge.resources(e), "stats": e.stats, "payload": e.payload, "mode": e.mode}
 
 
 def curves(req):

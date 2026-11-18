@@ -42,6 +42,8 @@ def obj_presets(path):
             "mid": lambda: decimate(*load_obj(path)), "high": lambda: load_obj(path)}
 RES = ("low", "mid", "high")
 COLOURS = ("error", "qubit", "φ colour", "plain")
+# Mode: what each slot's qubit holds (bridge.MODES)
+MODE_LABELS = {"shape in θ": "theta", "shape θ, colour φ": "colour", "shape over θ+φ": "split"}
 PLAIN = np.array(colormaps["Blues"](0.45))
 
 # Colour definitions, mirrored in public/app.js so both apps colour identically.
@@ -95,7 +97,7 @@ class App:
             return y
 
         radios(0.50, 0.98, [("Shape", list(PRESETS)), ("Resolution", RES),
-                            ("Payload", ["radial", "xyz"]), ("Mode", ["single", "pair"]),
+                            ("Payload", ["radial", "xyz"]), ("Mode", list(MODE_LABELS)),
                             ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS),
                             ("Placement", ["quality", "importance", "graph"]), ("DRR", DRR_METHODS)])
         y = radios(0.855, 0.98, [("View", ["fidelity", "material"]), ("Colour", COLOURS)])
@@ -170,7 +172,7 @@ class App:
     def params(self) -> Params:
         qb = int(self.val("Quant bits"))
         clamp = lambda name: self.val(name) * np.pi or None  # noqa: E731  0 = Tessa default
-        return Params(payload=self.val("Payload"), layout=self.val("Layout"), mode=self.val("Mode"),
+        return Params(payload=self.val("Payload"), layout=self.val("Layout"), mode=MODE_LABELS[self.val("Mode")],
                       clamp=clamp("Clamp θ (π)"), clamp_b=clamp("Clamp φ (π)"),
                       compression=self.val("Compression %"), quant_bits=qb or None,
                       headroom=self.val("Headroom"), backend=self.val("Backend"),
@@ -224,8 +226,10 @@ class App:
                  f"= {s['ratio']:.2f} values / qubit", f"(angle encoding: {s['values']} qubits)",
                  f"capacity used {s['values']}/{s['capacity']}",
                  f"depth {s['depth']}, 2q gates {s['twoq']}"]
-        if self.encoded.pair:
+        if self.encoded.mode == "colour":
             lines.append(f"θ field alone: {s['twoq_single']} 2q")
+        elif self.encoded.mode == "split":
+            lines.append(f"{int(self.encoded.fields.sum())} values in φ")
         self.info.set_text("\n".join(lines))
         if self.toggles()["auto"]:
             return self.run()
@@ -290,7 +294,7 @@ class App:
         table.set_fontsize(8)
         table.scale(1, 1.6)
         s = self.encoded.stats
-        fig.suptitle(f"{s['values']} values ({self.encoded.payload}, {self.encoded.enc.mode}) "
+        fig.suptitle(f"{s['values']} values ({self.encoded.payload}, mode {self.encoded.mode}) "
                      f"transpiled onto the ibm_phoenix snapshot (120 qubits, square lattice)", fontsize=10)
         fig.text(0.01, 0.02, "Generic random data in every row (no compression). SWAPs ≈ extra CZs from "
                  "routing / 3. 'outcomes / cell': address configurations each shot is split over, so "
@@ -369,7 +373,7 @@ class App:
             else:
                 c, src = self.colours.mean(0), f"colour decoded from φ (mean of {len(self.colours)} readouts)"
             return hls_rgba(c, 0.55, 0.75), src, (HUE_CMAP, 0, 1, "colour value stored in φ")
-        why = {"error": " (run to see error)", "φ colour": " (pair mode only)"}.get(mode, "")
+        why = {"error": " (run to see error)", "φ colour": " (Mode shape θ, colour φ only)"}.get(mode, "")
         return np.tile(PLAIN, (len(self.verts), 1)), "plain" + why, None
 
     def legend(self, ax, spec):
@@ -456,7 +460,7 @@ class App:
             self.fig.canvas.draw_idle()
 
     # --- qubit map -------------------------------------------------------------
-    # qmap["vertices"][i][c] = [group, address]: value c of vertex i is in data qubit
+    # qmap["vertices"][i][c] = [group, address, field]: value c of vertex i is in data qubit
     # groups[group]["data"], in the slot where address qubit groups[group]["addresses"][j]
     # reads bit j of address (Tessa's decoder bit order).
     def set_focus(self, vertex=None, group=None):
@@ -464,9 +468,9 @@ class App:
         focus = None
         if self.toggles()["map"] and (vertex is not None or group is not None):
             vs = self.qmap["vertices"]
-            groups = sorted({g for g, _ in vs[vertex]}) if vertex is not None else [group]
+            groups = sorted({g for g, *_ in vs[vertex]}) if vertex is not None else [group]
             focus = {"vertex": vertex, "groups": groups,
-                     "mates": [i for i, v in enumerate(vs) if any(g in groups for g, _ in v)]}
+                     "mates": [i for i, v in enumerate(vs) if any(g in groups for g, *_ in v)]}
         if focus == self.focus:
             return
         self.focus = focus
@@ -486,7 +490,7 @@ class App:
         hot_data = {m["groups"][g]["data"] for g in hot_groups}
         bits = {q: None for g in hot_groups for q in m["groups"][g]["addresses"]}
         if f and f["vertex"] is not None and len(m["vertices"][f["vertex"]]) == 1:
-            g, a = m["vertices"][f["vertex"]][0]  # one value: label each address bit
+            g, a, _ = m["vertices"][f["vertex"]][0]  # one value: label each address bit
             bits.update({q: (a >> j) & 1 for j, q in enumerate(m["groups"][g]["addresses"])})
         hot_edge = [(a in hot_data and b in bits) or (b in hot_data and a in bits) for a, b in m["edges"]]
         ax.add_collection(LineCollection(xy[m["edges"]], colors=[HOT if h else "#c9c6bf" for h in hot_edge],
@@ -498,7 +502,7 @@ class App:
         addr = [q for q in range(len(xy)) if q not in set(data)]
         ax.scatter(*xy[addr].T, marker="s", s=[(step * (0.5 if q in bits else 0.34)) ** 2 for q in addr],
                    c=[HOT if q in bits else "#6b6f78" for q in addr], zorder=2)
-        used = {g for v in m["vertices"] for g, _ in v}
+        used = {g for v in m["vertices"] for g, *_ in v}
         ax.scatter(*xy[data].T, s=(step * 0.6) ** 2, zorder=3,
                    c=[HOT if k in hot_groups else "#3d5a98" if k in used else "#dcdad4"
                       for k in range(len(data))])
@@ -513,20 +517,22 @@ class App:
 
     def focus_text(self):
         f, m = self.focus, self.qmap
-        pair = " (θ: shape, φ: colour)" if self.encoded.pair else ""
+        pair = {"colour": " (θ: shape, φ: colour)", "split": " (shape over θ and φ)"}.get(self.encoded.mode, "")
         if not f:
             return "Hover a vertex on the mesh, or a data qubit here."
         addrs = lambda g: m["groups"][g]["addresses"]  # noqa: E731
         if f["vertex"] is None:
             g = f["groups"][0]
-            held = sum(gg == g for v in m["vertices"] for gg, _ in v)
+            held = sum(gg == g for v in m["vertices"] for gg, *_ in v)
             return (f"data q{m['groups'][g]['data']} · address " + " ".join(f"q{q}" for q in addrs(g))
-                    + f"\n{2 ** len(addrs(g))} slots, {held} hold values of this mesh{pair}"
+                    + f"\n{2 ** len(addrs(g))} slots, {held} values of this mesh{pair}"
                     + f"\n{len(f['mates'])} vertices on it (orange on the mesh)")
         names = ["r"] if len(m["vertices"][0]) == 1 else ["x", "y", "z"]
-        lines = [f"{names[c]} → data q{m['groups'][g]['data']}, slot {a} of {2 ** len(addrs(g))}, address "
+        split = self.encoded.mode == "split"
+        lines = [f"{names[c]} → data q{m['groups'][g]['data']}, slot {a} of {2 ** len(addrs(g))}"
+                 + (f" in {'θφ'[fld]}" if split else "") + ", address "
                  + " ".join(f"q{q}={(a >> j) & 1}" for j, q in enumerate(addrs(g)))
-                 for c, (g, a) in enumerate(m["vertices"][f["vertex"]])]
+                 for c, (g, a, fld) in enumerate(m["vertices"][f["vertex"]])]
         share = "these data qubits" if len(f["groups"]) > 1 else "this data qubit"
         return (f"vertex {f['vertex']}{pair}\n" + "\n".join(lines)
                 + f"\n{len(f['mates'])} vertices share {share} (orange)")

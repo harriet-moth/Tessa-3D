@@ -26,6 +26,11 @@ BACKENDS = ("noiseless", "flat noise", *DEVICES)
 # on the very best (see place)
 PLACEMENTS = ("graph", "quality", "importance")
 QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores per chip snapshot
+# What each slot's qubit holds. Tessa's "single" mode puts one value in theta; its
+# "pair" mode adds a second in phi, which this app uses either for a colour field or
+# for more geometry (two values per slot, so twice the vertices fit).
+MODES = ("theta", "colour", "split")
+MODE_ALIASES = {"single": "theta", "pair": "colour"}  # the names before the split mode
 DRR_METHODS = ("none", "min_max", "mean_std", "percentile", "abs_max", "min_avg_max")
 # Typical IBM-like machine averages (tessa.backend_rates fallbacks) for "flat noise".
 IBM_LIKE_RATES = {"sx_error": 3e-4, "cz_error": 8e-3, "readout_error": 1e-2,
@@ -37,7 +42,7 @@ class Params:
     # encoder (changing any of these re-encodes)
     payload: str = "radial"        # "radial": one radius per vertex | "xyz": three coordinates
     layout: str = "mesh"           # "mesh": BFS neighbourhoods per cell | "naive": axis-major
-    mode: str = "single"           # "single" | "pair" (shape in theta, vertex colour in phi)
+    mode: str = "theta"            # "theta": shape in θ | "colour": + colour in φ | "split": shape over θ and φ
     clamp: float | None = None     # theta clamp in radians; None = Tessa default
     clamp_b: float | None = None   # phi clamp (pair only)
     compression: float = 0.0       # percent (0-100) of multiplexer coefficients dropped
@@ -78,6 +83,12 @@ class Encoded:
     colour: np.ndarray | None   # original colour field in [0, 1] (pair mode)
     single_twoq: int            # two-qubit gates of the theta-only circuit
     quality: np.ndarray | None = None  # chip only: probe_qubits score per data qubit
+    field: np.ndarray | None = None    # (N, comps): 0 = value in θ, 1 = in φ (split mode)
+    mode: str = "theta"
+
+    @property
+    def fields(self) -> np.ndarray:
+        return np.zeros(self.slots.shape, int) if self.field is None else self.field
 
     @property
     def pair(self) -> bool:
@@ -97,7 +108,7 @@ class Encoded:
 
     @property
     def stats(self) -> dict:
-        n = self.slots.size * (2 if self.pair else 1)
+        n = self.slots.size * (2 if self.mode == "colour" else 1)
         q = None if self.quality is None else float(self.quality[self.used_groups].mean())
         used = len(self.used_qubits)
         return {"graph": self.name, "quality": q, "qubits": used, "graph_qubits": self.graph.n_qubits,
@@ -140,8 +151,8 @@ def cells(graph) -> np.ndarray:
     return np.column_stack([stops - [g.n_values for g in graph.groups], stops])
 
 
-def place(graph, n, comps, order=None, quality=None, weight=None) -> np.ndarray:
-    """Capacity slot of every value, shape (n, comps).
+def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1):
+    """Capacity slot and field (0 = θ, 1 = φ) of every value, each shape (n, comps).
 
     ``order=None`` is the naive axis-major layout (all x, then all y, then all z).
     Otherwise each cell takes the next mesh-neighbouring vertices from ``order``
@@ -157,40 +168,55 @@ def place(graph, n, comps, order=None, quality=None, weight=None) -> np.ndarray:
     slots most important first. Mesh layout: the neighbourhood patches are cut
     as usual, then within each patch size the patches with the highest mean
     importance swap onto the best data qubits, so every patch stays whole.
+
+    ``per_slot=2`` (split mode) gives every slot two positions, θ then φ: a data
+    qubit with C slots takes 2C values, its θ field filled first and its φ field
+    after, so each field holds runs of one coordinate and stays smooth.
     """
     ranked = np.arange(graph.capacity) if quality is None else slot_order(graph, quality)
+    cap = graph.capacity
     if order is None:
-        if n * comps > graph.capacity:
-            raise ValueError(f"{n * comps} values exceed capacity {graph.capacity}")
-        slots = np.empty((n, comps), int)
+        if n * comps > per_slot * cap:
+            raise ValueError(f"{n * comps} values exceed capacity {per_slot * cap}")
+        pos = np.empty((n, comps), int)  # position t: slot ranked[t % cap], field t // cap
         first = np.arange(n) if weight is None else np.argsort(-weight, kind="stable")
-        slots[first] = ranked[np.arange(comps) * n + np.arange(n)[:, None]]
-        return slots
+        pos[first] = np.arange(comps) * n + np.arange(n)[:, None]
+        return ranked[pos % cap], pos // cap
     bounds = cells(graph)
     cell_of = np.searchsorted(bounds[:, 1], ranked, side="right")
     seq = cell_of[np.r_[True, cell_of[1:] != cell_of[:-1]]]  # cells in ranked order
-    plan, k = [], 0  # (cell, vertices it takes), best cell first
+    if n * comps > per_slot * cap:
+        raise ValueError(f"{n} vertices x {comps} values do not fit {per_slot * cap} positions "
+                         f"({cap} slots x {per_slot}); try the radial payload"
+                         + ("" if per_slot > 1 else ", or Mode 'shape over θ+φ' (two values per slot)"))
+    plan, k = [], 0  # (cell, whole vertices it takes), best cell first
     for c in seq:
-        m = min((bounds[c, 1] - bounds[c, 0]) // comps, n - k)
+        m = min(per_slot * (bounds[c, 1] - bounds[c, 0]) // comps, n - k)
         if m > 0:
             plan.append((c, m))
             k += m
         if k == n:
             break
-    else:
-        raise ValueError(f"{n} vertices x {comps} values do not fit {graph.capacity} slots; "
-                         "try the radial payload (one value per vertex)")
-    patches = np.split(order, np.cumsum([m for _, m in plan])[:-1])
+    patches = np.split(order[:k], np.cumsum([m for _, m in plan])[:-1])
     if weight is not None:  # same-size patches: most important onto the best cells
         for m in {m for _, m in plan}:
             idx = [i for i, (_, mm) in enumerate(plan) if mm == m]  # best cell first
             mine = sorted((patches[i] for i in idx), key=lambda p: -weight[p].mean())
             for i, p in zip(idx, mine):
                 patches[i] = p
-    slots = np.empty((n, comps), int)
+    slots, field = np.empty((n, comps), int), np.empty((n, comps), int)
     for (c, m), p in zip(plan, patches):
-        slots[p] = bounds[c, 0] + np.arange(comps) * m + np.arange(m)[:, None]
-    return slots
+        lo, size = bounds[c, 0], bounds[c, 1] - bounds[c, 0]
+        pos = np.arange(comps) * m + np.arange(m)[:, None]  # [x1..xm, y1..ym, z1..zm]
+        slots[p], field[p] = lo + pos % size, pos // size
+    if k < n:  # whole vertices ran out: the rest fill the cells' spare positions, best
+        used = dict(plan)  # cell first, so a few vertices straddle two data qubits
+        spare = [(bounds[c, 0] + q % size, q // size) for c in seq
+                 for size in [bounds[c, 1] - bounds[c, 0]]
+                 for q in range(comps * used.get(c, 0), per_slot * size)]
+        rest = np.array(spare[: (n - k) * comps]).reshape(n - k, comps, 2)
+        slots[order[k:]], field[order[k:]] = rest[..., 0], rest[..., 1]
+    return slots, field
 
 
 def fill(graph, slots, vals) -> np.ndarray:
@@ -202,21 +228,23 @@ def fill(graph, slots, vals) -> np.ndarray:
         cell = arr[lo:hi]
         if np.isnan(cell).any() and not np.isnan(cell).all():
             cell[np.isnan(cell)] = np.nanmean(cell)
-    arr[np.isnan(arr)] = np.nanmean(arr)
+    arr[np.isnan(arr)] = np.nanmean(arr) if len(vals) else 0.0
     return arr
 
 
-def fit_lattice(n: int, comps: int = 1, mesh: bool = True) -> Lattice:
+def fit_lattice(n: int, comps: int = 1, mesh: bool = True, per_slot: int = 1) -> Lattice:
     """Smallest near-square Lattice (cols - rows <= 2, up to 10x12) holding the mesh."""
     shapes = sorted(((r, c) for r in range(2, MAX_ROWS + 1)
                      for c in range(r, min(r + 2, MAX_COLS) + 1)), key=lambda rc: (rc[0] * rc[1], rc[1] - rc[0]))
-    for r, c in shapes:
-        lat = Lattice(r, c)
-        usable = sum((hi - lo) // comps for lo, hi in cells(lat)) if mesh else lat.capacity // comps
-        if usable >= n:
-            return lat
+    for whole in (True, False):  # prefer every vertex whole on one data qubit
+        for r, c in shapes:
+            lat = Lattice(r, c)
+            usable = (sum(per_slot * (hi - lo) // comps for lo, hi in cells(lat)) if mesh and whole
+                      else per_slot * lat.capacity // comps)
+            if usable >= n:
+                return lat
     raise ValueError(f"{n} vertices x {comps} values exceed the {MAX_ROWS}x{MAX_COLS} lattice; "
-                     "try the radial payload (one value per vertex)")
+                     "try the radial payload, or Mode 'shape over θ+φ' (two values per slot)")
 
 
 def vertex_qubits(e: Encoded) -> np.ndarray:
@@ -230,10 +258,11 @@ def qubit_map(e: Encoded) -> dict:
 
     ``coords``/``edges`` draw the qubits and couplers (the chip's own drawing for a
     device, rows and columns for a lattice). ``groups`` lists each data qubit with its
-    address qubits. ``vertices[i][c] = [group, address]``: value ``c`` of vertex ``i``
-    is in that group's slot whose address qubit ``groups[g].addresses[j]`` reads bit
-    ``j`` of ``address`` (the bit order Tessa's decoder uses). In pair mode the same
-    slot also holds the vertex colour in φ.
+    address qubits. ``vertices[i][c] = [group, address, field]``: value ``c`` of
+    vertex ``i`` is in that group's slot whose address qubit ``groups[g].addresses[j]``
+    reads bit ``j`` of ``address`` (the bit order Tessa's decoder uses), in ``field``
+    0 (θ) or 1 (φ, split mode only). In colour mode the same slot also holds the
+    vertex colour in φ.
     """
     g = e.graph
     if isinstance(g, Lattice):
@@ -249,11 +278,15 @@ def qubit_map(e: Encoded) -> dict:
     return {"coords": coords, "edges": [list(map(int, c)) for c in couplers],
             "groups": [{"data": grp.data_qubit, "addresses": list(grp.address_qubits)}
                        for grp in g.groups],
-            "vertices": np.stack([cell, e.slots - bounds[cell, 0]], -1).tolist()}
+            "vertices": np.stack([cell, e.slots - bounds[cell, 0], e.fields], -1).tolist()}
 
 
 # --- encode / decode -------------------------------------------------------------
 def encode_mesh(verts, faces, p: Params) -> Encoded:
+    mode = MODE_ALIASES.get(p.mode, p.mode)
+    if mode not in MODES:
+        raise ValueError(f"unknown mode {p.mode!r}; use one of {MODES}")
+    per = 2 if mode == "split" else 1
     verts = np.asarray(verts, dtype=float)
     vals, centre, dirs = to_payload(verts, p.payload)
     n, comps = vals.shape
@@ -266,24 +299,29 @@ def encode_mesh(verts, faces, p: Params) -> Encoded:
         graph, name = devices.graph(p.backend), f"ibm_{p.backend} (whole chip)"
         quality = chip_quality(p.backend)
     else:
-        graph = fit_lattice(n, comps, order is not None)
+        graph = fit_lattice(n, comps, order is not None, per)
         name = f"{graph.rows}x{graph.cols} lattice"
     ranked = p.placement in ("quality", "importance")
     weight = importance(verts, faces) if p.placement == "importance" and quality is not None else None
-    slots = place(graph, n, comps, order, quality if ranked else None, weight)
-    a = fill(graph, slots, flat.reshape(n, comps))
+    slots, field = place(graph, n, comps, order, quality if ranked else None, weight, per)
+    vals = flat.reshape(n, comps)
+    a = fill(graph, slots[field == 0], vals[field == 0])
     kw = dict(value_range=rng, compression=p.compression)
     single, _ = encode(graph, a, clamp=p.clamp, **kw)
     colour = None
-    if p.mode == "pair":
-        colour = hue(verts)
-        b = fill(graph, slots, np.repeat(colour[:, None], comps, 1))
-        circuit, enc = encode(graph, a, b, clamp=p.clamp, clamp_b=p.clamp_b,
-                              value_range_b=(0.0, 1.0), **kw)
-    else:
+    if mode == "theta":
         circuit, enc = single, _
+    else:  # Tessa pair mode: a second field in φ, read in the X basis
+        if mode == "colour":
+            colour = hue(verts)
+            b, range_b = fill(graph, slots, np.repeat(colour[:, None], comps, 1)), (0.0, 1.0)
+        else:
+            b, range_b = fill(graph, slots[field == 1], vals[field == 1]), rng
+        circuit, enc = encode(graph, a, b, clamp=p.clamp, clamp_b=p.clamp_b,
+                              value_range_b=range_b, **kw)
     return Encoded(verts, faces, graph, name, circuit, enc, prep, slots, p.payload, centre,
-                   dirs, colour, two_qubit(single), quality)
+                   dirs, colour, two_qubit(single), quality,
+                   field if mode == "split" else None, mode)
 
 
 @cache
@@ -347,6 +385,8 @@ def decode_raw(e: Encoded, p: Params, seed: int | None = None):
     seed = p.seed if seed is None else seed
     out = decode(e.circuit, e.enc, sampler(e.graph, p, seed), shots=p.shots)
     a, b = out if isinstance(out, tuple) else (out, None)
+    if e.mode == "split":  # each value from its own field
+        return np.where(e.fields == 1, b[e.slots], a[e.slots]).ravel(), None
     return a[e.slots].ravel(), (None if b is None else b[e.slots].mean(1))
 
 
@@ -392,7 +432,7 @@ def resources(e: Encoded) -> list[dict]:
     Tessa and four baselines, transpiled onto the ibm_phoenix snapshot (Tessa on a
     whole-chip graph is transpiled onto its own chip)."""
     phoenix = devices.snapshot_backend("phoenix")
-    n = e.slots.size * (2 if e.pair else 1)
+    n = e.stats["values"]
     rng = np.random.default_rng(0)
 
     def routed(qc, backend=phoenix, layout=None):
@@ -403,7 +443,11 @@ def resources(e: Encoded) -> list[dict]:
 
     # generic random data for every row, so no encoding gets credit for this mesh; Tessa's
     # goes in the mesh's own slots, the rest of the graph padded as in encode_mesh
-    rand = [fill(e.graph, e.slots, rng.random(e.slots.shape)) for _ in range(2 if e.pair else 1)]
+    if e.mode == "colour":
+        where = [e.slots, e.slots]
+    else:
+        where = [e.slots[e.fields == f] for f in ((0, 1) if e.pair else (0,))]
+    rand = [fill(e.graph, w, rng.random(w.shape)) for w in where]
     generic, _ = encode(e.graph, *rand)
     if isinstance(e.graph, Lattice):  # lattice site (r, c) -> ibm_phoenix qubit (10 per row)
         r, c = np.divmod(np.arange(e.graph.n_qubits), e.graph.cols)

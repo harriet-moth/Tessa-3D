@@ -222,7 +222,7 @@ function colourise(stepOnly = false) {
     legend('faceLegend', [0, 0.2, 0.4, 0.6, 0.8, 1].map(hueCss), '0', '1', 'colour value stored in φ');
   } else {
     for (let i = 0; i < n; i++) set(i, PLAIN);
-    S.colourLabel = mode === 'phi' ? 'plain (φ colour needs pair mode)' : 'plain';
+    S.colourLabel = mode === 'phi' ? 'plain (φ colour needs Mode shape θ, colour φ)' : 'plain';
     $('faceLegend').hidden = true;
   }
   // Faces: one flat colour each, the mean of their vertices' colours in sRGB (as in the desktop app).
@@ -292,7 +292,7 @@ function showInfo(d, p) {
     `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`,
     `(angle encoding would need ${s.values} qubits)`,
     `capacity used ${s.values}/${s.capacity}`,
-    `depth ${s.depth} · 2q gates ${s.twoq}` + (p.mode === 'pair' ? ` (θ alone ${s.twoq_single})` : ''),
+    `depth ${s.depth} · 2q gates ${s.twoq}` + (p.mode === 'colour' ? ` (θ alone ${s.twoq_single})` : ''),
   ].join('\n');
 }
 
@@ -491,16 +491,17 @@ function drawMap() {
 }
 
 function focusText() {
-  const f = S.focus, m = S.data.map, pair = S.data.colour ? ' (θ: shape, φ: colour)' : '';
+  const f = S.focus, m = S.data.map, split = !!S.run && JSON.parse(S.run).mode === 'split';
+  const pair = S.data.colour ? ' (θ: shape, φ: colour)' : split ? ' (shape over θ and φ)' : '';
   if (!f) return 'Hover a vertex on the mesh, or a data qubit here.';
   const qs = (g) => m.groups[g].addresses.map((q) => `q${q}`).join(' ');
   if (f.vertex === null) {
     const g = f.groups[0], held = m.vertices.flat().filter((v) => v[0] === g).length;
-    return `data q${m.groups[g].data} · address ${qs(g)}\n${2 ** m.groups[g].addresses.length} slots, ${held} hold values of this mesh${pair}\n${f.mates.length} vertices on it (orange on the mesh)`;
+    return `data q${m.groups[g].data} · address ${qs(g)}\n${2 ** m.groups[g].addresses.length} slots, ${held} values of this mesh${pair}\n${f.mates.length} vertices on it (orange on the mesh)`;
   }
-  const lines = m.vertices[f.vertex].map(([g, a], c) => {
+  const lines = m.vertices[f.vertex].map(([g, a, fld], c) => {
     const bits = m.groups[g].addresses.map((q, j) => `q${q}=${(a >> j) & 1}`).join(' ');
-    return `${comps()[c]} → data q${m.groups[g].data}, slot ${a} of ${2 ** m.groups[g].addresses.length}\n    address ${bits}`;
+    return `${comps()[c]} → data q${m.groups[g].data}, slot ${a} of ${2 ** m.groups[g].addresses.length}${split ? ` in ${'θφ'[fld]}` : ''}\n    address ${bits}`;
   });
   return `vertex ${f.vertex}${pair}\n${lines.join('\n')}\n${f.mates.length} vertices share ${f.groups.length > 1 ? 'these data qubits' : 'this data qubit'} (orange)`;
 }
