@@ -3,3 +3,4 @@ __pycache__/
 *.egg-info/
 exports/
 .pytest_cache/
+.DS_Store

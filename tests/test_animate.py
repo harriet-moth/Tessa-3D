@@ -2,14 +2,14 @@ import numpy as np
 
 from tessa_ripple.animate import blend, export_obj_sequence, interpolate, random_mask, run_frames, timeline
 from tessa_ripple.bridge import Params, encode_mesh, restore
-from tessa_ripple.mesh import cube
+from tessa_ripple.mesh import blob
 
-V, F = cube(3)
+V, F = blob(8, 6)
 
 
 def frames(n=3, **kw):
     p = Params(**kw)
-    return run_frames(encode_mesh(V, p), p, n)
+    return run_frames(encode_mesh(V, F, p), p, n)[0]
 
 
 def test_same_seed_same_frames_different_seeds_differ():
@@ -19,7 +19,7 @@ def test_same_seed_same_frames_different_seeds_differ():
 
 
 def test_gain_zero_is_still():
-    e = encode_mesh(V, Params())
+    e = encode_mesh(V, F, Params())
     for raw in frames():
         assert np.array_equal(blend(V, restore(e, raw), gain=0), V)
 

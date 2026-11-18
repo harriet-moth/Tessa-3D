@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tessa_ripple.mesh import cube, uv_sphere, write_obj
+from tessa_ripple.mesh import bfs_order, blob, cube, edges, load_obj, uv_sphere, write_obj
 
 
 @pytest.mark.parametrize("n", [2, 3, 4, 5])
@@ -26,3 +26,17 @@ def test_write_obj(tmp_path):
     text = write_obj(tmp_path / "c.obj", v, f).read_text().splitlines()
     assert sum(line.startswith("v ") for line in text) == 8
     assert sum(line.startswith("f ") for line in text) == 6
+
+
+def test_edges_and_bfs_order():
+    v, f = blob(12, 8)
+    E = edges(f)
+    assert len(E) == len({tuple(e) for e in E}) and (E[:, 0] < E[:, 1]).all()
+    order = bfs_order(len(v), f)
+    assert sorted(order) == list(range(len(v)))
+
+
+def test_load_obj_round_trip(tmp_path):
+    v, f = cube(3)
+    lv, lf = load_obj(write_obj(tmp_path / "c.obj", v, f))
+    assert np.allclose(lv, v) and lf == [list(x) for x in f]

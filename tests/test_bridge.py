@@ -2,13 +2,18 @@ import numpy as np
 import pytest
 
 from tessa_ripple.animate import blend
-from tessa_ripple.bridge import Params, encode_mesh, fit_lattice, read_mesh
-from tessa_ripple.mesh import cube, uv_sphere
+from tessa_ripple.bridge import (Params, cells, encode_mesh, fit_lattice, mesh_error, read_edges,
+                                 read_mesh, resources, decode_raw)
+from tessa_ripple.mesh import blob, cube, uv_sphere
+
+V, F = blob(12, 8)
 
 
-def test_fit_lattice_holds_values():
-    for n in (78, 168, 294, 342):
-        assert fit_lattice(n).capacity >= n
+def test_fit_lattice_holds_values_and_cap_is_whole_phoenix():
+    for n, comps in ((86, 1), (86, 3), (266, 1)):
+        lat = fit_lattice(n, comps)
+        assert sum((hi - lo) // comps for lo, hi in cells(lat)) >= n
+    assert (fit_lattice(700, 1).rows, fit_lattice(700, 1).cols) <= (10, 12)
 
 
 def test_capacity_error_is_clear():
@@ -16,23 +21,58 @@ def test_capacity_error_is_clear():
         fit_lattice(10_000)
 
 
-def test_noiseless_round_trip_within_2_percent():
-    v, _ = cube(3)
-    p = Params(shots=20_000)
-    out = read_mesh(encode_mesh(v, p), p)
-    assert out.shape == v.shape
-    assert np.abs(out - v).mean() / np.ptp(v) < 0.02
+@pytest.mark.parametrize("payload", ["radial", "xyz"])
+@pytest.mark.parametrize("layout", ["mesh", "naive"])
+def test_noiseless_round_trip_within_2_percent(payload, layout):
+    p = Params(payload=payload, layout=layout, shots=20_000)
+    out = read_mesh(encode_mesh(V, F, p), p)
+    assert out.shape == V.shape
+    assert mesh_error(V, out) < 0.02
 
 
-def test_pair_mode_round_trip():
-    v, _ = uv_sphere(8, 6)
+def test_mesh_layout_keeps_vertex_components_in_one_cell():
+    e = encode_mesh(V, F, Params(payload="xyz"))
+    stops = cells(e.graph)[:, 1]
+    cell = np.searchsorted(stops, e.slots, side="right")
+    assert (cell == cell[:, :1]).all()
+    assert len(np.unique(e.slots)) == e.slots.size
+
+
+def test_pair_mode_carries_colour_in_phi():
     p = Params(mode="pair", shots=20_000)
-    e = encode_mesh(v, p)
-    assert e.enc.mode == "pair"
-    assert np.abs(read_mesh(e, p) - v).mean() / np.ptp(v) < 0.05
+    e = encode_mesh(V, F, p)
+    assert e.enc.mode == "pair" and e.colour is not None
+    shape, colour = decode_raw(e, p)
+    assert np.abs(colour - e.colour).mean() < 0.05
+    assert e.stats["values"] == 2 * len(V)
 
 
 def test_gain_zero_returns_original_exactly():
-    v, _ = cube(3)
     p = Params()
-    assert np.array_equal(blend(v, read_mesh(encode_mesh(v, p), p), gain=0), v)
+    assert np.array_equal(blend(V, read_mesh(encode_mesh(V, F, p), p), gain=0), V)
+
+
+def test_chip_backend_uses_whole_chip():
+    p = Params(backend="phoenix")
+    e = encode_mesh(V, F, p)
+    assert e.graph.n_qubits == 120 and e.graph.capacity == 792
+    assert mesh_error(V, read_mesh(e, p)) < 0.1
+
+
+def test_resources_tessa_needs_no_swaps_and_fewer_qubits_than_angle():
+    rows = {r["name"]: r for r in resources(encode_mesh(V, F, Params(payload="xyz")))}
+    assert rows["Tessa"]["swaps"] == 0
+    assert rows["Tessa"]["qubits"] < rows["Angle (1 value/qubit)"]["qubits"]
+
+
+def test_edge_lengths_read_from_coherences():
+    v, f = uv_sphere(8, 6)
+    E, measured, exact = read_edges(v, f, Params(shots=20_000))
+    assert len(E) == len(measured) == len(exact)
+    assert np.abs(measured - exact).mean() / exact.mean() < 0.05
+
+
+def test_cube_xyz_still_works():
+    v, f = cube(3)
+    p = Params(payload="xyz")
+    assert mesh_error(v, read_mesh(encode_mesh(v, f, p), p)) < 0.05

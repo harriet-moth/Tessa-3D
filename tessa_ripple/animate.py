@@ -8,14 +8,17 @@ from .bridge import Encoded, Params, decode_raw
 from .mesh import write_obj
 
 
-def run_frames(e: Encoded, p: Params, n: int, progress=None) -> np.ndarray:
-    """``n`` independent readouts with seeds seed, seed+1, ...: raw (n, 3N) values."""
-    frames = []
+def run_frames(e: Encoded, p: Params, n: int, progress=None):
+    """``n`` independent readouts with seeds seed, seed+1, ...: raw values (n, N*comps)
+    and, in pair mode, the decoded colour field (n, N), else None."""
+    values, colours = [], []
     for i in range(n):
         if progress:
             progress(i, n)
-        frames.append(decode_raw(e, p, p.seed + i))
-    return np.array(frames)
+        v, c = decode_raw(e, p, p.seed + i)
+        values.append(v)
+        colours.append(c)
+    return np.array(values), (None if colours[0] is None else np.array(colours))
 
 
 def random_mask(n_verts: int, fraction: float, seed: int = 0) -> np.ndarray:
