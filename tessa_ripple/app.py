@@ -30,9 +30,23 @@ from PIL import Image
 from . import animate as anim
 from .bridge import (BACKENDS, DRR_METHODS, cells, Params, encode_mesh, fidelity_curves, mesh_error,
                      qubit_map, read_edges, resources, restore, vertex_qubits)
-from .mesh import PRESETS, load_obj
+from .mesh import PRESETS, decimate, load_obj, subdivide, subdivided_size
 
 OUT = Path("exports")
+MAX_VERTS = 792  # most values any graph here holds: the 10x12 lattice or ibm_phoenix (radial)
+
+
+def obj_presets(path):
+    """An uploaded OBJ at three resolutions: mid is the file itself, low is decimated
+    to about half the vertices, high is subdivided (refused if it would be too big)."""
+    def high():
+        v, f = load_obj(path)
+        n = subdivided_size(len(v), f)  # counted before subdividing anything
+        if n > MAX_VERTS:
+            raise ValueError(f"high would subdivide {len(v)} vertices into {n}, more than the "
+                             f"{MAX_VERTS} any graph here holds; staying on mid")
+        return subdivide(v, f)
+    return {"low": lambda: decimate(*load_obj(path)), "mid": lambda: load_obj(path), "high": high}
 RES = ("low", "mid", "high")
 COLOURS = ("error", "qubit", "φ colour", "plain")
 PLAIN = np.array(colormaps["Blues"](0.45))
@@ -70,7 +84,9 @@ class App:
                 print(f"tessa-ripple: no OBJ file at {Path(path).resolve()}; skipping it",
                       file=sys.stderr)
                 continue
-            PRESETS[Path(path).stem] = {"(OBJ)": lambda path=path: load_obj(path)}
+            PRESETS[Path(path).stem] = obj_presets(path)
+        self.objs = {Path(p).stem for p in objs if Path(p).is_file()}
+        self.shape = None
         self.fig = fig = plt.figure("Tessa Ripple", figsize=(15, 9))
         self.ax = fig.add_axes([0.0, 0.07, 0.49, 0.88], projection="3d")
         self.encoded = self.raw = self.colours = self.raw_key = self.edge_data = None
@@ -176,13 +192,28 @@ class App:
     def fidelity(self):
         return self.val("View") == "fidelity"
 
+    def set_resolution(self, label):
+        """Move the Resolution radio without triggering a re-encode."""
+        w = self.w["Resolution"]
+        w.eventson = False
+        w.set_active(RES.index(label))
+        w.eventson = True
+
     def quantum_changed(self, *_):
         p, shape = self.params(), self.val("Shape")
+        if shape != self.shape and shape in self.objs:  # an uploaded mesh opens at its own size
+            self.set_resolution("mid")
+        self.shape = shape
         presets = list(PRESETS[shape].items())
         name, make = presets[min(RES.index(self.val("Resolution")), len(presets) - 1)]
         key = (shape, name, p.encoder_key)
         if self.encoded is None or key != self.enc_key:
-            verts, faces = make()
+            try:
+                verts, faces = make()
+            except ValueError as err:  # high refused: back to mid
+                self.set_resolution("mid")
+                self.quantum_changed()
+                return self.say(f"⚠ {err}")
             try:
                 encoded = encode_mesh(verts, faces, p)
             except ValueError as err:

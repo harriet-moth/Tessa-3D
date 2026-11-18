@@ -113,6 +113,114 @@ def bfs_order(n_verts: int, faces) -> np.ndarray:
     return np.array(order)
 
 
+def subdivided_size(n_verts: int, faces) -> int:
+    """Vertex count after :func:`subdivide`, without doing it: one new vertex per
+    edge, plus a centre for every face with four or more corners."""
+    return n_verts + len(edges(faces)) + sum(len(f) >= 4 for f in faces)
+
+
+def subdivide(verts, faces):
+    """Linear subdivision: every edge gets its midpoint; a triangle becomes four
+    triangles, a quad (or n-gon) becomes one quad per corner around its centre. The
+    shape is unchanged; there are just more vertices to encode."""
+    verts = np.asarray(verts, float)
+    E = edges(faces)
+    mid = {(int(a), int(b)): len(verts) + k for k, (a, b) in enumerate(E)}
+    out_v, out_f = [verts, verts[E].mean(1)], []
+    m = lambda a, b: mid[(min(a, b), max(a, b))]  # noqa: E731
+    nxt = len(verts) + len(E)
+    for f in faces:
+        k = len(f)
+        if k == 3:
+            a, b, c = f
+            out_f += [[a, m(a, b), m(c, a)], [b, m(b, c), m(a, b)],
+                      [c, m(c, a), m(b, c)], [m(a, b), m(b, c), m(c, a)]]
+        else:
+            out_v.append(verts[f].mean(0, keepdims=True))
+            out_f += [[f[i], m(f[i], f[(i + 1) % k]), nxt, m(f[i - 1], f[i])] for i in range(k)]
+            nxt += 1
+    return np.concatenate(out_v), out_f
+
+
+def _normal(p):
+    """Newell normal of a polygon (unnormalised)."""
+    q = np.roll(p, -1, 0)
+    return np.array([((p[:, 1] - q[:, 1]) * (p[:, 2] + q[:, 2])).sum(),
+                     ((p[:, 2] - q[:, 2]) * (p[:, 0] + q[:, 0])).sum(),
+                     ((p[:, 0] - q[:, 0]) * (p[:, 1] + q[:, 1])).sum()])
+
+
+def decimate(verts, faces, keep: float = 0.5):
+    """Greedy shortest-edge collapse to about ``keep`` of the vertices. Each collapse
+    merges an edge's two ends at its midpoint. It is skipped if it would tear the
+    surface (the link condition), flip a face, touch an open boundary (eye holes,
+    cut edges), or merge corners that are not neighbours in some face. Quads that
+    lose a corner become triangles."""
+    import heapq
+
+    V = np.asarray(verts, float).copy()
+    F = [list(f) for f in faces]
+    n = len(V)
+    at = [set() for _ in range(n)]  # faces around each vertex
+    for k, f in enumerate(F):
+        for v in f:
+            at[v].add(k)
+    E = edges(F)
+    open_edges = [e for e in E if sum(1 for k in at[e[0]] & at[e[1]]) == 1]
+    boundary = {int(v) for e in open_edges for v in e}
+
+    def nbrs(v):
+        return {F[k][(F[k].index(v) + d) % len(F[k])] for k in at[v] for d in (-1, 1)}
+
+    length = lambda a, b: float(np.linalg.norm(V[a] - V[b]))  # noqa: E731
+    heap = [(length(a, b), int(a), int(b)) for a, b in E]
+    heapq.heapify(heap)
+    alive, target = n, max(4, int(round(n * keep)))
+    dead = np.zeros(n, bool)
+    while heap and alive > target:
+        d, a, b = heapq.heappop(heap)
+        if dead[a] or dead[b] or b not in nbrs(a):
+            continue
+        if abs(d - length(a, b)) > 1e-12:  # stale: re-queue at its current length
+            heapq.heappush(heap, (length(a, b), a, b))
+            continue
+        if a in boundary or b in boundary:
+            continue
+        shared = at[a] & at[b]
+        if any(abs(F[k].index(a) - F[k].index(b)) not in (1, len(F[k]) - 1) for k in shared):
+            continue  # a and b are opposite corners of a quad
+        if len(nbrs(a) & nbrs(b)) != sum(len(F[k]) == 3 for k in shared):
+            continue  # link condition: collapsing would make the surface non-manifold
+        p = (V[a] + V[b]) / 2
+        flips = False
+        for k in (at[a] | at[b]) - shared:  # faces that survive must not turn over
+            before = V[F[k]]
+            after = np.array([p if v in (a, b) else V[v] for v in F[k]])
+            if _normal(before) @ _normal(after) <= 0:
+                flips = True
+                break
+        if flips:
+            continue
+        V[a], dead[b], alive = p, True, alive - 1
+        for k in list(at[b]):
+            f = [a if v == b else v for v in F[k]]
+            f = [v for i, v in enumerate(f) if v != f[i - 1]]  # drop the merged duplicate
+            if len(f) < 3:
+                for v in F[k]:
+                    at[v].discard(k)
+                F[k] = []
+            else:
+                F[k] = f
+                at[a].add(k)
+        at[b] = set()
+        for c in nbrs(a):
+            heapq.heappush(heap, (length(a, c), a, c))
+    keep_v = np.flatnonzero(~dead)
+    new = np.full(n, -1)
+    new[keep_v] = np.arange(len(keep_v))
+    return V[keep_v], [[int(new[v]) for v in f] for f in F if f]
+
+
 def load_obj(path):
     """Vertices and faces of an OBJ file (e.g. Blender's Suzanne), centred and scaled
     so the largest coordinate is 1. OBJ is Y-up; the app is Z-up, so (x, y, z) becomes
