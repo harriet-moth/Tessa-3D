@@ -186,6 +186,9 @@ class App:
                 return self.say(f"⚠ {err}")
             # swap everything together, before say()/flush_events lets a tick draw
             self.verts, self.faces, self.encoded, self.enc_key = verts, faces, encoded, key
+            self.face_mean = np.zeros((len(faces), len(verts)))  # face colour = mean of its corners
+            for k, f in enumerate(faces):
+                self.face_mean[k, f] = 1 / len(f)
             self.vq, self.qmap, self.focus = vertex_qubits(encoded), qubit_map(encoded), None
             self.raw = self.colours = None
             if "Read edges" in self.w:  # a new mesh drops the old mesh's edges
@@ -300,7 +303,7 @@ class App:
     # --- classical layer -----------------------------------------------------
     def positions(self):
         if self.raw is None:
-            self.decoded = []
+            self.decoded, self.err_seq = [], None
             return [self.verts]
         e, drr = self.encoded, self.val("DRR")
         self.decoded = [restore(e, r, drr) for r in self.raw]
@@ -311,18 +314,23 @@ class App:
             mask = anim.random_mask(len(self.verts), self.val("Mask %") / 100, self.params().seed)
             keys = [anim.blend(self.verts, d, self.val("Gain (material)"), mask) for d in self.decoded]
         t = self.toggles()
-        keys = ([self.verts] if t["orig"] else []) + list(keys)
-        return keys if len(keys) == 1 else anim.timeline(keys, int(self.val("In-between")), t["loop"])
+        lead = [self.verts] if t["orig"] else []
+        glide = lambda k: k if len(k) == 1 else anim.timeline(k, int(self.val("In-between")), t["loop"])  # noqa: E731
+        # error colour follows playback: each step's true decoded error (same timeline,
+        # no gain or mask), on one scale fixed to the largest error anywhere in the run
+        self.err_seq = np.array([np.linalg.norm(v - self.verts, axis=1) for v in glide(lead + self.decoded)])
+        self.err_top = self.err_seq.max() or 1.0
+        return glide(lead + list(keys))
 
     def vertex_rgba(self):
         """Per-vertex colours for the Colour mode, a title label, and a legend spec
         (cmap, low, high, caption) or None."""
         mode, e = self.val("Colour"), self.encoded
         if mode == "error" and self.decoded:  # true decoded error, whatever the view's gain
-            err = np.mean([np.linalg.norm(d - self.verts, axis=1) for d in self.decoded], 0)
-            top = err.max() or 1.0
-            return (ERROR_CMAP(err / top), f"error per vertex (mean of {len(self.decoded)} readouts)",
-                    (ERROR_CMAP, 0, top, "vertex error (distance, mesh units)"))
+            n = len(self.decoded)
+            return (ERROR_CMAP(self.err_seq[self.idx] / self.err_top),
+                    f"error per vertex at this step (scale: largest over {n} readout{'s' * (n > 1)})",
+                    (ERROR_CMAP, 0, self.err_top, "vertex error at this step (distance, mesh units)"))
         if mode == "qubit":
             cell = np.searchsorted(cells(e.graph)[:, 1], e.slots, side="right")
             split = (cell != cell[:, :1]).any()  # naive xyz puts x, y, z on different qubits
@@ -351,7 +359,7 @@ class App:
         self.seq = self.positions()
         self.idx %= len(self.seq)
         rgba, self.colour_label, spec = self.vertex_rgba()
-        self.face_rgba = np.array([rgba[f].mean(0) for f in self.faces])
+        self.face_rgba = self.face_mean @ rgba
         self.legend(self.cax, spec)
         if self.edge_data:
             E, measured, exact = self.edge_data
@@ -370,6 +378,8 @@ class App:
         self.tip.set_visible(False)  # mesh moved, so any hover readout is stale
         self.marker.set_visible(False)
         self.coll.set_verts([v[f] for f in self.faces])
+        if self.val("Colour") == "error" and self.decoded:  # recolour for this step
+            self.face_rgba = self.face_mean @ ERROR_CMAP(self.err_seq[self.idx] / self.err_top)
         rgba = self.face_rgba.copy()
         rgba[:, 3] = 0.35 if self.edge_data else 1.0
         self.coll.set_facecolor(rgba)

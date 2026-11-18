@@ -185,25 +185,30 @@ function rebuild() {
       return o;
     });
   }
-  keys = ($('orig').checked ? [orig] : []).concat(keys);
-  S.seq = keys.length === 1 ? keys : timeline(keys, num('between'), $('loop').checked);
+  const lead = $('orig').checked ? [orig] : [];
+  const glide = (k) => (k.length === 1 ? k : timeline(k, num('between'), $('loop').checked));
+  S.seq = glide(lead.concat(keys));
   S.step = Math.min(S.step, S.seq.length - 1);
+  // Error colour follows the playback: each step's true decoded error (the same timeline
+  // without gain or mask), on one scale fixed to the largest error anywhere in the run.
+  S.err = glide(lead.concat(S.frames)).map((v) => {
+    const e = new Float32Array(n);
+    for (let i = 0; i < n; i++) e[i] = Math.hypot(v[3 * i] - orig[3 * i], v[3 * i + 1] - orig[3 * i + 1], v[3 * i + 2] - orig[3 * i + 2]);
+    return e;
+  });
+  S.errTop = Math.max(...S.err.map((e) => Math.max(...e))) || 1;
   colourise();
   draw();
 }
 
-function colourise() {
+function colourise(stepOnly = false) {
   const d = S.data, n = d.verts.length, col = dotGeom.attributes.color.array, mode = val('colour');
   const set = (i, c) => { col[3 * i] = c.r; col[3 * i + 1] = c.g; col[3 * i + 2] = c.b; };
   if (mode === 'error') {
-    const err = new Float32Array(n);
-    for (const f of S.frames) for (let i = 0; i < n; i++) {
-      err[i] += Math.hypot(f[3 * i] - S.orig[3 * i], f[3 * i + 1] - S.orig[3 * i + 1], f[3 * i + 2] - S.orig[3 * i + 2]) / S.frames.length;
-    }
-    const top = Math.max(...err) || 1;
-    for (let i = 0; i < n; i++) set(i, ramp(ERROR, err[i] / top));
-    S.colourLabel = `error per vertex (mean of ${S.frames.length} readouts)`;
-    legend('faceLegend', ERROR_HEX, '0', top.toFixed(4), 'vertex error (distance, mesh units)');
+    const err = S.err[S.step];
+    for (let i = 0; i < n; i++) set(i, ramp(ERROR, err[i] / S.errTop));
+    S.colourLabel = `error per vertex at this step (scale: largest over ${S.frames.length} readout${S.frames.length > 1 ? 's' : ''})`;
+    if (!stepOnly) legend('faceLegend', ERROR_HEX, '0', S.errTop.toFixed(4), 'vertex error at this step (distance, mesh units)');
   } else if (mode === 'qubit') {
     const used = [...new Set(d.qubits)].sort((a, b) => a - b), rank = new Map(used.map((q, r) => [q, r]));
     for (let i = 0; i < n; i++) set(i, hsl(rank.get(d.qubits[i]) * GOLDEN, 0.6, 0.55));
@@ -251,6 +256,7 @@ function copyEnds(target, pairs, v) {
 
 function draw() {
   if (!S.seq.length) return;
+  if (val('colour') === 'error' && S.err) colourise(true);
   const v = S.seq[S.step];
   copyEnds(geom.attributes.position.array, S.corner, v);
   geom.attributes.position.needsUpdate = true;

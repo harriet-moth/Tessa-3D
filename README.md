@@ -410,10 +410,14 @@ what the colours mean.
   "gain 3.0× (noise exaggerated)".
 
 **Colour** (error / qubit / φ colour / plain)
-- *Error*: each vertex's mean distance from its original position over the
-  readouts, in mesh units. The scale runs from light (no error) to dark (the
-  largest error in this run); the legend shows the values. It is always the
-  true decoded error, even in the material view. On a chip backend it shows the
+- *Error*: each vertex's distance from its original position at the current
+  step, in mesh units, so the colours change as the mesh plays. They start
+  light on the original mesh, grow darker as a readout's error glides in, and
+  shift from readout to readout; the in-betweens blend smoothly. The scale is
+  fixed for the whole run, light (no error) to dark (the largest error at any
+  step), so a frame that looks darker really is worse; the legend shows the
+  values. It is always the true decoded error, even in the material view, where
+  gain and mask only change the positions shown. On a chip backend it shows the
   bad qubits.
 - *Qubit*: which data qubit holds each vertex, one distinct colour per qubit in
   use (hues spread by the golden ratio). With the mesh layout, cells show up as
