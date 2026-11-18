@@ -1,0 +1,34 @@
+"""Local stand-in for Vercel: serves public/ and the api/tessa.py function on one port.
+
+    .venv/bin/python dev.py        # then open http://localhost:8000
+"""
+
+import importlib.util
+import sys
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location("tessa_api", ROOT / "api" / "tessa.py")
+api = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(api)
+
+
+class Dev(api.handler, SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/api/tessa"):
+            return api.handler.do_GET(self)
+        return SimpleHTTPRequestHandler.do_GET(self)
+
+    def do_POST(self):
+        if self.path.startswith("/api/tessa"):
+            return api.handler.do_POST(self)
+        self.send_error(404)
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    server = ThreadingHTTPServer(("127.0.0.1", port), partial(Dev, directory=str(ROOT / "public")))
+    print(f"Tessa Ripple web on http://localhost:{port}")
+    server.serve_forever()

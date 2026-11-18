@@ -1,0 +1,8 @@
+.venv
+exports
+tests
+.claude
+*.egg-info
+__pycache__
+.pytest_cache
+.DS_Store

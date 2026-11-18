@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tessa Ripple</title>
+<meta name="description" content="A 3D mesh loaded into a quantum state with Moth's Tessa encoder, read back, and moved only by readout noise.">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>Tessa Ripple</h1>
+  <p>A mesh loaded into a quantum state with <a href="https://github.com/moth-quantum/Tessa">Tessa</a>, read back on a simulator or a calibrated IBM chip model, and moved only by readout noise.</p>
+</header>
+<main>
+  <section class="stage">
+    <div class="caption" id="caption">Loading…</div>
+    <div id="viewer"></div>
+    <div id="tip" hidden></div>
+    <div class="status" id="status" role="status">Starting…</div>
+  </section>
+
+  <aside class="panel">
+    <div class="buttons">
+      <button id="run" class="primary">Run</button>
+      <button id="runFrames" class="primary">Run frames</button>
+      <button id="play">Play / Pause</button>
+      <button id="edges">Read edges</button>
+      <button id="why">Why Tessa</button>
+      <button id="curves">Curves</button>
+      <button id="obj">Download OBJ</button>
+    </div>
+    <pre class="info" id="info"></pre>
+
+    <fieldset><legend>Mesh</legend>
+      <label>Shape <select id="shape"><option>blob</option><option>sphere</option><option>cube</option><option>suzanne</option></select></label>
+      <label>Resolution <select id="resolution"><option value="0">low</option><option value="1">mid</option><option value="2">high</option></select></label>
+    </fieldset>
+
+    <fieldset><legend>Encoder <small>(needs Run)</small></legend>
+      <label>Payload <select id="payload"><option>radial</option><option>xyz</option></select></label>
+      <label>Mode <select id="mode"><option>single</option><option value="pair">pair (colour in φ)</option></select></label>
+      <label>Layout <select id="layout"><option>mesh</option><option>naive</option></select></label>
+      <label>Clamp θ <input id="clamp" type="range" min="0" max="0.45" step="0.01" value="0"><output></output></label>
+      <label>Clamp φ <input id="clamp_b" type="range" min="0" max="0.45" step="0.01" value="0"><output></output></label>
+      <label>Compression % <input id="compression" type="range" min="0" max="100" step="1" value="0"><output></output></label>
+      <label>Quant bits <input id="quant_bits" type="range" min="0" max="8" step="1" value="0"><output></output></label>
+      <label>Headroom <input id="headroom" type="range" min="0" max="0.5" step="0.01" value="0.1"><output></output></label>
+    </fieldset>
+
+    <fieldset><legend>Readout <small>(needs Run)</small></legend>
+      <label>Backend <select id="backend"><option>noiseless</option><option>flat noise</option><option>phoenix</option><option>fez</option></select></label>
+      <label>Shots (log₂) <input id="shots" type="range" min="8" max="16" step="1" value="12"><output></output></label>
+      <label>Noise × (flat) <input id="noise_strength" type="range" min="0" max="3" step="0.1" value="1"><output></output></label>
+      <label>Seed <input id="seed" type="number" min="0" max="999" value="0"></label>
+      <label>DRR <select id="drr"><option>none</option><option>min_max</option><option>mean_std</option><option>percentile</option><option>abs_max</option><option>min_avg_max</option></select></label>
+      <label>Frames <input id="frames" type="range" min="2" max="30" step="1" value="12"><output></output></label>
+    </fieldset>
+
+    <fieldset><legend>View <small>(instant)</small></legend>
+      <label>View <select id="view"><option value="fidelity">fidelity (gain 1)</option><option value="material">material (gain)</option></select></label>
+      <label>Colour <select id="colour"><option value="error">error</option><option value="qubit">qubit</option><option value="phi">φ colour</option><option value="plain">plain</option></select></label>
+      <label>Gain (material) <input id="gain" type="range" min="0" max="10" step="0.1" value="3"><output></output></label>
+      <label>Mask % (material) <input id="mask" type="range" min="0" max="100" step="1" value="100"><output></output></label>
+      <label>In-between <input id="between" type="range" min="0" max="30" step="1" value="8"><output></output></label>
+      <label>Speed (fps) <input id="fps" type="range" min="1" max="60" step="1" value="24"><output></output></label>
+      <label class="check"><input id="loop" type="checkbox" checked> Loop</label>
+      <label class="check"><input id="orig" type="checkbox" checked> Start from original</label>
+    </fieldset>
+  </aside>
+</main>
+
+<dialog id="dialog"><form method="dialog"><button class="close" aria-label="Close">×</button></form><div id="dialogBody"></div></dialog>
+
+<footer>Desktop app, source and findings: <a href="https://github.com/harriet-moth/Tessa-ripple">github.com/harriet-moth/Tessa-ripple</a></footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>
