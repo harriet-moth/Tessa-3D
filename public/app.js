@@ -36,8 +36,21 @@ const wire = new THREE.LineSegments(wireGeom, new THREE.LineBasicMaterial({ colo
 const edgeGeom = new THREE.BufferGeometry();
 const edgeLines = new THREE.LineSegments(edgeGeom, new THREE.LineBasicMaterial({ vertexColors: true }));
 const marker = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), new THREE.MeshBasicMaterial({ color: 0xd0342c }));
+// Faces get one flat colour each (the mean of their vertices, as in the desktop app);
+// each vertex's exact colour is shown on its own dot, so no value is smeared across faces.
+const dotTexture = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.beginPath(); x.arc(32, 32, 26, 0, 2 * Math.PI);
+  x.fillStyle = '#fff'; x.fill();
+  x.lineWidth = 7; x.strokeStyle = 'rgba(20, 22, 30, 0.75)'; x.stroke();
+  return new THREE.CanvasTexture(c);
+})();
+const dotGeom = new THREE.BufferGeometry();
+const dots = new THREE.Points(dotGeom, new THREE.PointsMaterial({ vertexColors: true, map: dotTexture, alphaTest: 0.5, size: 0.06 }));
 edgeLines.visible = marker.visible = false;
-scene.add(mesh, wire, edgeLines, marker);
+scene.add(mesh, wire, edgeLines, dots, marker);
 
 function resize() {
   const w = viewer.clientWidth, h = viewer.clientHeight;
@@ -94,12 +107,14 @@ async function busy(label, fn) {
 
 // ---------- mesh
 function buildMesh(d) {
-  const n = d.verts.length;
-  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-  geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-  const idx = [];
-  for (const f of d.faces) for (let k = 1; k < f.length - 1; k++) idx.push(f[0], f[k], f[k + 1]);
-  geom.setIndex(idx);
+  const n = d.verts.length, corners = [];
+  for (const f of d.faces) for (let k = 1; k < f.length - 1; k++) corners.push(f[0], f[k], f[k + 1]);
+  S.corner = Int32Array.from(corners); // non-indexed: each triangle corner has its own (flat) colour
+  geom.setIndex(null);
+  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(corners.length * 3), 3));
+  geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(corners.length * 3), 3));
+  dotGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+  dotGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
   const seen = new Set();
   S.wire = [];
   for (const f of d.faces) {
@@ -109,6 +124,12 @@ function buildMesh(d) {
     }
   }
   wireGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(S.wire.length * 3), 3));
+  let len = 0; // dot size follows the mesh's mean edge length
+  for (let j = 0; j < S.wire.length; j += 2) {
+    const a = S.wire[j], b = S.wire[j + 1];
+    len += Math.hypot(...[0, 1, 2].map((c) => d.verts[a][c] - d.verts[b][c]));
+  }
+  dots.material.size = 0.6 * len / (S.wire.length / 2);
 }
 
 function mulberry32(a) {
@@ -165,7 +186,7 @@ function rebuild() {
 }
 
 function colourise() {
-  const d = S.data, n = d.verts.length, col = geom.attributes.color.array, mode = val('colour');
+  const d = S.data, n = d.verts.length, col = dotGeom.attributes.color.array, mode = val('colour');
   const set = (i, c) => { col[3 * i] = c.r; col[3 * i + 1] = c.g; col[3 * i + 2] = c.b; };
   if (mode === 'error') {
     const err = new Float32Array(n);
@@ -192,7 +213,22 @@ function colourise() {
     S.colourLabel = mode === 'phi' ? 'plain (φ colour needs pair mode)' : 'plain';
     $('faceLegend').hidden = true;
   }
+  // Faces: one flat colour each, the mean of their vertices' colours in sRGB (as in the desktop app).
+  const fc = geom.attributes.color.array, tmp = new THREE.Color(), s = { r: 0, g: 0, b: 0 };
+  let corner = 0;
+  for (const f of d.faces) {
+    let r = 0, g = 0, b = 0;
+    for (const i of f) {
+      tmp.setRGB(col[3 * i], col[3 * i + 1], col[3 * i + 2]).getRGB(s, THREE.SRGBColorSpace);
+      r += s.r; g += s.g; b += s.b;
+    }
+    tmp.setRGB(r / f.length, g / f.length, b / f.length, THREE.SRGBColorSpace);
+    for (let k = 0; k < 3 * (f.length - 2); k++, corner++) {
+      fc[3 * corner] = tmp.r; fc[3 * corner + 1] = tmp.g; fc[3 * corner + 2] = tmp.b;
+    }
+  }
   geom.attributes.color.needsUpdate = true;
+  dotGeom.attributes.color.needsUpdate = true;
 }
 
 function legend(id, colours, lo, hi, caption) {
@@ -209,9 +245,13 @@ function copyEnds(target, pairs, v) {
 function draw() {
   if (!S.seq.length) return;
   const v = S.seq[S.step];
-  geom.attributes.position.array.set(v);
+  copyEnds(geom.attributes.position.array, S.corner, v);
   geom.attributes.position.needsUpdate = true;
   geom.computeBoundingSphere();
+  dotGeom.attributes.position.array.set(v);
+  dotGeom.attributes.position.needsUpdate = true;
+  dotGeom.computeBoundingSphere();
+  dots.visible = $('dots').checked;
   copyEnds(wireGeom.attributes.position.array, S.wire, v);
   wireGeom.attributes.position.needsUpdate = true;
   if (S.edges) {
@@ -379,7 +419,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   if (!hit) return hideTip();
   const v = S.seq[S.step], o = S.orig;
   const at = (i, a) => new THREE.Vector3(a[3 * i], a[3 * i + 1], a[3 * i + 2]);
-  const i = [hit.face.a, hit.face.b, hit.face.c].sort((p, q) => at(p, v).distanceTo(hit.point) - at(q, v).distanceTo(hit.point))[0];
+  const i = [hit.face.a, hit.face.b, hit.face.c].map((c) => S.corner[c]).sort((p, q) => at(p, v).distanceTo(hit.point) - at(q, v).distanceTo(hit.point))[0];
   const cur = at(i, v), org = at(i, o), d = cur.clone().sub(org);
   const f = (p) => `(${[p.x, p.y, p.z].map((c) => (c >= 0 ? '+' : '') + c.toFixed(4)).join(', ')})`;
   const gain = val('view') === 'fidelity' ? 1 : num('gain');
@@ -405,6 +445,7 @@ for (const id of ['shape', 'resolution', 'payload', 'mode', 'layout', 'clamp', '
 }
 for (const id of ['view', 'colour', 'gain', 'mask', 'between', 'loop', 'orig', 'seed']) $(id).addEventListener('input', rebuild);
 $('shade').addEventListener('input', draw);
+$('dots').addEventListener('input', draw);
 $('run').onclick = () => run(1);
 $('runFrames').onclick = () => run(num('frames'));
 $('play').onclick = () => { S.playing = !S.playing; hideTip(); if (S.playing && S.step + 1 >= S.seq.length) S.step = 0; };

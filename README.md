@@ -351,7 +351,9 @@ what the colours mean.
 Both apps use the same colour scales and show a legend for every scale (error,
 φ colour, and edge length when edges are shown). The edge scale spans the true
 edge lengths, so a measured length outside that range shows as the end colour.
-The web view is unlit by default so every face shows its exact mapped colour;
+Faces get one flat colour each, the mean of their corner vertices, so no value is
+blended across a face. In the web view each vertex also has a dot in its own exact
+colour (**Vertex dots**). The web view is unlit by default so every face shows its exact mapped colour;
 **Shading** turns lighting on to read the shape, at the cost of darker faces
 on the far side.
 
