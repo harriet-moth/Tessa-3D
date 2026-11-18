@@ -5,7 +5,6 @@
   "functions": {
     "api/tessa.py": {
       "maxDuration": 60,
-      "memory": 2048,
       "excludeFiles": "{tests/**,public/**,exports/**,.venv/**,.claude/**,dev.py}"
     }
   }

@@ -62,6 +62,27 @@ As xyz (1,521 values) she is too big for any lattice here.
 4. Switch **Backend** to *phoenix* or *fez* for realistic chip noise.
 5. Switch **View** to *material* for the exaggerated ripple.
 
+## Web version
+
+Live at **https://tessa-ripple.vercel.app**. It's a three.js viewer in the browser; all
+quantum work runs in one Vercel Python function (`api/tessa.py`) that calls the same
+`tessa_ripple/bridge.py` as the desktop app. Every push to `main` redeploys it.
+
+Differences from the desktop app:
+- Changing **DRR** needs a new **Run**.
+- **Run frames** is capped at 30 frames and stops after about 45 s to stay under
+  Vercel's 60 s limit. On the chip backends a frame takes about 7 s there, so
+  expect about 6 frames.
+- There's no GIF export; **Download OBJ** saves the current step.
+
+To run the web version locally:
+
+```bash
+.venv/bin/python dev.py
+```
+
+Then open http://localhost:8000.
+
 ## How a mesh goes through Tessa
 
 1. **Mesh.** A blob, sphere, cube or OBJ (such as Suzanne) gives `N` vertices and faces.
