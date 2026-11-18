@@ -222,7 +222,7 @@ function colourise(stepOnly = false) {
     legend('faceLegend', [0, 0.2, 0.4, 0.6, 0.8, 1].map(hueCss), '0', '1', 'colour value stored in φ');
   } else {
     for (let i = 0; i < n; i++) set(i, PLAIN);
-    S.colourLabel = mode === 'phi' ? 'plain (φ colour needs Mode shape θ, colour φ)' : 'plain';
+    S.colourLabel = mode === 'phi' ? 'plain (φ colour needs Mode θ + colour φ)' : 'plain';
     $('faceLegend').hidden = true;
   }
   // Faces: one flat colour each, the mean of their vertices' colours in sRGB (as in the desktop app).
@@ -492,7 +492,8 @@ function drawMap() {
 
 function focusText() {
   const f = S.focus, m = S.data.map, split = !!S.run && JSON.parse(S.run).mode === 'split';
-  const pair = S.data.colour ? ' (θ: shape, φ: colour)' : split ? ' (shape over θ and φ)' : '';
+  const ran = S.run ? JSON.parse(S.run).mode : '';
+  const pair = S.data.colour ? ' (θ: shape, φ: colour)' : split ? ' (shape over θ and φ)' : ran === 'phi' ? ' (shape in φ, read in X)' : '';
   if (!f) return 'Hover a vertex on the mesh, or a data qubit here.';
   const qs = (g) => m.groups[g].addresses.map((q) => `q${q}`).join(' ');
   if (f.vertex === null) {

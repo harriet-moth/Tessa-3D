@@ -26,10 +26,11 @@ BACKENDS = ("noiseless", "flat noise", *DEVICES)
 # on the very best (see place)
 PLACEMENTS = ("graph", "quality", "importance")
 QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores per chip snapshot
-# What each slot's qubit holds. Tessa's "single" mode puts one value in theta; its
-# "pair" mode adds a second in phi, which this app uses either for a colour field or
-# for more geometry (two values per slot, so twice the vertices fit).
-MODES = ("theta", "colour", "split")
+# What each slot's qubit holds. One value per slot, read in one basis: in theta (read
+# in Z, Tessa's "single" mode) or in phi with theta fixed at pi/2 (read in X, the
+# paper pipeline's "x" basis). Two values per slot (Tessa's "pair" mode): a colour
+# field in phi, or more geometry (twice the vertices fit).
+MODES = ("theta", "phi", "colour", "split")
 MODE_ALIASES = {"single": "theta", "pair": "colour"}  # the names before the split mode
 DRR_METHODS = ("none", "min_max", "mean_std", "percentile", "abs_max", "min_avg_max")
 # Typical IBM-like machine averages (tessa.backend_rates fallbacks) for "flat noise".
@@ -42,7 +43,7 @@ class Params:
     # encoder (changing any of these re-encodes)
     payload: str = "radial"        # "radial": one radius per vertex | "xyz": three coordinates
     layout: str = "mesh"           # "mesh": BFS neighbourhoods per cell | "naive": axis-major
-    mode: str = "theta"            # "theta": shape in θ | "colour": + colour in φ | "split": shape over θ and φ
+    mode: str = "theta"            # one of MODES: θ (Z) | φ (X) | θ + colour φ | shape over θ and φ
     clamp: float | None = None     # theta clamp in radians; None = Tessa default
     clamp_b: float | None = None   # phi clamp (pair only)
     compression: float = 0.0       # percent (0-100) of multiplexer coefficients dropped
@@ -188,7 +189,7 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1):
     if n * comps > per_slot * cap:
         raise ValueError(f"{n} vertices x {comps} values do not fit {per_slot * cap} positions "
                          f"({cap} slots x {per_slot}); try the radial payload"
-                         + ("" if per_slot > 1 else ", or Mode 'shape over θ+φ' (two values per slot)"))
+                         + ("" if per_slot > 1 else ", or Mode 'shape θ+φ' (two values per slot)"))
     plan, k = [], 0  # (cell, whole vertices it takes), best cell first
     for c in seq:
         m = min(per_slot * (bounds[c, 1] - bounds[c, 0]) // comps, n - k)
@@ -244,7 +245,7 @@ def fit_lattice(n: int, comps: int = 1, mesh: bool = True, per_slot: int = 1) ->
             if usable >= n:
                 return lat
     raise ValueError(f"{n} vertices x {comps} values exceed the {MAX_ROWS}x{MAX_COLS} lattice; "
-                     "try the radial payload, or Mode 'shape over θ+φ' (two values per slot)")
+                     "try the radial payload, or Mode 'shape θ+φ' (two values per slot)")
 
 
 def vertex_qubits(e: Encoded) -> np.ndarray:
@@ -311,6 +312,15 @@ def encode_mesh(verts, faces, p: Params) -> Encoded:
     colour = None
     if mode == "theta":
         circuit, enc = single, _
+    elif mode == "phi":  # θ = π/2 everywhere (0.5 is mid-range at any clamp), value in φ
+        c_b = p.clamp_b or 0.0
+        circuit, enc = encode(graph, np.full(graph.capacity, 0.5), a, clamp_b=c_b,
+                              value_range=(0.0, 1.0), value_range_b=rng,
+                              compression=p.compression)
+        circuit = circuit.copy()
+        circuit.ry(-np.pi / 2, sorted({g.data_qubit for g in graph.groups}))  # Z now reads X
+        # <X> = cos φ, so the tilted circuit decodes as one field: φ = arccos(<Z>)
+        enc = replace(enc, mode="single", clamps=(c_b,), ranges=(rng,))
     else:  # Tessa pair mode: a second field in φ, read in the X basis
         if mode == "colour":
             colour = hue(verts)

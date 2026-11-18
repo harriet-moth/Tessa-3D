@@ -43,7 +43,8 @@ def obj_presets(path):
 RES = ("low", "mid", "high")
 COLOURS = ("error", "qubit", "φ colour", "plain")
 # Mode: what each slot's qubit holds (bridge.MODES)
-MODE_LABELS = {"shape in θ": "theta", "shape θ, colour φ": "colour", "shape over θ+φ": "split"}
+MODE_LABELS = {"shape θ (Z)": "theta", "shape φ (X)": "phi",
+               "θ + colour φ": "colour", "shape θ+φ": "split"}
 PLAIN = np.array(colormaps["Blues"](0.45))
 
 # Colour definitions, mirrored in public/app.js so both apps colour identically.
@@ -92,7 +93,7 @@ class App:
                 h = 0.024 * len(labels) + 0.008
                 fig.text(x, y - 0.014, name, fontsize=8, weight="bold")
                 y -= 0.018 + h
-                self.w[name] = RadioButtons(fig.add_axes([x, y, 0.085, h]), labels)
+                self.w[name] = RadioButtons(fig.add_axes([x, y, 0.09, h]), labels)
                 y -= 0.01
             return y
 
@@ -373,7 +374,7 @@ class App:
             else:
                 c, src = self.colours.mean(0), f"colour decoded from φ (mean of {len(self.colours)} readouts)"
             return hls_rgba(c, 0.55, 0.75), src, (HUE_CMAP, 0, 1, "colour value stored in φ")
-        why = {"error": " (run to see error)", "φ colour": " (Mode shape θ, colour φ only)"}.get(mode, "")
+        why = {"error": " (run to see error)", "φ colour": " (Mode θ + colour φ only)"}.get(mode, "")
         return np.tile(PLAIN, (len(self.verts), 1)), "plain" + why, None
 
     def legend(self, ax, spec):
@@ -517,7 +518,8 @@ class App:
 
     def focus_text(self):
         f, m = self.focus, self.qmap
-        pair = {"colour": " (θ: shape, φ: colour)", "split": " (shape over θ and φ)"}.get(self.encoded.mode, "")
+        pair = {"phi": " (shape in φ, read in X)", "colour": " (θ: shape, φ: colour)",
+                "split": " (shape over θ and φ)"}.get(self.encoded.mode, "")
         if not f:
             return "Hover a vertex on the mesh, or a data qubit here."
         addrs = lambda g: m["groups"][g]["addresses"]  # noqa: E731

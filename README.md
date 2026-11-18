@@ -50,13 +50,13 @@ Suzanne opens at **Resolution** *high*, the file as exported; *mid* and *low*
 decimate her to 254 and 127 vertices (see **Resolution**). As exported she has
 507 vertices, measured at 4,096 shots:
 - **Radial on a 9×9 lattice:** 507 values on 81 qubits (6.3 per qubit), 0.5 % error.
-- **Mode *shape θ, colour φ*:** 1,014 values on the same 81 qubits, 0.8 % error.
+- **Mode *θ + colour φ*:** 1,014 values on the same 81 qubits, 0.8 % error.
 - **Whole `ibm_phoenix` chip with calibrated noise:** 0.95 % error, or 1.5 % with colour in φ,
   with **Placement** *quality* (1.7 % and 2.2 % with Tessa's own order).
 - **Read edges:** all 1,005 edges in about 6 s, with 3.1 % error noiseless.
 
 As xyz (1,521 values) she is too big for one value per slot, but fits with
-**Mode** *shape over θ+φ*: all 120 qubits of the 10×12 lattice (2.3 % error
+**Mode** *shape θ+φ*: all 120 qubits of the 10×12 lattice (2.3 % error
 noiseless) or Phoenix (6.8 %). Fez is too small even then (896 positions).
 
 **Quick start:**
@@ -113,8 +113,8 @@ Then open http://localhost:8000.
    padded with their cell's mean so cells stay smooth.
 6. **Encode.** `tessa.encode` builds a measurement-free circuit of uniformly
    controlled rotations, **once** per mesh and encoder setting. With **Mode**
-   *shape θ, colour φ* the colour field goes into the phase φ of the same cells;
-   with *shape over θ+φ* half the mesh's values do.
+   *θ + colour φ* the colour field goes into the phase φ of the same cells;
+   with *shape θ+φ* half the mesh's values do, and with *shape φ (X)* all of them.
 7. **Decode.** `tessa.decode` measures the circuit on the chosen sampler. Each
    frame is one decode with its own seed.
 8. **Restore and show.** `tessa.restore_field` applies optional dynamic-range
@@ -132,7 +132,7 @@ add-on can reuse them.
 | Capacity is the sum of `2^degree`, more values than qubits | Info panel: "86 values on 19 qubits (of 20) = 4.53 values / qubit (angle encoding: 86 qubits)" |
 | Runs on the chip's own couplers: no SWAPs, shallow | **Why Tessa** table, transpiled onto the Phoenix snapshot |
 | One measurement setting reads every value (two when φ is used), with at most 16 outcomes per cell | **Why Tessa**: settings, outcomes per cell, shots per value |
-| A second field in the phase | **Mode** *shape θ, colour φ* (**Colour** *φ colour*), or *shape over θ+φ*: twice the values per qubit |
+| A second field in the phase | **Mode** *θ + colour φ* (**Colour** *φ colour*), or *shape θ+φ*: twice the values per qubit |
 | Smooth data compresses | **Curves**: error and depth against compression for both layouts |
 | Coherences carry differences | **Read edges**: edge lengths read from the state |
 | Real devices have good and bad qubits | **Backend** *phoenix* / *fez*, **Placement**, **Colour** *error* or *qubit* |
@@ -201,7 +201,7 @@ Measured while building this; the README states them as measured, not as claims.
   builder (`core/encode.py`) appends a second RZ multiplexer with its own CX
   ladder, so adding colour takes the count from 84 to 172 on the default blob.
   The info panel shows both numbers. Two-qubit gates track the number of values
-  encoded, wherever they sit. So *shape over θ+φ*, which packs the same mesh two
+  encoded, wherever they sit. So *shape θ+φ*, which packs the same mesh two
   values per slot, needs about the same gates on roughly half the qubits:
 
   | Mesh (noiseless) | One per slot (θ) | Two per slot (θ+φ) |
@@ -264,7 +264,7 @@ The **info panel** shows:
   only in the mesh's own slots;
 - capacity used;
 - circuit depth and two-qubit gates (with colour in φ, also the θ field alone;
-  with *shape over θ+φ*, how many values sit in φ).
+  with *shape θ+φ*, how many values sit in φ).
 
 The **title** shows the view, the gain, the **mean err** (average coordinate
 error over all frames as a fraction of the bounding box), the playback step and
@@ -312,17 +312,45 @@ it opens exactly as exported.
   *xyz* encodes `3N` values on one symmetric range `(-m, m)` shared by all axes, so
   the mesh isn't stretched per axis.
 
-**Mode** (shape in θ / shape θ, colour φ / shape over θ+φ)
+**Mode** (shape θ (Z) / shape φ (X) / θ + colour φ / shape θ+φ)
 
-What each slot's qubit holds. Each slot is a qubit state
-`cos(θ/2)|0⟩ + e^{iφ} sin(θ/2)|1⟩`: θ is read in the Z basis, φ in the X basis.
-- *Shape in θ* (Tessa's `single` mode, the default): one value per slot, in θ.
-- *Shape θ, colour φ* (Tessa's `pair` mode): the shape as above, plus a vertex
+What each slot's qubit holds, and which basis reads it. Each slot is a qubit
+state `cos(θ/2)|0⟩ + e^{iφ} sin(θ/2)|1⟩`: θ is read in the Z basis, φ in the X
+basis.
+- *Shape θ (Z)* (Tessa's `single` mode, the default): one value per slot, in θ,
+  read in Z.
+- *Shape φ (X)*: one value per slot, in φ, read in X. This is the `x` basis of
+  Tessa's paper pipeline (`tessa.hardware.pipeline`).
+  - Every θ is fixed at π/2, so the qubit sits on the equator, and the value is
+    the phase.
+  - A −π/2 rotation about Y on each data qubit turns the X measurement into a Z
+    one, so ⟨Z⟩ = cos φ and the circuit decodes as a single field. One
+    measurement setting, as in the Z basis.
+  - The constant θ costs no two-qubit gates, so the gate count matches the Z
+    basis exactly.
+  - Use **Clamp φ** here; **Clamp θ** does nothing, since θ is fixed.
+  - The noise hits differently: in the Z basis, decay towards |0⟩ biases values
+    one way; on the equator, noise mostly shrinks ⟨X⟩ towards 0, which pulls
+    values to the middle of the range. Measured (3 seeds, radial):
+
+    | Mesh | Backend | Z basis | X basis |
+    |---|---|---|---|
+    | blob | noiseless | 0.40 % | 0.40 % |
+    | blob | flat noise | 1.69 % | 1.29 % |
+    | blob | Phoenix | 0.79 % | 0.80 % |
+    | blob | Fez | 0.98 % | 0.93 % |
+    | Suzanne | flat noise | 1.36 % | 1.06 % |
+    | Suzanne | Phoenix | 0.95 % | 0.82 % |
+
+    X is never worse here and sometimes clearly better. That's a measurement
+    on simulated noise models, not a general rule; the explanation above is
+    the likely reason, not yet tested separately.
+- *θ + colour φ* (Tessa's `pair` mode): the shape in θ, plus a vertex
   colour (a hue around the vertical axis) in φ at the same slots. Show it with
   **Colour** *φ colour*: the original colours before a run, the colours decoded
   from the phase after one. The colour is made up from the shape, so this mainly
   shows the mechanism. It doubles the two-qubit gates (see Findings).
-- *Shape over θ+φ* (Tessa's `pair` mode): the mesh itself is packed two values
+- *Shape θ+φ* (Tessa's `pair` mode): the mesh itself is packed two values
   per slot, so twice as many vertices fit on the same qubits.
   - With the mesh layout, each data qubit holding C values per field takes
     2C: its θ field fills first ([x1…xm, y1…] in order), then its φ field.
@@ -333,7 +361,8 @@ What each slot's qubit holds. Each slot is a qubit state
     10×12 lattice or Phoenix). It also halves the qubits for meshes that already
     fit, at a little more error (see Findings).
   - The qubit map says which field each coordinate is in.
-- The old names `single` and `pair` still work in the API (as θ only and colour).
+- In the API the modes are `theta`, `phi`, `colour` and `split`; the old names
+  `single` and `pair` still work (as `theta` and `colour`).
 
 **Layout** (mesh / naive)
 - *In practice:*
@@ -352,7 +381,7 @@ What each slot's qubit holds. Each slot is a qubit state
   larger clamp leaves less of the range for the data, so noise becomes a larger
   share of each value.
 - *In Tessa:* `encode(clamp=...)`. Values map to θ in `[c, π − c]`. Tessa's default
-  is 0 for *shape in θ* and 0.2 π when φ is used; φ needs θ > 0, since a cell at
+  is 0 for *shape θ (Z)* and 0.2 π when both θ and φ hold data; φ needs θ > 0, since a cell at
   θ = 0 or π carries no phase.
 
 **Clamp φ** (only when φ is used; 0–0.45 π, 0 means Tessa's default of 0)
@@ -468,7 +497,7 @@ What each slot's qubit holds. Each slot is a qubit state
   patches, so the mesh becomes a picture of the chip. With the naive layout on
   xyz, a vertex's x, y and z sit on different qubits, so the colour shows the
   qubit holding x (the title says so). Hover a vertex for its qubit number.
-- *φ colour*: the colour field of **Mode** *shape θ, colour φ* as a hue (0 to 1 around the colour wheel):
+- *φ colour*: the colour field of **Mode** *θ + colour φ* as a hue (0 to 1 around the colour wheel):
   the original field before a run, and the field decoded from φ, averaged over
   the readouts, after one.
 - *Plain*: a single colour.
@@ -589,7 +618,7 @@ and marks its vertices on the mesh.
 
 Slot k of a data qubit is the address state where address qubit j reads bit j
 of k. That is the bit order Tessa's decoder uses (`_table_expectation`). With
-colour in φ, the same slot also carries the vertex colour; with *shape over θ+φ*,
+colour in φ, the same slot also carries the vertex colour; with *shape θ+φ*,
 each coordinate's line says whether it is in θ or φ. In the desktop window the
 orange discs on the back of the mesh show through, because matplotlib has no
 depth test. The server builds the

@@ -154,3 +154,10 @@ def test_old_mode_names_still_work():
     v, f = blob(12, 8)
     assert encode_mesh(v, f, Params(mode="single")).mode == "theta"
     assert encode_mesh(v, f, Params(mode="pair")).mode == "colour"
+
+
+def test_x_basis_mode_reads_the_value_from_phi_with_one_setting():
+    v, f = blob(12, 8)
+    z, x = (encode_mesh(v, f, Params(mode=m)) for m in ("theta", "phi"))
+    assert x.enc.mode == "single" and x.stats["twoq"] == z.stats["twoq"]  # one setting, same gates
+    assert mesh_error(v, read_mesh(x, Params(mode="phi"))) < 0.02
