@@ -75,6 +75,48 @@ def edges(faces) -> np.ndarray:
     return np.array(sorted(pairs))
 
 
+def grow_patches(verts, faces, sizes):
+    """Split the vertices into compact patches of the given sizes, in order, plus the
+    vertices left over. Each patch starts at the first free vertex of the
+    breadth-first order, so patches sweep across the mesh and leave no stranded
+    pockets. It then grows over mesh edges, always taking the free neighbour nearest
+    its seed, so it becomes a round blob rather than an arc. If it runs out of free
+    neighbours, it continues from the next free vertex. Each patch is returned as a
+    nearest-neighbour path from its seed, so consecutive values in a Tessa cell are
+    close on the surface, which helps compression."""
+    import heapq
+
+    verts = np.asarray(verts, float)
+    n = len(verts)
+    adj = [[] for _ in range(n)]
+    for a, b in edges(faces):
+        adj[a].append(b)
+        adj[b].append(a)
+    free, order = np.ones(n, bool), bfs_order(n, faces)
+    sweep = iter(order)
+    patches = []
+    for m in sizes:
+        patch, heap, seed = [], [], None
+        while len(patch) < m:
+            if not heap:
+                seed = next(s for s in sweep if free[s])
+                heap = [(0.0, seed)]
+            _, v = heapq.heappop(heap)
+            if not free[v]:
+                continue
+            free[v] = False
+            patch.append(v)
+            for w in adj[v]:
+                if free[w]:
+                    heapq.heappush(heap, (float(np.linalg.norm(verts[w] - verts[seed])), w))
+        path, left = [patch[0]], patch[1:]
+        while left:  # nearest-neighbour walk through the patch
+            j = int(np.argmin(np.linalg.norm(verts[left] - verts[path[-1]], axis=1)))
+            path.append(left.pop(j))
+        patches.append(np.array(path, int))
+    return patches, order[free[order]]
+
+
 def importance(verts, faces) -> np.ndarray:
     """Per-vertex curvature, scale-free: how far a vertex sits from the mean of its
     neighbours, over its mean edge length. Flat and gently curved regions score

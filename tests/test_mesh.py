@@ -74,3 +74,16 @@ def test_decimating_twice_quarters_suzanne():
     v, f = load_obj("tessa_ripple/suzanne.obj")
     lv, lf = decimate(*decimate(v, f))
     assert len(lv) == round(round(len(v) / 2) / 2) and max(_edge_use(lf).values()) <= 2
+
+
+def test_grow_patches_are_compact_and_cover_the_mesh():
+    from tessa_ripple.mesh import grow_patches
+    v, f = load_obj("tessa_ripple/suzanne.obj")
+    sizes = [16] * 30
+    patches, rest = grow_patches(v, f, sizes)
+    every = np.concatenate(patches + [rest])
+    assert sorted(every) == list(range(len(v))) and [len(p) for p in patches] == sizes
+    E = edges(f)
+    edge = np.linalg.norm(v[E[:, 0]] - v[E[:, 1]], axis=1).mean()
+    radius = np.mean([np.linalg.norm(v[p] - v[p].mean(0), axis=1).mean() for p in patches])
+    assert radius < 2.5 * edge  # BFS arcs were about 4 edge lengths

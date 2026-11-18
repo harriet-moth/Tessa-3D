@@ -108,8 +108,8 @@ Then open http://localhost:8000.
      the sum of `2^k` over data qubits. That is why there are more values than
      qubits.
 5. **Place.** **Layout** decides which capacity slot each value goes in. *mesh*
-   fills each cell from a breadth-first walk over the mesh and keeps each vertex's
-   values in one cell; *naive* is axis-major (see Layout below). Unused slots are
+   gives each cell a compact patch of neighbouring vertices, grown as a blob
+   over the mesh, and keeps each vertex's values in one cell; *naive* is axis-major (see Layout below). Unused slots are
    padded with their cell's mean so cells stay smooth.
 6. **Encode.** `tessa.encode` builds a measurement-free circuit of uniformly
    controlled rotations, **once** per mesh and encoder setting. With **Mode**
@@ -215,19 +215,30 @@ Measured while building this; the README states them as measured, not as claims.
   qubits can mean better ones: radial Suzanne on Phoenix gives 0.87 % packed
   against 0.94 % one per slot. Each frame needs a second measurement setting
   (X), so it takes longer.
-- **Layout and compression trade off.** The mesh-aware layout helps only when the
-  vertex order is genuinely scrambled. On a blob with randomly shuffled vertices,
-  75 % compression gives 1.0 % error with the *mesh* layout against 1.2 % with
-  *naive* (radial), and 9.6 % against 12.0 % (xyz).
+- **Layout and compression depend on the mesh's own vertex order** (noiseless, 3
+  seeds):
 
-  Most real meshes are already ordered well enough that it doesn't pay:
-  - **Built-in UV shapes:** the two layouts are identical for radial. For xyz,
-    *naive* compresses better: 2.1 % against 4.4 % at 50 %, because keeping x, y
-    and z in one cell puts jumps between axes inside each cell.
-  - **Suzanne** (Blender's export order, radial): *naive* is slightly better,
-    1.0 % against 1.3 % at 75 %.
+  | Mesh | Compression | Naive | Mesh (compact patches) |
+  |---|---|---|---|
+  | Suzanne, radial | 75 % | 1.13 % | 0.92 % |
+  | blob, vertices shuffled, radial | 75 % | 1.19 % | 0.96 % |
+  | blob, vertices shuffled, xyz | 75 % | 11.88 % | 9.34 % |
+  | built-in blob, radial | 50 % | 0.44 % | 0.71 % |
+  | built-in blob, xyz | 50 % | 3.43 % | 4.69 % |
 
-  **Curves** shows this for whatever mesh is loaded.
+  - The compact patches compress Suzanne better than *naive* (the old arc
+    patches did not: 1.31 % at 75 %).
+  - The built-in shapes number their vertices ring by ring, which is already a
+    very smooth order, so *naive* wins there.
+  - For xyz, *naive* also keeps each axis in long smooth runs, while *mesh* puts
+    jumps between x, y and z inside each cell.
+
+  The compact patches also contain the damage on a chip. Suzanne as xyz in
+  *shape θ+φ* on Phoenix must use all 60 data qubits, 16 of them poor. Compact
+  patches give 9.5 % mean error (of the bounding-box diagonal), with the worst
+  vertex 1.13 mesh units out. The old arcs gave 10.1 % and 1.31, with each bad
+  qubit's damage spread as spikes across the face. **Curves** shows the
+  compression trade-off for whatever mesh is loaded.
 - **The radial payload is the better default for star-shaped meshes.** It needs
   one value per vertex instead of three, and noise moves vertices along their
   direction from the centre. A plain sphere is a poor payload: every radius is 1,
@@ -366,15 +377,26 @@ basis.
 
 **Layout** (mesh / naive)
 - *In practice:*
-  - *Mesh*: each Tessa cell holds a patch of neighbouring vertices, with each
-    vertex's values together. Correlated chip errors then show up as spatial
-    patches rather than scatter.
+  - *Mesh*: each Tessa cell holds a compact patch of neighbouring vertices, with
+    each vertex's values together. A bad data qubit then damages one local spot
+    instead of scattering spikes across the mesh. Turn on **Qubit map** and
+    hover a vertex to see its patch, or set **Colour** to *qubit* to see them all.
   - *Naive*: axis-major in vertex-index order, the original V1 layout.
   - Use **Curves** to see which compresses better for your mesh.
 - *In Tessa:* chooses which capacity slot (data qubit and address configuration)
   each value occupies. The Walsh–Hadamard compression works on the values inside
-  one cell, so this choice is what decides whether compression has smooth data to
-  work on.
+  one cell, in the order they are stored, so this choice is what decides whether
+  compression has smooth data to work on.
+- *How the patches are made* (`mesh.grow_patches`):
+  - Each patch starts at the first unclaimed vertex of a breadth-first walk
+    from vertex 0, so the patches sweep across the mesh without leaving
+    stranded pockets.
+  - It grows over mesh edges, always taking the unclaimed neighbour nearest its
+    starting vertex, so it comes out round.
+  - It is stored as a nearest-neighbour path, so consecutive values in a cell
+    sit close together on the surface.
+  - Earlier versions cut the walk itself into runs; on Suzanne those were thin
+    arcs, about 4 edge lengths across, against about 2 now.
 
 **Clamp θ** (0–0.45 π; 0 means Tessa's default)
 - *In practice:* keeps values away from the extreme ends of the angle range. A
@@ -570,9 +592,9 @@ on the far side.
 - **Curves**: opens three charts: error against shots (with a `1/√shots` guide),
   then error and circuit depth against compression for both layouts. It takes
   15 decodes. Mesh layout is blue and solid with hollow circles; naive is
-  orange and dashed with squares, so both stay visible where they coincide. A
-  note says when the two layouts place every value identically (radial on the
-  built-in sphere and blob), which is why their lines then match exactly.
+  orange and dashed with squares, so both stay visible where they coincide. If
+  the two layouts happen to place every value identically, a note says so, which
+  is why their lines then match exactly.
 - **Why Tessa**: opens the resource table.
   - The current values are encoded with Tessa, angle encoding, QCrank (parallel
     QPIXL, Tessa's stated prior art), FRQI and amplitude encoding, and transpiled

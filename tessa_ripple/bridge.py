@@ -17,7 +17,7 @@ from tessa import (Lattice, build_local_noise_model, decode, encode, graph_from_
 from tessa.backends import DeviceSampler, aer_sampler, counts_of, device_of, noisy_sampler
 from tessa.hardware import devices
 
-from .mesh import bfs_order, edges, importance
+from .mesh import bfs_order, edges, grow_patches, importance
 
 MAX_ROWS, MAX_COLS = 10, 12  # largest lattice: the whole 10x12 ibm_phoenix chip
 DEVICES = ("phoenix", "fez")  # Tessa's offline calibration snapshots
@@ -152,7 +152,7 @@ def cells(graph) -> np.ndarray:
     return np.column_stack([stops - [g.n_values for g in graph.groups], stops])
 
 
-def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1):
+def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1, grow=None):
     """Capacity slot and field (0 = θ, 1 = φ) of every value, each shape (n, comps).
 
     ``order=None`` is the naive axis-major layout (all x, then all y, then all z).
@@ -198,7 +198,11 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1):
             k += m
         if k == n:
             break
-    patches = np.split(order[:k], np.cumsum([m for _, m in plan])[:-1])
+    if grow is None:  # consecutive runs of ``order``
+        patches = np.split(order[:k], np.cumsum([m for _, m in plan])[:-1])
+        rest = order[k:]
+    else:  # grow(sizes) -> (patches, leftover vertices), e.g. compact mesh patches
+        patches, rest = grow([m for _, m in plan])
     if weight is not None:  # same-size patches: most important onto the best cells
         for m in {m for _, m in plan}:
             idx = [i for i, (_, mm) in enumerate(plan) if mm == m]  # best cell first
@@ -215,8 +219,8 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1):
         spare = [(bounds[c, 0] + q % size, q // size) for c in seq
                  for size in [bounds[c, 1] - bounds[c, 0]]
                  for q in range(comps * used.get(c, 0), per_slot * size)]
-        rest = np.array(spare[: (n - k) * comps]).reshape(n - k, comps, 2)
-        slots[order[k:]], field[order[k:]] = rest[..., 0], rest[..., 1]
+        spill = np.array(spare[: (n - k) * comps]).reshape(n - k, comps, 2)
+        slots[rest], field[rest] = spill[..., 0], spill[..., 1]
     return slots, field
 
 
@@ -304,7 +308,8 @@ def encode_mesh(verts, faces, p: Params) -> Encoded:
         name = f"{graph.rows}x{graph.cols} lattice"
     ranked = p.placement in ("quality", "importance")
     weight = importance(verts, faces) if p.placement == "importance" and quality is not None else None
-    slots, field = place(graph, n, comps, order, quality if ranked else None, weight, per)
+    grow = (lambda sizes: grow_patches(verts, faces, sizes)) if order is not None else None
+    slots, field = place(graph, n, comps, order, quality if ranked else None, weight, per, grow)
     vals = flat.reshape(n, comps)
     a = fill(graph, slots[field == 0], vals[field == 0])
     kw = dict(value_range=rng, compression=p.compression)

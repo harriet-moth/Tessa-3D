@@ -324,8 +324,8 @@ class App:
         for ax in (a2, a3):
             ax.legend(fontsize=8)
         if data["same"]:
-            fig.text(0.5, 0.01, "Mesh and naive layouts place every value identically for this mesh "
-                     "(radial on a mesh numbered ring by ring), so their lines coincide.",
+            fig.text(0.5, 0.01, "Mesh and naive layouts place every value identically for this mesh, "
+                     "so their lines coincide.",
                      ha="center", fontsize=8, color="#6b6f78")
         fig.tight_layout(rect=(0, 0.04 if data["same"] else 0, 1, 1))
         fig.show()

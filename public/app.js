@@ -419,7 +419,7 @@ async function curves() {
         series: [{ label: 'measured', color: A, points: shots }, { label: '1/√shots', color: G, dash: true, mark: 'none', points: guide }] })}
       ${chart({ title: 'error vs compression', xlabel: 'compression %', ylabel: 'mean error (of bbox)', series: layouts(err) })}
       ${chart({ title: 'depth vs compression', xlabel: 'compression %', ylabel: 'circuit depth', series: layouts(depth) })}
-      </div>${r.same ? '<p class="note"><b>Mesh and naive layouts place every value identically for this mesh</b> (radial on a mesh numbered ring by ring), so their lines coincide.</p>' : ''}<p class="note">Error is the mean coordinate error as a fraction of the bounding box. Compression drops the smallest Walsh–Hadamard coefficients of each Tessa cell.</p>`);
+      </div>${r.same ? '<p class="note"><b>Mesh and naive layouts place every value identically for this mesh</b>, so their lines coincide.</p>' : ''}<p class="note">Error is the mean coordinate error as a fraction of the bounding box. Compression drops the smallest Walsh–Hadamard coefficients of each Tessa cell.</p>`);
     status('Fidelity curves opened');
   });
 }
