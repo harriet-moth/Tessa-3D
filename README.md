@@ -75,8 +75,12 @@ one Vercel Python function (`api/tessa.py`) that calls the same
 
 How it works:
 - **Landing:** drop an `.obj` file anywhere (or click *drop an .obj file*), or pick the
-  cube, blob or sphere (apple and Suzanne are linked below them). Uploads open at full
-  detail; if one is too big for the lattice, a run decimates it and retries.
+  cube, blob or sphere (apple and Suzanne are linked below them).
+- **Resolution:** under the logo, **low res** decimates the mesh once (about half the
+  vertices), **medium res** (the default) is the mesh as it is, and **high res**
+  subdivides it once (each triangle split into four at its edge midpoints: the same
+  shape, about four times the vertices). If a resolution has too many vertices for
+  the lattice, a run steps down to the next one and says so.
 - **Object:** drawn as a point cloud: an even lattice of dots on every face, with faces
   gently curved between vertices (hard edges stay sharp) and every edge as a faint thin
   line. The dots sit on the decoded vertex positions, so they move only as the readout
@@ -97,8 +101,12 @@ How it works:
   ▶|| reads the morph A → B along t = 0 → 1 (or every frame at morph t with hold t);
   one ▶ reads at morph t. Morph uses one clamp for both fields, so in **clamps** the
   θ and φ knobs move together (0 means Tessa's pair default, 0.2π).
-- **Top right:** why tessa, curves, read edges, qubit map, download .obj, and **view**
-  (fidelity / material, gain, colour, playback, resolution, headroom, seed).
+- **Right side:** why tessa, curves, read edges, qubit map, download .obj, and **view**
+  (fidelity / material, gain, colour, playback, headroom, seed). On small screens they
+  fold into one **tools** button.
+- **Bottom left:** **log** (collapsed; opens with the run's stats and status, and opens
+  by itself on an error) and **light mode**, which inverts the page (black ↔ white,
+  hues kept) and is remembered in this browser.
 
 Differences from the desktop app:
 - Changing **DRR** needs a new **Run**.

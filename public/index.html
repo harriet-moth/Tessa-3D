@@ -7,7 +7,7 @@
 <meta name="description" content="Drop a 3D mesh, load it into a quantum state with Moth's Tessa encoder, read it back and watch it move with the chip's own noise.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Funnel+Sans:wght@400;500&family=IBM+Plex+Sans:wght@300;400;700&family=IBM+Plex+Mono:wght@400&family=Jost:wght@400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Funnel+Sans:wght@400;500&family=IBM+Plex+Sans:wght@200;300;400;500;700&family=IBM+Plex+Mono:wght@400&family=Jost:wght@400&display=swap">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 { "imports": {
@@ -48,6 +48,12 @@
 
     <!-- home: the object, its arc menus and the run buttons -->
     <section id="home" class="screen" data-layer="0" aria-label="Encode and decode your object">
+      <!-- resolution: low decimates the mesh, high subdivides it, medium is it as is -->
+      <div id="resRow" class="res-row" role="radiogroup" aria-label="Mesh resolution">
+        <button role="radio" data-res="0" aria-checked="false" title="Decimated: about half the vertices">low res</button>
+        <button role="radio" data-res="1" aria-checked="true" title="The mesh as it is">medium res</button>
+        <button role="radio" data-res="2" aria-checked="false" title="Subdivided: each triangle split into four (same shape, about four times the vertices)">high res</button>
+      </div>
       <button id="hint" class="hint" aria-label="Open the settings menu">click and hold</button>
 
       <!-- Menu layers 1 (Encode / Decode pills, while held) and 2 (an arc of options).
@@ -164,8 +170,6 @@
     <label class="check"><input id="loop" type="checkbox" checked> loop</label>
     <label class="check"><input id="orig" type="checkbox" checked> start from original</label>
     <label class="check"><input id="spin" type="checkbox" checked> slow spin</label>
-    <h2>object</h2>
-    <div class="seg" role="radiogroup" aria-label="Resolution"><button data-set="resolution" data-value="0" class="on">low</button><button data-set="resolution" data-value="1">mid</button><button data-set="resolution" data-value="2">high</button></div>
     <h2>advanced <small>(needs run)</small></h2>
     <label>headroom<input id="headroom" type="range" min="0" max="0.5" step="0.01" value="0.1"><output></output></label>
     <label>seed<input id="seed" type="number" min="0" max="999" value="0"></label>
@@ -174,10 +178,16 @@
   <!-- the log: collapsed to an up arrow; opens upwards with the run's stats and status -->
   <div id="info">
     <div id="logBody" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>
-    <button id="logToggle" aria-expanded="false" aria-controls="logBody" aria-label="Show the log" title="log">
-      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>log</span>
-    </button>
+    <div class="corner-row">
+      <button id="logToggle" aria-expanded="false" aria-controls="logBody" aria-label="Show the log" title="log">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>log</span>
+      </button>
+      <button id="themeToggle" aria-pressed="false" title="Switch to light mode">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span>light mode</span>
+      </button>
+    </div>
   </div>
   <div class="legends"><div class="legend" id="faceLegend" hidden></div><div class="legend" id="edgeLegend" hidden></div></div>
   <div id="qmap" hidden><canvas id="qcanvas"></canvas><div id="qtext"></div></div>

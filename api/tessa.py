@@ -25,7 +25,7 @@ import numpy as np  # noqa: E402
 
 from tessa_ripple import bridge  # noqa: E402
 from tessa_ripple import interfere as interf  # noqa: E402
-from tessa_ripple.mesh import PRESETS, load_decimated, write_obj  # noqa: E402
+from tessa_ripple.mesh import PRESETS, decimate, load_decimated, subdivide, write_obj  # noqa: E402
 from tessa_ripple.morph import correspond  # noqa: E402
 
 _IMPORT_SECONDS = time.time() - _IMPORT_START
@@ -104,8 +104,11 @@ MAX_OBJ = 3_000_000  # characters of uploaded OBJ text (Vercel caps request bodi
 UPLOADS = Path(tempfile.gettempdir()) / "tessa_ripple_obj"  # Vercel's writable /tmp
 
 
+LOW, MEDIUM, HIGH = 0, 1, 2  # resolutions: decimated once, as is, subdivided once
+
+
 def resolution_of(req) -> int:
-    """The request's ``resolution`` (0 low, 1 mid, 2 high; default 0), clamped.
+    """The request's ``resolution`` (0 low, 1 medium, 2 high; default medium), clamped.
 
     Args:
         req: request dict.
@@ -113,7 +116,7 @@ def resolution_of(req) -> int:
     Returns:
         int in [0, 2].
     """
-    return int(np.clip(int(req.get("resolution", 0)), 0, 2))
+    return int(np.clip(int(req.get("resolution", MEDIUM)), LOW, HIGH))
 
 
 def mesh_path(req, suffix: str = "") -> Path:
@@ -147,7 +150,7 @@ def mesh_path(req, suffix: str = "") -> Path:
     if name in OBJ_FILES:
         return OBJ_FILES[name]
     presets = list(PRESETS[name].values())
-    k = min(resolution_of(req) if not suffix else len(presets) - 1, len(presets) - 1)
+    k = 0 if not suffix else len(presets) - 1  # A: the base preset; B: the finest, to match against
     path = UPLOADS / f"{name}-{k}.obj"
     if not path.exists():
         write_obj(path, *presets[k]())
@@ -155,32 +158,43 @@ def mesh_path(req, suffix: str = "") -> Path:
 
 
 def mesh_of(req):
-    """The mesh a request names, with its decimation logs.
+    """The mesh a request names, at its resolution, with its decimation logs.
 
-    Presets: ``resolution`` picks one of the shape's presets. OBJ meshes (shipped
-    or uploaded ``obj``): resolution 2 is the file as loaded, 1 and 0 decimate it
-    once and twice (each pass keeps about half the vertices).
+    The base mesh is the shape's first preset, or the OBJ (shipped or uploaded
+    ``obj``) as loaded. Resolution medium is the base as is; low decimates it once
+    (about half the vertices, :func:`mesh.decimate`); high subdivides it once (each
+    triangle into four at its edge midpoints, :func:`mesh.subdivide`: the same shape
+    described by about four times the vertices).
 
     Args:
         req: request dict; reads ``obj`` or ``shape`` (default "blob") and
-            ``resolution`` (0..2, default 0).
+            ``resolution`` (0 low, 1 medium, 2 high; default medium).
 
     Returns:
         (verts (N, 3), faces, logs, full_count): logs are the decimation passes and
-        full_count the vertex count before them, for :func:`morph.correspond`.
+        full_count the base's vertex count, for :func:`morph.correspond` (a subdivided
+        mesh has no logs: shared topology then needs a B with its own vertex count).
 
     Raises:
         KeyError: unknown shape.
         ValueError: an unreadable OBJ.
     """
-    name = req.get("shape", "blob")
+    name, res = req.get("shape", "blob"), resolution_of(req)
     if not req.get("obj") and name in PRESETS:
-        presets = list(PRESETS[name].values())
-        v, f = presets[min(resolution_of(req), len(presets) - 1)]()
-        return v, f, (), len(v)
-    path = mesh_path(req)
-    v, f, logs = load_decimated(path, 2 - resolution_of(req))
-    return np.array(v), f, logs, len(load_decimated(path, 0)[0])
+        v, f = next(iter(PRESETS[name].values()))()
+        if res == LOW:
+            low, lf, log = decimate(v, f, return_log=True)
+            return low, lf, (log,), len(v)
+    else:
+        path = mesh_path(req)
+        v, f = load_decimated(path, 0)[:2]
+        if res == LOW:
+            low, lf, logs = load_decimated(path, 1)  # cached per file
+            return np.array(low), lf, logs, len(v)
+    if res == HIGH:
+        hv, hf = subdivide(v, f)
+        return hv, hf, (), len(hv)
+    return np.array(v), f, (), len(v)
 
 
 def morph_options(req) -> dict:

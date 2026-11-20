@@ -430,6 +430,40 @@ def replay_decimation(verts, faces, log):
     return _compact(V, F, dead)
 
 
+def subdivide(verts, faces):
+    """Split every face at its edge midpoints: each triangle becomes four.
+
+    The shape does not change (new vertices lie on the old faces), only the number of
+    vertices it is described by. Polygons with more than three corners are fanned into
+    triangles first; winding is kept, and neighbouring faces share their new midpoints.
+
+    Args:
+        verts: (N, 3) vertex positions.
+        faces: list of polygons, each a list of vertex indices.
+
+    Returns:
+        (verts, faces): (N + E, 3) vertices (the originals first, then one midpoint per
+        edge) and triangles.
+    """
+    out = [np.asarray(v, float) for v in np.asarray(verts, float)]
+    mids = {}
+
+    def mid(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in mids:
+            mids[key] = len(out)
+            out.append((out[a] + out[b]) / 2)
+        return mids[key]
+
+    tris = []
+    for f in faces:
+        for k in range(1, len(f) - 1):
+            a, b, c = f[0], f[k], f[k + 1]
+            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            tris += [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]
+    return np.array(out), tris
+
+
 @cache
 def load_decimated(path, times: int = 0):
     """An OBJ decimated ``times`` times (each pass keeps about half the vertices).

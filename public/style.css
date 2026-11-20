@@ -94,6 +94,21 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
   transition: opacity 400ms; animation: hint 3.2s ease-in-out infinite; }
 @keyframes hint { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.95; } }
 #home:not([data-layer="0"]) .hint, #home.quiet .hint, #home.learned .hint { opacity: 0; animation: none; pointer-events: none; }
+/* resolution row under the logo: extra light, the chosen one medium weight */
+.res-row { position: absolute; left: 720px; top: calc(112px - var(--T, 0px)); width: 0; transition: opacity 300ms var(--ease); }
+.res-row button { position: absolute; top: 0; transform: translate(-50%, -50%); white-space: nowrap; padding: 4px 12px; border-radius: 46px;
+  font: 200 22px/normal "IBM Plex Sans", sans-serif; letter-spacing: 0.2px; color: rgba(255, 255, 255, 0.72);
+  transition: background 200ms, color 200ms, font-weight 200ms; }
+.res-row button:nth-child(1) { left: -233px; }
+.res-row button:nth-child(2) { left: 0; }
+.res-row button:nth-child(3) { left: 233px; }
+.res-row button[aria-checked="true"] { font-weight: 500; color: rgba(255, 255, 255, 0.82); }
+.res-row button:hover { background: var(--flip-light); color: #000; }
+#home:not([data-layer="0"]) .res-row { opacity: 0; pointer-events: none; }
+#home:not([data-layer="0"]) .res-row button { pointer-events: none; }
+#app.portrait .res-row button:nth-child(1) { left: -205px; }
+#app.portrait .res-row button:nth-child(3) { left: 205px; }
+
 /* the run buttons belong to the home screen: they hide while the menu is held open
    (layer 1) and while a sub-menu is up (layers 2 and 3) */
 .run-buttons { transition: opacity 300ms var(--ease); }
@@ -341,6 +356,16 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #logToggle svg { transition: transform 300ms var(--ease); }
 #info.open #logToggle svg { transform: rotate(180deg); }
 #logToggle:hover { background: var(--flip-light); color: #000; border-color: #fff; }
+.corner-row { display: flex; gap: 8px; }
+#themeToggle { display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 9px; border-radius: 46px; border: 1px solid var(--orb-line);
+  background: rgba(13, 13, 13, 0.45); color: var(--ink-dim); font: 300 13px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px;
+  transition: background 200ms, color 200ms, border-color 200ms; }
+#themeToggle:hover { background: var(--flip-light); color: #000; border-color: #fff; }
+
+/* light mode: the whole page inverted (black ↔ white), with hues turned back round so
+   blues stay blue rather than going orange. Set on <html> so dialogs flip too. */
+html.light { filter: invert(1) hue-rotate(180deg); }
+html { transition: filter 400ms ease; }
 #stats { margin: 0 0 6px; white-space: pre-wrap; font: inherit; }
 #status { color: rgba(255, 255, 255, 0.72); }
 #status.err { color: #ff9a8a; }

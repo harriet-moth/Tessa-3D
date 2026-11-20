@@ -13,7 +13,7 @@ const OBJ_R = 270; // stage px: holding inside this radius of the object opens t
 
 // ---------- settings: everything a run or the view reads
 const P = {
-  shape: 'blob', resolution: 0, payload: 'radial', mode: 'theta', layout: 'mesh',
+  shape: 'blob', resolution: 1, payload: 'radial', // resolution: 0 low (decimated), 1 medium (as is), 2 high (subdivided) mode: 'theta', layout: 'mesh',
   clamp: 0, clamp_b: 0, compression: 0, quant_bits: 0, headroom: 0.1,
   backend: 'noiseless', placement: 'quality', shots: 12, noise_strength: 1, seed: 0, drr: 'none',
   frames: 12, morph_t: 0.5, shapeB: null,
@@ -268,6 +268,17 @@ function setLog(open) {
   $('logToggle').setAttribute('aria-label', open ? 'Hide the log' : 'Show the log');
 }
 $('logToggle').addEventListener('click', () => setLog(!$('info').classList.contains('open')));
+// light mode: inverts the whole page (CSS on <html>), remembered in this browser
+const THEME = 'tessa3d.light';
+function setLight(on) {
+  document.documentElement.classList.toggle('light', on);
+  $('themeToggle').setAttribute('aria-pressed', on);
+  $('themeToggle').querySelector('span').textContent = on ? 'dark mode' : 'light mode';
+  $('themeToggle').title = on ? 'Switch to dark mode' : 'Switch to light mode';
+  try { localStorage.setItem(THEME, on ? '1' : ''); } catch { /* storage blocked: this visit only */ }
+}
+$('themeToggle').addEventListener('click', () => setLight(!document.documentElement.classList.contains('light')));
+try { if (localStorage.getItem(THEME)) setLight(true); } catch { /* storage blocked */ }
 async function busy(label, fn) {
   S.busy = true;
   app.classList.add('busy');
@@ -518,13 +529,14 @@ async function run(frames) {
   }
   await busy(frames > 1 ? `${P.mode === 'morph' ? 'Morphing' : 'Running'} ${frames} readouts on ${P.backend}…` : `Encoding and reading once on ${P.backend}…`, async () => {
     let d;
+    const askedRes = P.resolution;
     for (;;) {
       try { d = await call('run', { frames }); break; } catch (err) {
-        // an uploaded mesh too big for the lattice: decimate (each step halves it) and retry
-        if (!TOO_BIG.test(err.message) || P.resolution === 0 || !S.objText) throw err;
+        // too many values for the lattice: step the resolution down (high → medium → low) and retry
+        if (!TOO_BIG.test(err.message) || P.resolution === 0) throw err;
         P.resolution -= 1;
-        syncDrawer();
-        status(`Too many values for the lattice: decimating ${objLabel()} to ${['low', 'mid'][P.resolution]} detail and retrying…`);
+        syncRes();
+        status(`${objLabel()} has too many vertices for the lattice at that resolution: trying ${RES_NAMES[P.resolution]} res…`);
       }
     }
     const p = params();
@@ -539,7 +551,8 @@ async function run(frames) {
     if (!S.playing) { S.step = S.seq.length - 1; draw(); }
     const cut = d.frames.length < d.requested ? ` (fitted to the time limit; asked for ${d.requested})` : '';
     const what = d.ts ? (d.ts.length > 1 ? `morph ${objLabel()} → ${bLabel()}: ${d.frames.length} readouts, t 0 → 1` : `morph at t = ${d.ts[0]}`) : `${d.frames.length} readout(s)`;
-    status(`${what} in ${d.seconds.toFixed(1)} s on ${p.backend}${cut}`);
+    const stepped = P.resolution !== askedRes ? ` · ${RES_NAMES[askedRes]} res has too many vertices for the lattice, so this ran at ${RES_NAMES[P.resolution]}` : '';
+    status(`${what} in ${d.seconds.toFixed(1)} s on ${p.backend}${cut}${stepped}`);
   });
   syncPlay(); syncStale();
 }
@@ -1001,7 +1014,7 @@ function closeAll() {
 const HOLD_MS = 220;
 let hold = null;
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #hud, #drawer, #qmap, #info, dialog, .logo');
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #hud, #drawer, #qmap, #info, #resRow, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
   for (const side of ['encode', 'decode']) {
@@ -1298,7 +1311,7 @@ async function loadFileB(file) {
 
 // ---------- loading objects: presets, file picker, drag and drop
 async function chooseShape(name) {
-  P.shape = name; S.objText = S.objName = null; P.resolution = name === 'apple' || name === 'suzanne' ? 2 : 0;
+  P.shape = name; S.objText = S.objName = null; P.resolution = 1;
   syncDrawer();
   await enterHome();
 }
@@ -1313,13 +1326,14 @@ async function loadFileA(file) {
     const text = await file.text();
     if (text.length > MAX_OBJ) throw new Error(`${file.name} is too large (${(text.length / 1e6).toFixed(1)} MB; the limit is 3 MB). Try a decimated export.`);
     if (!/^\s*v\s/m.test(text)) throw new Error(`${file.name} has no vertices ('v' lines): is it an OBJ?`);
-    S.objText = text; S.objName = file.name; P.resolution = 2;
+    S.objText = text; S.objName = file.name; P.resolution = 1;
     syncDrawer();
     await enterHome();
   } catch (err) { status(`⚠ ${err.message}`, true); } finally { S.loading = false; }
 }
 async function enterHome() {
   setScreen('home');
+  syncRes();
   S.loading = true;
   try {
     status(`Loading ${objLabel()}…`);
@@ -1354,6 +1368,24 @@ addEventListener('drop', async (e) => {
   if (e.target.closest?.('#dropB') && $('dropB').classList.contains('shown')) await loadFileB(file);
   else await loadFileA(file);
 });
+
+// ---------- resolution row: low (decimated), medium (as is), high (subdivided)
+const RES_NAMES = ['low', 'medium', 'high'];
+function syncRes() {
+  for (const b of document.querySelectorAll('#resRow [data-res]')) b.setAttribute('aria-checked', +b.dataset.res === P.resolution);
+}
+for (const b of document.querySelectorAll('#resRow [data-res]')) {
+  b.addEventListener('click', async () => {
+    if (+b.dataset.res === P.resolution && S.mesh) return;
+    P.resolution = +b.dataset.res;
+    syncRes();
+    try {
+      await loadMesh();
+      status(`${objLabel()} at ${RES_NAMES[P.resolution]} res: ${S.mesh.verts.length} vertices`);
+    } catch (err) { status(`⚠ ${err.message}`, true); }
+    syncStale();
+  });
+}
 
 // ---------- run buttons
 $('run').addEventListener('click', () => { useErrorColour(); run(1); });
@@ -1428,12 +1460,9 @@ for (const id of ['loop', 'orig', 'spin']) $(id).addEventListener('input', () =>
 for (const b of document.querySelectorAll('#drawer [data-set]')) {
   b.addEventListener('click', async () => {
     const k = b.dataset.set;
-    P[k] = k === 'resolution' ? +b.dataset.value : b.dataset.value;
+    P[k] = b.dataset.value;
     syncDrawer();
-    if (k === 'resolution') {
-      try { await loadMesh(); status(`${objLabel()}: ${['low', 'mid', 'high'][P.resolution]} detail, ${S.mesh.verts.length} vertices`); } catch (err) { status(`⚠ ${err.message}`, true); }
-      syncStale();
-    } else rebuild();
+    rebuild();
     if (S.data) showInfo(S.data, params());
   });
 }

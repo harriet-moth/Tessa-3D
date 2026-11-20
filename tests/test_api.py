@@ -20,15 +20,15 @@ OCTA = "\n".join(["v 1 0 0", "v -1 0 0", "v 0 1 0", "v 0 -1 0", "v 0 0 1", "v 0 
 
 
 def test_mesh_action_returns_the_preset_unencoded():
-    """The mesh action returns the named preset's vertices and faces."""
-    d = api.mesh({"shape": "cube", "resolution": 0})
+    """The mesh action returns the named preset's vertices and faces (medium: as is)."""
+    d = api.mesh({"shape": "cube", "resolution": 1})
     v, f = api.PRESETS["cube"]["3/edge"]()
     assert np.allclose(d["verts"], v, atol=1e-5) and len(d["faces"]) == len(f)
 
 
 def test_uploaded_obj_runs_and_reuses_its_file():
     """An uploaded OBJ runs like a preset; the same text maps to the same saved file."""
-    r = api.run({"obj": OCTA, "resolution": 2, "frames": 2})
+    r = api.run({"obj": OCTA, "resolution": 1, "frames": 2})
     assert len(r["verts"]) == 6 and len(r["frames"]) == 2
     assert api.mesh_path({"obj": OCTA}) == api.mesh_path({"obj": OCTA})
 
@@ -144,3 +144,13 @@ def test_fast_enough_work_is_not_refused():
     """Edges with flat noise and the interference readout without noise still run."""
     assert len(api.edges({"shape": "cube", "backend": "flat noise"})["edges"]) > 0
     assert api.run({"shape": "blob", "mode": "morph", "shape_b": "sphere", "interference": True})["kept"]
+
+
+def test_resolution_decimates_keeps_or_subdivides():
+    """Low decimates, medium is the mesh as is, high subdivides it (same shape, more vertices)."""
+    low, med, high = (api.mesh({"shape": "sphere", "resolution": r}) for r in (0, 1, 2))
+    assert len(low["verts"]) < len(med["verts"]) < len(high["verts"])
+    v, f = api.PRESETS["sphere"]["8x6"]()
+    assert np.allclose(med["verts"], v, atol=1e-5)
+    assert np.allclose(high["verts"][:len(v)], v, atol=1e-5)  # the originals stay, midpoints are added
+    assert api.mesh({"obj": OCTA})["verts"] == api.mesh({"obj": OCTA, "resolution": 1})["verts"]  # default: medium

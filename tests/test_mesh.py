@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tessa_ripple.mesh import _normal, bfs_order, blob, cube, edges, load_obj, uv_sphere, write_obj
+from tessa_ripple.mesh import subdivide, _normal, bfs_order, blob, cube, edges, load_obj, uv_sphere, write_obj
 
 
 @pytest.mark.parametrize("n", [2, 3, 4, 5])
@@ -116,3 +116,17 @@ def test_a_large_uploaded_obj_is_decimated_to_fit(tmp_path):
     assert fit_passes(str(big)) > 0
     assert len(obj_presets(str(big))["high"]()[0]) <= FIT_VERTICES
     assert fit_passes("tessa_ripple/suzanne.obj") == 0  # fits as it is: unchanged
+
+
+def test_subdivide_splits_triangles_into_four_without_changing_the_shape():
+    """Each triangle becomes four; the originals stay; midpoints are shared; area is kept."""
+    v, f = cube(3)
+    V, F = subdivide(v, f)
+    tris = sum(len(x) - 2 for x in f)
+    assert len(F) == 4 * tris and np.allclose(V[:len(v)], v)
+    edges = {tuple(sorted((x[k], x[(k + 1) % len(x)]))) for x in [[t[0], t[i], t[i + 1]] for t in f for i in range(1, len(t) - 1)] for k in range(3)}
+    assert len(V) == len(v) + len(edges)  # one shared midpoint per edge
+
+    def area(V, F):
+        return sum(0.5 * np.linalg.norm(np.cross(V[b] - V[a], V[c] - V[a])) for a, b, c in F)
+    assert area(V, F) == pytest.approx(area(v, [[t[0], t[i], t[i + 1]] for t in f for i in range(1, len(t) - 1)]))
