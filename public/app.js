@@ -49,7 +49,8 @@ function fitStage() {
   app.classList.toggle('compact', compact);
   app.style.setProperty('--s', scale);
   // ribbons: as big as the frame would be if it covered the window (portrait: the frame's own size)
-  app.style.setProperty('--c', portrait ? Math.max(w / W_STAGE, scale) : Math.max(w / W_STAGE, h / H_STAGE));
+  const WAVES = 0.72; // the corner ribbons, a little smaller than the design's
+  app.style.setProperty('--c', WAVES * (portrait ? Math.max(w / W_STAGE, scale) : Math.max(w / W_STAGE, h / H_STAGE)));
   // wide windows: spread the landing shapes out with the width (up to 1.35× the frame's spacing)
   app.style.setProperty('--spread', portrait ? 0 : Math.min(Math.max(w / scale / W_STAGE, 1), 1.35) - 1);
   app.style.setProperty('--T', `${layout.T}px`);
@@ -830,7 +831,7 @@ function drawMenuShapes() {
       b.band = band;
       const flip = (on) => { text.classList.toggle('hover', on); band.classList.toggle('hover', on); };
       b.onpointerenter = () => flip(true); b.onpointerleave = () => flip(false);
-      b.onfocus = () => flip(true); b.onblur = () => flip(false);
+      b.onfocus = () => flip(b.matches(':focus-visible')); b.onblur = () => flip(false); // keyboard focus only
     });
   }
   // the thin line from each pill towards the object
@@ -887,14 +888,14 @@ function setMenu(state) {
 let menuGen = 0; // bumped by every transition, so a superseded animation stops quietly
 
 // layer 1 → 2: the chosen arc unsweeps out of its start cap
-async function openArc(side) {
+async function openArc(side, fromKeyboard = false) {
   const gen = ++menuGen;
   setSweep(side, ARC.a0);
   placeBack(side);
   setMenu(side);
   showBack(true);
   await sweepTo(side, ARC.a1, 560);
-  if (gen === menuGen) $(`${side}Arc`).querySelector('.arc-label')?.focus({ preventScroll: true });
+  if (gen === menuGen && fromKeyboard) $(`${side}Arc`).querySelector('.arc-label')?.focus({ preventScroll: true });
 }
 // layer 2 → home: the arc sweeps back into its cap, which then fades
 async function closeArc() {
@@ -1016,7 +1017,7 @@ addEventListener('contextmenu', (e) => { if (app.dataset.screen === 'home' && !e
 
 // keyboard (and a plain click on the hint): open layer 1, then pick a pill
 $('hint').addEventListener('click', () => { if (menuEl.dataset.state === 'closed') { setMenu('open'); $('encodePill').focus(); } });
-for (const pill of document.querySelectorAll('.pill-label')) pill.addEventListener('click', () => { if (menuEl.dataset.state === 'open') openArc(pill.dataset.side); });
+for (const pill of document.querySelectorAll('.pill-label')) pill.addEventListener('click', (e) => { if (menuEl.dataset.state === 'open') openArc(pill.dataset.side, e.detail === 0); }); // detail 0: Enter / Space
 for (const label of document.querySelectorAll('.arc-label')) {
   label.addEventListener('click', () => openPanel(label.closest('.arc').classList.contains('encode') ? 'encode' : 'decode', label.dataset.panel));
 }
