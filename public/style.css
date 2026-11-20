@@ -80,7 +80,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .more-shapes button:hover { color: #fff; }
 
 /* ---------- home (Figma 10:2, 18:230). #home[data-layer] is the menu layer, 0–3. */
-.hint { position: absolute; left: 720px; top: 795px; width: 452px; transform: translate(-50%, -50%); margin: 0;
+.hint { position: absolute; left: 720px; top: 818px; width: 452px; transform: translate(-50%, -50%); margin: 0;
   font: 400 24px/normal "Funnel Sans", sans-serif; text-align: center; color: #fff; opacity: 0.85;
   transition: opacity 400ms; animation: hint 3.2s ease-in-out infinite; }
 @keyframes hint { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.95; } }
@@ -108,7 +108,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #pills { opacity: 0; transform: scale(0.82); transform-origin: 720px 512px; transition: opacity 260ms var(--ease), transform 420ms var(--ease); }
 #menu[data-state="open"] #pills { opacity: 1; transform: none; }
 .pill-label { position: absolute; transform: translate(-50%, -50%) scale(0.82); opacity: 0; white-space: nowrap;
-  font: 400 24px/normal "Funnel Sans", sans-serif; letter-spacing: -1.2px; text-align: center;
+  font: 400 21px/normal "Funnel Sans", sans-serif; letter-spacing: -1.2px; text-align: center;
   transition: opacity 260ms var(--ease), transform 420ms var(--ease), text-shadow 200ms; }
 .pill-label.encode { color: #fff; }
 .pill-label.decode { color: #000; }
@@ -118,7 +118,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 /* layer 2: labels light up as the sweep passes them */
 .arc { position: absolute; inset: 0; pointer-events: none; }
 .arc-label { position: absolute; transform: translate(-50%, -50%) rotate(var(--r)); white-space: nowrap;
-  font: 400 24px/normal "Funnel Sans", sans-serif; color: #fff; opacity: 0;
+  font: 400 21px/normal "Funnel Sans", sans-serif; color: #fff; opacity: 0;
   transition: opacity 180ms, text-shadow 250ms, transform 300ms var(--ease); }
 .arc-label.tight { letter-spacing: -1.2px; }
 .arc-label.tighter { letter-spacing: -2.4px; }
@@ -128,7 +128,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .arc-label:focus-visible { outline: none; }
 /* curved labels: centred on the arc's centre line, glyphs upright along the curve */
 .spine { fill: none; stroke: none; }
-.arc-word { fill: #fff; font: 400 24px "Funnel Sans", sans-serif; text-anchor: middle; dominant-baseline: central;
+.arc-word { fill: #fff; font: 400 21px "Funnel Sans", sans-serif; text-anchor: middle; dominant-baseline: central;
   opacity: 0; transition: opacity 180ms, fill 200ms; paint-order: stroke; stroke: rgba(94, 242, 255, 0); stroke-width: 6px; }
 .arc-word.tight { letter-spacing: -1.2px; }
 .arc-word.tighter { letter-spacing: -2.4px; }
@@ -138,28 +138,28 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #menu:not([data-state="encode"]) .arc-text.encode, #menu:not([data-state="decode"]) .arc-text.decode { opacity: 0; }
 
 /* the back button (Figma 40:74): sits on the arc's start cap in layers 2 and 3 */
-.back { position: absolute; left: 442.8px; top: 320.1px; width: 68px; height: 68px; border-radius: 50%; pointer-events: none;
+.back { position: absolute; left: 404px; top: 307px; width: 60px; height: 60px; border-radius: 50%; pointer-events: none;
   opacity: 0; transform: scale(0.9); transition: opacity 220ms, transform 300ms var(--ease), filter 300ms, left 450ms var(--ease), top 450ms var(--ease); }
 .back.shown { opacity: 1; transform: none; }
 #stage .back { pointer-events: none; }
 #stage .back.shown { pointer-events: auto; }
-.back img { display: block; width: 68px; height: 68px; }
+.back img { display: block; width: 60px; height: 60px; }
 .back:hover { filter: drop-shadow(0 0 14px var(--cyan-glow)) brightness(1.25); }
 
 /* ---------- layer 3: settings panel (Figma 18:156, 20:14, 18:246, 20:44) */
 #panel { position: absolute; inset: 0; pointer-events: none; }
 #panel[hidden] { display: none; }
-.panel-title { position: absolute; left: max(247px, calc(var(--vl, 0px) + 28px)); top: calc(165px - var(--T, 0px)); width: 282px; padding: 5px 0; display: flex; flex-direction: column; gap: 10px;
+.panel-title { position: absolute; left: max(247px, calc(var(--vl, 0px) + 28px)); top: calc(140px - var(--T, 0px)); width: 282px; padding: 5px 0; display: flex; flex-direction: column; gap: 10px;
   font: 300 24px/19px "IBM Plex Sans", sans-serif; letter-spacing: 0.48px; color: var(--ink-dim);
   opacity: 0; transform: translateX(-12px); transition: opacity 400ms 150ms, transform 500ms 150ms var(--ease); }
 .panel-title img { width: 95.6667px; height: 5.33333px; margin-top: -2.67px; }
 #panel.shown .panel-title { opacity: 1; transform: none; }
 
-.orb { position: absolute; width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 46px;
+.orb { position: absolute; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 46px;
   border: 1px solid var(--orb-line); background: rgba(13, 13, 13, 0.4); color: #fff;
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); /* stays legible over the glowing cloud */
   display: grid; place-items: center; text-align: center;
-  font: 400 20px/normal "Funnel Sans", sans-serif;
+  font: 400 17px/normal "Funnel Sans", sans-serif;
   opacity: 0; transform: translateY(14px) scale(0.85);
   transition: opacity 420ms var(--ease), transform 520ms var(--ease), left 700ms var(--ease), top 700ms var(--ease),
     background 300ms, border-color 300ms, box-shadow 300ms; }
@@ -169,12 +169,12 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .orb.on { border: 2px solid #fff;
   background: radial-gradient(circle at 50% 50%, rgba(217, 217, 217, 0.72) 0%, rgba(166, 166, 166, 0.72) 50%, rgba(141, 141, 141, 0.72) 75%, rgba(115, 115, 115, 0.72) 100%); }
 .orb.on.flat { background: rgba(217, 217, 217, 0.72); }
-.orb.greek { font: 400 28px/normal "IBM Plex Sans", sans-serif; letter-spacing: 0.56px; }
-.orb.small { font-size: 15px; line-height: 1.1; padding: 6px; }
-.orb.tiny { font-size: 13px; line-height: 1.05; padding: 4px; }
-.orb .icon { width: 56px; height: 56px; display: block; }
-.orb .icon.r55 { width: 55px; height: 55px; }
-.orb .morph { position: relative; width: 66px; height: 55px; }
+.orb.greek { font: 400 25px/normal "IBM Plex Sans", sans-serif; letter-spacing: 0.56px; }
+.orb.small { font-size: 13.5px; line-height: 1.1; padding: 6px; }
+.orb.tiny { font-size: 11.5px; line-height: 1.05; padding: 4px; }
+.orb .icon { width: 49px; height: 49px; display: block; }
+.orb .icon.r55 { width: 48px; height: 48px; }
+.orb .morph { position: relative; width: 66px; height: 55px; transform: scale(0.875); }
 .orb .morph img { position: absolute; display: block; }
 .orb .morph span { position: absolute; left: 1.2px; top: 10.76px; width: 58.8px; height: 32.28px; display: grid; place-items: center;
   font: 400 24px/normal "IBM Plex Sans", sans-serif; letter-spacing: 0.48px; color: #fff; }
@@ -191,9 +191,9 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .arc-slider .fill { fill: none; stroke: var(--cyan); stroke-width: 3; stroke-linecap: round; filter: drop-shadow(0 0 6px var(--cyan-glow)); }
 .arc-slider .hit { fill: none; stroke: transparent; stroke-width: 44; pointer-events: stroke; cursor: pointer; }
 .arc-slider text { fill: var(--ink-dim); font: 300 16px "IBM Plex Sans", sans-serif; }
-.knob { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; border: 2px solid #fff;
+.knob { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; border: 2px solid #fff;
   background: radial-gradient(circle, rgba(217, 217, 217, 0.72) 0%, rgba(141, 141, 141, 0.72) 75%, rgba(115, 115, 115, 0.72) 100%);
-  display: grid; place-items: center; font: 400 15px/1.05 "Funnel Sans", sans-serif; color: #fff; text-align: center;
+  display: grid; place-items: center; font: 400 13.5px/1.05 "Funnel Sans", sans-serif; color: #fff; text-align: center;
   cursor: grab; touch-action: none; opacity: 0; transition: opacity 400ms 200ms, box-shadow 300ms; }
 #panel.shown .knob { opacity: 1; }
 .knob:hover, .knob.dragging { box-shadow: 0 0 24px 2px var(--cyan-glow); }
@@ -240,13 +240,13 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #app.portrait .chip { font-size: 21px; }
 
 /* run buttons (Figma 21:12) */
-.run-btn { position: absolute; top: calc(896px + var(--B, 0px)); width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
+.run-btn { position: absolute; top: calc(896px + var(--B, 0px)); scale: 0.8; translate: 0 34px; /* smaller and lower than the design: room for the object */ width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
 .run-btn img, .run-btn span { position: absolute; display: block; pointer-events: none; }
 .run-btn .ring { left: 0; top: 0; width: 101px; height: 101px; }
-#run { left: 595px; }
+#run { left: 595px; translate: 12px 34px; }
 #run .gear { left: 12.06px; top: 14.06px; width: 52.8758px; height: 52.8747px; transition: transform 700ms var(--ease); }
 #run .tri { left: 40.87px; top: 37.12px; width: 50.2295px; height: 45.75px; transform: rotate(90deg); }
-#play { left: 736px; width: 109px; }
+#play { left: 736px; width: 109px; translate: -12px 34px; }
 #play .tri { left: 15.85px; top: 30.12px; width: 43.3013px; height: 39.75px; transform: rotate(90deg); }
 #play .bars { left: 39px; top: 19px; width: 70px; height: 56px; display: grid; place-items: center;
   font: 700 48px/normal "IBM Plex Sans", sans-serif; letter-spacing: -2.4px; color: #000; }

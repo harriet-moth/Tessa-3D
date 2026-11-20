@@ -765,8 +765,11 @@ function syncShift() {
 // ---------- geometry: every menu shape is a band of constant width on a circle round
 // the object, so the arcs are exactly even (the design's are hand-drawn prototypes)
 const rad = THREE.MathUtils.degToRad;
-const ARC = { R: 295, h: 32, a0: -60, a1: 60 }; // layer 2: the back button sits on the a0 cap
-const PILL = { R: 300, h: 28, span: 23 }; // layer 1
+// The menus sit well out from the object (radius 330 against its ~275) so it has room
+// to breathe: the upper arcs high, the lower ones low.
+const ARC = { R: 330, h: 28, a0: -58, a1: 58 }; // layer 2: the back button sits on the a0 cap
+const PILL = { R: 335, h: 24, span: 20 }; // layer 1
+const BACK = 60; // back button diameter (a little more than the band's 56)
 // a point at angle a (degrees from straight up) on a circle of radius r round the
 // object: the encode side above it, the decode side mirrored below
 const onRing = (side, r, a) => [CX + r * Math.sin(rad(a)), side === 'decode' ? CY + r * Math.cos(rad(a)) : CY - r * Math.cos(rad(a))];
@@ -791,7 +794,7 @@ function drawMenuShapes() {
     const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
     const widths = labels.map((b) => b.offsetWidth || 8 * b.textContent.length);
     const deg = (px) => THREE.MathUtils.radToDeg(px / ARC.R);
-    const start = ARC.a0 + deg(34 + 10), end = ARC.a1 - deg(ARC.h * 0.6);
+    const start = ARC.a0 + deg(BACK / 2 + 10), end = ARC.a1 - deg(ARC.h * 0.6);
     const gap = (end - start - widths.reduce((t, w) => t + deg(w), 0)) / (labels.length - 1);
     // The visible text runs along the arc's centre line (left to right, so it reads
     // upright on both arcs), letter by letter round the curve; the buttons stay as
@@ -810,6 +813,7 @@ function drawMenuShapes() {
       const text = document.createElementNS(svgNS, 'text'), path = document.createElementNS(svgNS, 'textPath');
       text.setAttribute('class', `arc-word ${b.classList.contains('tight') ? 'tight' : ''} ${b.classList.contains('tighter') ? 'tighter' : ''}`);
       path.setAttribute('href', `#${side}Spine`);
+      path.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${side}Spine`); // older Safari reads only this
       path.setAttribute('startOffset', (ARC.R * rad(a - ARC.a0)).toFixed(2));
       path.textContent = b.textContent;
       text.appendChild(path);
@@ -856,7 +860,10 @@ function sweepTo(side, to, ms) {
 // ---------- the back button: on the arc's start cap (shifted with the morph layout)
 function placeBack(side) {
   const [x, y] = capAt(side), [dx, dy] = panelEl.hidden ? [0, 0] : morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
-  Object.assign($('back').style, { left: `${x + dx - 34}px`, top: `${y + dy - 34}px` });
+  const back = $('back'), jump = !back.classList.contains('shown'); // appear in place; slide only while showing
+  if (jump) back.style.transition = 'none';
+  Object.assign(back.style, { left: `${x + dx - BACK / 2}px`, top: `${y + dy - BACK / 2}px` });
+  if (jump) { void back.offsetWidth; back.style.transition = ''; }
 }
 const showBack = (on) => $('back').classList.toggle('shown', on);
 
@@ -1034,7 +1041,9 @@ const PANELS = {
   drr: { title: 'DRR', key: 'drr', items: ['none', 'min_max', 'mean_std', 'percentile', 'abs_max', 'min_avg_max'].map((v) => (
     { v, html: v.replace(/_/g, '‑<br>'), cls: 'tiny', tip: `Tessa's ${v} dynamic-range restoration` })) },
   frames: { title: 'frames', sliders: [
-    { key: 'frames', label: 'frames', min: 2, max: 30, step: 1, fmt: (v) => `${v}` }] },
+    { key: 'frames', label: 'frames', min: 2, max: 30, step: 1, fmt: (v) => `${v}` },
+    // playback only (no new run needed): steps per second, as in view → speed
+    { key: 'fps', label: 'speed (fps)', min: 1, max: 60, step: 1, fmt: (v) => `${v} fps` }] },
   shots: { title: 'shots', sliders: [
     { key: 'shots', label: 'shots', min: 8, max: 16, step: 1, fmt: (v) => (2 ** v).toLocaleString() }] },
   placement: { title: 'chip placement', key: 'placement', items: [
@@ -1050,7 +1059,7 @@ const PANELS = {
 
 // The design's three toggles sit on a circle round the object (centre 720, 732.7;
 // radius 490.7; 21.8° apart). More toggles squeeze closer; decode mirrors it below.
-const RING = { r: 490.7, cyEnc: 732.7, cyDec: 1024 - 732.7 };
+const RING = { r: 525, cyEnc: 732.7, cyDec: 1024 - 732.7 }; // the design's ring, pushed out to clear the object
 function ringPoint(side, deg, r = RING.r) {
   const a = THREE.MathUtils.degToRad(deg);
   return side === 'encode' ? [CX + r * Math.sin(a), RING.cyEnc - r * Math.cos(a)] : [CX + r * Math.sin(a), RING.cyDec + r * Math.cos(a)];
@@ -1059,7 +1068,7 @@ function orbAngles(n) {
   const gap = n <= 3 ? 21.8 : 52 / (n - 1);
   return [...Array(n).keys()].map((i) => (i - (n - 1) / 2) * gap);
 }
-const orbRadius = (n) => (n <= 3 ? RING.r : 505); // longer rows sit a little further out, clear of the back button
+const orbRadius = (n) => (n <= 3 ? RING.r : 540); // longer rows sit a little further out, clear of the back button
 
 function buildPanel(side, key) {
   const spec = PANELS[key], body = $('panelBody');
@@ -1079,7 +1088,7 @@ function buildPanel(side, key) {
       body.appendChild(b);
     });
   }
-  for (const [k, sl] of (spec.sliders || []).entries()) body.appendChild(arcSlider(side, sl, sl.inner ? (side === 'encode' ? 580 : 375) : (spec.items ? 570 : [RING.r, 570][k])));
+  for (const [k, sl] of (spec.sliders || []).entries()) body.appendChild(arcSlider(side, sl, sl.inner ? (side === 'encode' ? 610 : 400) : (spec.items ? 605 : [RING.r, 600][k])));
   placeOrbs();
   syncPanel();
 }
@@ -1288,8 +1297,9 @@ addEventListener('drop', async (e) => {
 });
 
 // ---------- run buttons
-$('run').addEventListener('click', () => run(1));
-// frames show how the readout moves the mesh, so they switch the colour to error
+$('run').addEventListener('click', () => { useErrorColour(); run(1); });
+// a readout (one, or frames) shows how far each vertex moved, so both run buttons
+// switch the colour to error
 function useErrorColour() {
   if (P.colour === 'error') return;
   P.colour = 'error';
