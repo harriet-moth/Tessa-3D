@@ -256,7 +256,18 @@ async function call(action, extra = {}) {
   if (!res.ok) throw new Error(body.error || `server error ${res.status}`);
   return body;
 }
-function status(msg, err = false) { $('status').textContent = msg; $('status').classList.toggle('err', err); }
+function status(msg, err = false) {
+  $('status').textContent = msg;
+  $('status').classList.toggle('err', err);
+  if (err) setLog(true); // a problem opens the log so it is seen
+}
+// the log: collapsed to its arrow by default
+function setLog(open) {
+  $('info').classList.toggle('open', open);
+  $('logToggle').setAttribute('aria-expanded', open);
+  $('logToggle').setAttribute('aria-label', open ? 'Hide the log' : 'Show the log');
+}
+$('logToggle').addEventListener('click', () => setLog(!$('info').classList.contains('open')));
 async function busy(label, fn) {
   S.busy = true;
   app.classList.add('busy');
@@ -992,7 +1003,7 @@ function closeAll() {
 const HOLD_MS = 220;
 let hold = null;
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #hud, #drawer, #qmap, dialog, .logo');
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #hud, #drawer, #qmap, #info, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
   for (const side of ['encode', 'decode']) {
@@ -1454,7 +1465,6 @@ $('hudMore').addEventListener('click', () => {
 $('hud').addEventListener('click', (e) => {
   if (compact && e.target.closest('button') && e.target.id !== 'hudMore') { $('hud').classList.remove('open'); $('hudMore').setAttribute('aria-expanded', false); }
 });
-$('info').addEventListener('click', () => { if (compact) $('info').classList.toggle('open'); });
 
 window.tessa3d = { state: S, settings: P }; // read-only handle for debugging in the console
 fitStage();

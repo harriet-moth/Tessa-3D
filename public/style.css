@@ -327,8 +327,20 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #drawer input[type=number] { grid-column: 2 / 4; background: transparent; color: #fff; border: 1px solid var(--orb-line); border-radius: 10px; padding: 3px 8px; font: inherit; }
 #drawer input[type=checkbox] { accent-color: var(--cyan); }
 
-#info { position: absolute; left: 18px; bottom: 16px; max-width: min(420px, 40vw); pointer-events: none;
+/* the log: an up-arrow button bottom left; open, the stats and status sit above it */
+#info { position: absolute; left: 18px; bottom: 16px; max-width: min(420px, 40vw); display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   font: 11.5px/1.5 "IBM Plex Mono", ui-monospace, monospace; color: rgba(255, 255, 255, 0.5); }
+#logBody { padding: 10px 12px; border-radius: 14px; background: rgba(13, 13, 13, 0.55); border: 1px solid var(--orb-line);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity 250ms, transform 300ms var(--ease); }
+#info.open #logBody { opacity: 1; transform: none; pointer-events: auto; }
+#info:not(.open) #logBody { visibility: hidden; transition: opacity 250ms, transform 300ms var(--ease), visibility 0s 300ms; }
+#logToggle { display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 9px; border-radius: 46px; border: 1px solid var(--orb-line);
+  background: rgba(13, 13, 13, 0.45); color: var(--ink-dim); font: 300 13px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px;
+  transition: background 200ms, color 200ms, border-color 200ms; }
+#logToggle svg { transition: transform 300ms var(--ease); }
+#info.open #logToggle svg { transform: rotate(180deg); }
+#logToggle:hover { background: var(--flip-light); color: #000; border-color: #fff; }
 #stats { margin: 0 0 6px; white-space: pre-wrap; font: inherit; }
 #status { color: rgba(255, 255, 255, 0.72); }
 #status.err { color: #ff9a8a; }
@@ -392,15 +404,11 @@ svg text { fill: var(--ink-dim); font-size: 11px; }
 #app.compact #hud button:not(#hudMore) { display: none; }
 #app.compact #hud.open button:not(#hudMore) { display: block; }
 #app.compact #drawer { top: 56px; right: 12px; transform: none; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 80px); }
-#app.compact #info { left: 12px; right: 12px; bottom: 10px; max-width: none; pointer-events: auto; cursor: pointer; font-size: 11px; }
-#app.compact #info #stats { display: none; }
-#app.compact #info.open #stats { display: block; }
-#app.compact #status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#app.compact #info.open #status { white-space: normal; }
+#app.compact #info { left: 12px; bottom: 10px; max-width: calc(100vw - 24px); font-size: 11px; }
+#app.compact #logBody { background: rgba(13, 13, 13, 0.94); } /* open over the run buttons on small screens */
 #app.compact .legends { display: none; }
 /* landscape compact: status bottom-left, stopping short of the centred run buttons */
-#app.compact:not(.portrait) #info { right: calc(50% + 70px); }
-#app.compact:not(.portrait) #status { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+#app.compact:not(.portrait) #info { max-width: calc(50% - 90px); }
 #app.compact #qmap { top: auto; bottom: 48px; left: 12px; max-width: calc(100vw - 24px); }
 
 @media (prefers-reduced-motion: reduce) {

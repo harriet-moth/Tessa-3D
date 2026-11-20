@@ -171,7 +171,14 @@
     <label>seed<input id="seed" type="number" min="0" max="999" value="0"></label>
   </aside>
 
-  <div id="info" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>
+  <!-- the log: collapsed to an up arrow; opens upwards with the run's stats and status -->
+  <div id="info">
+    <div id="logBody" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>
+    <button id="logToggle" aria-expanded="false" aria-controls="logBody" aria-label="Show the log" title="log">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>log</span>
+    </button>
+  </div>
   <div class="legends"><div class="legend" id="faceLegend" hidden></div><div class="legend" id="edgeLegend" hidden></div></div>
   <div id="qmap" hidden><canvas id="qcanvas"></canvas><div id="qtext"></div></div>
   <div id="dropOverlay" hidden><p>drop to load</p></div>
