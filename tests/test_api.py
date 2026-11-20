@@ -1,6 +1,7 @@
 """Tests of the web API (api/tessa.py): uploaded OBJ meshes, the mesh action and morph."""
 
 import importlib.util
+import time
 from pathlib import Path
 
 import numpy as np
@@ -95,3 +96,51 @@ def test_shared_topology_pairs_by_index_and_refuses_other_meshes():
     assert r["match"]["method"] == "by index"
     with pytest.raises(ValueError, match="Shared topology"):
         api.run({"shape": "blob", "mode": "morph", "shape_b": "cube", "shared_topology": True})
+
+
+def _slow_readouts(monkeypatch, seconds):
+    """Make every readout take ``seconds`` longer, like Vercel's slower CPU."""
+    for name in ("decode_raw", "tilted_angles"):
+        real = getattr(api.bridge, name)
+
+        def slow(*a, _real=real, **k):
+            time.sleep(seconds)
+            return _real(*a, **k)
+        monkeypatch.setattr(api.bridge, name, slow)
+
+
+def test_run_frames_stop_before_the_deadline(monkeypatch):
+    """Frames stop before one would overrun the request's deadline (no 504)."""
+    _slow_readouts(monkeypatch, 0.5)
+    start = time.time()
+    r = api.run({"shape": "blob", "frames": 30, "_deadline": start + 5.0})
+    assert 1 <= len(r["frames"]) < 30
+    assert time.time() - start < 5.0 + 0.6  # slack for the reply and a busy test machine
+
+
+def test_morph_frames_fit_the_deadline_and_still_span_t(monkeypatch):
+    """A slow morph reads fewer frames, still from t = 0 to 1, and ends by the deadline."""
+    _slow_readouts(monkeypatch, 0.3)
+    start = time.time()
+    r = api.run({"shape": "blob", "mode": "morph", "shape_b": "sphere", "frames": 30, "_deadline": start + 8.0})
+    assert 2 <= len(r["frames"]) < 30 and r["ts"][0] == 0 and r["ts"][-1] == pytest.approx(1)
+    assert time.time() - start < 8.0 + 1.0  # slack for the references, the reply and a busy test machine
+
+
+@pytest.mark.parametrize("action, req, words", [
+    ("curves", {"shape": "blob", "backend": "flat noise"}, "Curves with the flat noise"),
+    ("curves", {"shape": "blob", "backend": "phoenix"}, "Curves with the phoenix"),
+    ("edges", {"shape": "blob", "backend": "fez"}, "Edge readouts on the fez"),
+    ("run", {"shape": "blob", "backend": "phoenix", "mode": "morph", "shape_b": "sphere", "interference": True},
+     "interference readout with phoenix"),
+])
+def test_work_too_slow_for_the_web_is_refused_up_front(action, req, words):
+    """Work that cannot fit in the function's time limit is refused at once, with advice."""
+    with pytest.raises(ValueError, match=words):
+        api.ACTIONS[action](req)
+
+
+def test_fast_enough_work_is_not_refused():
+    """Edges with flat noise and the interference readout without noise still run."""
+    assert len(api.edges({"shape": "cube", "backend": "flat noise"})["edges"]) > 0
+    assert api.run({"shape": "blob", "mode": "morph", "shape_b": "sphere", "interference": True})["kept"]

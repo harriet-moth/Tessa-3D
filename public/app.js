@@ -1172,6 +1172,10 @@ function choose(key, v) {
   if (key === 'mode' && v !== 'theta' && P.payload === 'spherical') { P.payload = 'radial'; status('θ+φ modes need a radial or xyz load: load set to radial'); }
   if (key === 'mode' && v === 'morph') P.clamp_b = P.clamp; // one clamp for both fields
   if (key === 'mode') { placeOrbs(); syncMorphBox(); syncHud(); }
+  if (key === 'backend') {
+    if (v !== 'noiseless' && P.interference) { P.interference = false; status('interference readout needs the noiseless backend on the web: turned it off'); }
+    syncMorphBox(); syncHud();
+  }
   syncPanel(); syncStale();
 }
 
@@ -1260,6 +1264,10 @@ function syncMorphBox() {
   const opts = $('morphOpts');
   if (on) { opts.hidden = false; requestAnimationFrame(() => opts.classList.add('shown')); } else opts.classList.remove('shown');
   for (const c of opts.querySelectorAll('.chip')) c.setAttribute('aria-pressed', P[c.dataset.opt]);
+  const interf = opts.querySelector('[data-opt="interference"]');
+  interf.disabled = noisy();
+  interf.title = noisy() ? `Interference readout with ${P.backend} noise takes minutes per frame on the web: noiseless backend only (or the desktop app)`
+    : 'Read by turning selector qubits from A (0) to B (1), instead of the basis sweep';
   const aDirs = opts.querySelector('[data-opt="a_dirs"]');
   aDirs.disabled = P.payload !== 'radial';
   aDirs.title = P.payload === 'radial' ? "Radial load: keep A's directions; only the radii morph" : "A's directions only: radial load only";
@@ -1373,12 +1381,18 @@ function syncPlay() {
 function syncStale() { $('run').classList.toggle('stale', !!S.mesh && S.run !== runKey()); }
 
 // ---------- HUD and drawer
+// Noise simulation runs ~9× slower on the web function than on a laptop, so some work
+// cannot finish inside its 60 s limit (the server refuses it too: api/tessa.py too_slow).
+const CHIPS = ['phoenix', 'fez'];
+const noisy = () => P.backend !== 'noiseless';
 function syncHud() {
-  const morph = P.mode === 'morph';
-  $('edges').disabled = S.busy || morph || !S.mesh;
-  $('edges').title = morph ? 'Edge readouts compare against one fixed mesh: not in morph mode' : '';
-  $('curves').disabled = S.busy || morph || !S.mesh;
-  $('curves').title = morph ? 'Curves compare against one fixed mesh: not in morph mode' : '';
+  const morph = P.mode === 'morph', chip = CHIPS.includes(P.backend);
+  $('edges').disabled = S.busy || morph || !S.mesh || chip;
+  $('edges').title = morph ? 'Edge readouts compare against one fixed mesh: not in morph mode'
+    : chip ? `Edge readouts on the ${P.backend} chip take over a minute on the web: use noiseless or flat noise, or the desktop app` : '';
+  $('curves').disabled = S.busy || morph || !S.mesh || noisy();
+  $('curves').title = morph ? 'Curves compare against one fixed mesh: not in morph mode'
+    : noisy() ? `Curves with ${P.backend} noise take minutes on the web: switch backend to noiseless, or use the desktop app` : '';
   $('why').disabled = S.busy || !S.mesh || (morph && !bLabel());
   $('obj').disabled = !S.seq.length;
   $('qmapOn').disabled = !S.data;

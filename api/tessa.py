@@ -11,9 +11,12 @@ import json
 import sys
 import tempfile
 import time
-from dataclasses import replace
-from http.server import BaseHTTPRequestHandler
-from pathlib import Path
+
+_IMPORT_START = time.time()  # the first request after a cold start also pays for the imports below
+
+from dataclasses import replace  # noqa: E402
+from http.server import BaseHTTPRequestHandler  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -24,6 +27,9 @@ from tessa_ripple import bridge  # noqa: E402
 from tessa_ripple import interfere as interf  # noqa: E402
 from tessa_ripple.mesh import PRESETS, load_decimated, write_obj  # noqa: E402
 from tessa_ripple.morph import correspond  # noqa: E402
+
+_IMPORT_SECONDS = time.time() - _IMPORT_START
+_cold = True  # set until the first request has been served
 
 # OBJ shapes that ship with the app, by name.
 OBJ_FILES = {"suzanne": ROOT / "tessa_ripple" / "suzanne.obj",
@@ -36,7 +42,64 @@ CHOICES = {"payload": ("radial", "xyz", "spherical"), "layout": ("mesh", "naive"
            "clamp": None, "clamp_b": None, "compression": None, "quant_bits": None,
            "headroom": None, "shots": None, "noise_strength": None, "seed": None}
 MAX_FRAMES = 30
-TIME_BUDGET = 45.0  # seconds of decoding per request, under the 60 s function limit
+# Vercel stops the function at maxDuration (vercel.json) and answers 504. Each request
+# gets a deadline this many seconds after it arrives, leaving room to send the reply;
+# the first request after a cold start also loses the import time.
+FUNCTION_LIMIT = 60.0
+REPLY_MARGIN = 8.0
+FRAME_MARGIN = 1.25  # a frame only starts if the slowest frame so far, ×1.25, still fits
+
+
+def deadline_of(req) -> float:
+    """When this request's work must be finished (time.time() seconds).
+
+    Args:
+        req: request dict; reads ``_deadline`` (set by the handler; tests may set it).
+
+    Returns:
+        float: The deadline.
+    """
+    return float(req.get("_deadline") or time.time() + FUNCTION_LIMIT - REPLY_MARGIN)
+
+
+def fits(deadline: float, per: float) -> bool:
+    """Whether another readout of about ``per`` seconds finishes before the deadline.
+
+    Args:
+        deadline: time.time() deadline.
+        per: Slowest readout so far, in seconds.
+
+    Returns:
+        bool: True if there is time.
+    """
+    return time.time() + per * FRAME_MARGIN < deadline
+
+
+def too_slow(req, what: str):
+    """Refuse up front work that cannot finish inside the function's time limit.
+
+    Noise simulation dominates: on Vercel's CPU it runs about 9× slower than on a
+    laptop. Measured locally: curves take 15–18 s with any noisy backend (about 2–3
+    minutes on Vercel), edge readouts 8–10 s on a chip (70–90 s), and one
+    interference-readout frame with noise 30–40 s (several minutes).
+
+    Args:
+        req: request dict.
+        what: "curves", "edges" or "interference".
+
+    Raises:
+        ValueError: the request's backend makes it too slow for the web function.
+    """
+    backend = req.get("backend", "noiseless")
+    noisy, chip = backend != "noiseless", backend in bridge.DEVICES
+    advice = "switch Backend to noiseless (or flat noise for edges), or use the desktop app."
+    if what == "curves" and noisy:
+        raise ValueError(f"Curves with the {backend} backend take minutes on the web (15 noisy readouts); {advice}")
+    if what == "edges" and chip:
+        raise ValueError(f"Edge readouts on the {backend} chip take over a minute on the web; {advice}")
+    if what == "interference" and noisy:
+        raise ValueError(f"The interference readout with {backend} noise takes minutes per frame on the web; "
+                         "switch Backend to noiseless, turn off interference readout, or use the desktop app.")
 MAX_OBJ = 3_000_000  # characters of uploaded OBJ text (Vercel caps request bodies at 4.5 MB)
 UPLOADS = Path(tempfile.gettempdir()) / "tessa_ripple_obj"  # Vercel's writable /tmp
 
@@ -228,14 +291,14 @@ def mesh(req):
     return {"verts": rounded(v), "faces": [list(map(int, x)) for x in f]}
 
 
-def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, t0: float):
+def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadline: float):
     """Read a morph A -> B.
 
     Frames run along t = 0 -> 1, or all at ``t_one`` with ``hold_t`` (one readout
     reads at ``t_one`` either way). The basis sweep shares one alpha = 0 readout over
     its frames, as animate.run_frames does; the interference readout reads each frame
     on its own (interfere.read). The first frame times the readout; the frame count is
-    then cut so the rest fits in TIME_BUDGET.
+    then cut so the rest (and the noiseless references) finish before ``deadline``.
 
     Args:
         e: A morph encoding.
@@ -245,7 +308,7 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, t0: fl
         drr: DRR method.
         t_one: The t of a single readout, and of every frame with ``hold_t``.
         opts: :func:`morph_options`.
-        t0: Request start time (time.time()).
+        deadline: time.time() by which the readouts must be done (:func:`deadline_of`).
 
     Returns:
         (frames, refs, ts, kept): decoded (N, 3) positions; the noiseless morph at each
@@ -256,8 +319,12 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, t0: fl
     start = time.time()
     reference = None if ie else bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
     ts, frames, kept = ([t_one] if want == 1 or hold else [0.0]), [], []
+    slowest = 0.0
     while len(frames) < len(ts):
-        k, t = len(frames), float(ts[len(frames)])
+        if frames and not fits(deadline, slowest):  # slower than the first frame promised: stop here
+            ts = ts[:len(frames)]
+            break
+        k, t, began = len(frames), float(ts[len(frames)]), time.time()
         if ie:
             raw, share = interf.read(ie, p, t, p.seed + k)
             frames.append(interf.frame(ie, raw, t, drr, a_dirs))
@@ -265,9 +332,10 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, t0: fl
         else:
             raw = bridge.decode_raw(e, replace(p, morph_t=t), p.seed + k, reference)
             frames.append(bridge.morph_frame(e, raw, t, drr, a_dirs))
+        slowest = max(slowest, time.time() - began)
         if want > 1 and k == 0:
             per = max(time.time() - start, 1e-3) / (1 if ie else 2)  # the sweep's reference cost about one readout
-            n = int(np.clip(1 + (TIME_BUDGET - (time.time() - t0)) // per, 2, want))
+            n = int(np.clip(1 + (deadline - time.time()) // (per * FRAME_MARGIN), 1, want))
             ts = [t_one] * n if hold else list(np.linspace(0.0, 1.0, n))
     refs = {}
     for t in ts:
@@ -280,7 +348,8 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, t0: fl
 def run(req):
     """Encode once, decode up to ``frames`` readouts (seeds seed, seed + 1, ...).
 
-    Decoding stops early after TIME_BUDGET seconds (at least one frame always runs).
+    Decoding stops before a frame that would not finish by the request's deadline
+    (:func:`deadline_of`; at least one frame always runs).
     A morph (``mode`` "morph") reads its frames along t = 0 -> 1 (or at a held t)
     instead (:func:`morph_frames`), each compared with the noiseless morph at its t.
 
@@ -303,23 +372,28 @@ def run(req):
         ``clamp`` (the one clamp both fields use, in units of π) and, for the
         interference readout, ``kept`` (share of shots each frame was decoded from).
     """
+    t0, deadline = time.time(), deadline_of(req)
+    if req.get("mode") == "morph" and req.get("interference"):
+        too_slow(req, "interference")
     verts, faces, logs, full = mesh_of(req)
-    p, t0 = params_of(req), time.time()
+    p = params_of(req)
     e, match, ie = encode_of(req, verts, faces, logs, full, p)
     want, frames, drr = int(np.clip(req.get("frames", 1), 1, MAX_FRAMES)), [], req.get("drr", "none")
     extra = {}
     if match is not None:
         t_one = float(np.clip(float(req.get("morph_t", 0.5)), 0.0, 1.0))
         opts = morph_options(req)
-        frames, refs, ts, kept = morph_frames(e, ie, p, want, drr, t_one, opts, t0)
+        frames, refs, ts, kept = morph_frames(e, ie, p, want, drr, t_one, opts, deadline)
         extra = {"refs": [rounded(r) for r in refs], "ts": ts, "options": opts,
                  "match": {k: match[k] for k in ("method", "coverage", "distance")},
                  "clamp": bridge.morph_clamp(p) / np.pi, **({"kept": kept} if ie else {})}
     else:
-        refs = [verts]
-        while len(frames) < want and (not frames or time.time() - t0 < TIME_BUDGET):
+        refs, per = [verts], 0.0
+        while len(frames) < want and (not frames or fits(deadline, per)):
+            start = time.time()
             raw = bridge.decode_raw(e, p, p.seed + len(frames))
             frames.append(bridge.restore(e, raw, drr))
+            per = max(per, time.time() - start)
         refs = refs * len(frames)
     return {"verts": rounded(verts), "faces": [list(map(int, f)) for f in faces],
             "frames": [rounded(f) for f in frames], "requested": want,
@@ -354,6 +428,7 @@ def edges(req):
         ``seconds``.
     """
     not_morph(req, "Edge readouts")
+    too_slow(req, "edges")
     verts, faces = mesh_of(req)[:2]
     t0 = time.time()
     E, measured, exact = bridge.read_edges(verts, faces, params_of(req))
@@ -387,6 +462,7 @@ def curves(req):
         depth, error)], ``same`` (both layouts place values identically).
     """
     not_morph(req, "Curves")
+    too_slow(req, "curves")
     verts, faces = mesh_of(req)[:2]
     return bridge.fidelity_curves(verts, faces, params_of(req))
 
@@ -431,7 +507,13 @@ class handler(BaseHTTPRequestHandler):
         with ``{"error": ...}`` for anything else.
         """
         try:
+            global _cold
+            arrived = time.time()
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            # the work must end before Vercel's limit, less the reply's time and, on a
+            # cold start, the imports this process has just done
+            req["_deadline"] = arrived + FUNCTION_LIMIT - REPLY_MARGIN - (_IMPORT_SECONDS if _cold else 0.0)
+            _cold = False
             action = ACTIONS.get(req.get("action"))
             if action is None:
                 return self._send(400, {"error": f"unknown action; use one of {sorted(ACTIONS)}"})

@@ -102,9 +102,15 @@ How it works:
 
 Differences from the desktop app:
 - Changing **DRR** needs a new **Run**.
-- **Run frames** is capped at 30 frames and stops after about 45 s to stay under
-  Vercel's 60 s limit. On the chip backends a frame takes about 7 s there, so
-  expect about 6 frames; a morph spreads the frames it has time for over t = 0 → 1.
+- **Run frames** is capped at 30 frames, and stops before a frame that would not
+  finish inside Vercel's 60 s limit (each request has a deadline; a cold start also
+  loses its import time). Noise simulation runs about 9× slower on Vercel than on a
+  laptop, so a chip frame takes 8 s or more there: expect about 5 frames on
+  phoenix or fez. A morph spreads the frames it has time for over t = 0 → 1.
+- Work that cannot fit in 60 s on the web is refused at once with advice, and its
+  button is greyed out: **curves** with any noisy backend, **read edges** on phoenix
+  or fez, and the **interference readout** with noise (minutes per frame). All of
+  them run in the desktop app.
 - Morph has every desktop option except the morph front (a prototype with no UI in
   either app); curves and edge readouts are off in morph mode.
 - There's no GIF export; **Download OBJ** saves the current step.
