@@ -82,11 +82,14 @@ How it works:
   the decoded vertex positions, so they move only as the readout does.
 - **Run buttons:** the gear ▶ encodes and reads once; ▶|| runs **Frames** readouts,
   then plays and pauses them. The gear glows while the settings differ from the last run.
-- **Settings:** hover the object (or right-click / tap it) for the **Encode** and
-  **Decode** arcs. Hover an arc to open its options; click one to set it (**load**,
-  **mode**, **vert layout**, **clamps**, **compression**; **DRR**, **frames**,
-  **shots**, **chip placement**, **backend**). The menu closes when the pointer moves
-  well away or you click outside it; the round back button returns to the arc.
+- **Settings:** click (or right-click, or press on a touch screen) and hold the object:
+  **Encode** and **Decode** pills appear. Release on one to open its arc of options
+  (**load**, **mode**, **vert layout**, **clamps**, **compression**; **DRR**,
+  **frames**, **shots**, **chip placement**, **backend**); release anywhere else to
+  cancel. A quick drag still rotates the object. Each arc sweeps out of the round back
+  button on its end, and choosing an option sweeps it back in while that setting's
+  toggles fade in. **Back** (or Esc) goes up one layer: from the toggles to the arc, from
+  the arc to the home screen. Clicking well away from the object also goes home.
 - **Morph:** **mode → θ+φ morph** opens a box for mesh B: drop an `.obj` or pick a
   shape. ▶|| then reads the morph A → B along t = 0 → 1 (closest-point matching,
   as in the desktop app); one ▶ reads at **morph t** (in **view**, default 0.5).
