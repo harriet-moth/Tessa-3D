@@ -80,19 +80,18 @@ const TEX_W = 256;
 const CREASE = Math.cos(THREE.MathUtils.degToRad(38)); // sharper bends than this stay hard edges
 let posTex = null, colTex = null, nrmTex = null;
 const cloudGeom = new THREE.BufferGeometry();
-const cloudMat = new THREE.ShaderMaterial({
-  uniforms: {
-    uPos: { value: null }, uCol: { value: null }, uNrm: { value: null }, uCurve: { value: 0.75 }, uR: { value: 1 }, uW: { value: TEX_W }, uTime: { value: 0 },
-    uSize: { value: 0.02 }, uScale: { value: 500 }, uMix: { value: 0 }, uBusy: { value: 0 },
-    uZ0: { value: -1 }, uZ1: { value: 1 }, uPx: { value: 1 },
-  },
-  vertexShader: /* glsl */`
+// The surface both the dots and the thin edges sit on: positions from the vertex
+// texture, curved between vertices, coloured by height (or by the data colour), and
+// dimmer on the far side. At rest, size and brightness are steady (the only motion is
+// the data's); while a run is encoding or reading, the dots shimmer and pulse (uBusy).
+const SURFACE_GLSL = /* glsl */`
     uniform sampler2D uPos; uniform sampler2D uCol; uniform sampler2D uNrm; uniform int uW;
-    uniform float uTime, uSize, uScale, uMix, uBusy, uZ0, uZ1, uPx, uCurve, uR;
-    attribute vec3 aTri; attribute vec3 aBary; attribute float aSeed; attribute float aVert; attribute float aFace;
+    uniform float uMix, uZ0, uZ1, uCurve, uR;
+    attribute vec3 aTri; attribute vec3 aBary; attribute float aFace;
     varying vec3 vCol; varying float vA;
     vec3 at(sampler2D t, float i) { int k = int(i + 0.5); return texelFetch(t, ivec2(k % uW, k / uW), 0).xyz; }
-    void main() {
+    // returns the view-space position; sets vCol and vA (the far side dimmer)
+    vec4 surface() {
       vec3 p1 = at(uPos, aTri.x), p2 = at(uPos, aTri.y), p3 = at(uPos, aTri.z);
       vec3 p = p1 * aBary.x + p2 * aBary.y + p3 * aBary.z;
       // Phong tessellation: bend the flat face towards each corner's tangent plane, so a
@@ -106,19 +105,35 @@ const cloudMat = new THREE.ShaderMaterial({
       // sci-fi palette of the design's point clouds: violet base, electric blue, cyan crown
       vec3 glow = h < 0.45 ? mix(vec3(0.56, 0.28, 1.0), vec3(0.16, 0.45, 1.0), h / 0.45)
                            : mix(vec3(0.16, 0.45, 1.0), vec3(0.36, 0.96, 1.0), (h - 0.45) / 0.55);
-      float speed = 1.5 + 4.5 * uBusy;
-      float pulse = 0.5 + 0.5 * sin(uTime * speed + aSeed * 6.2832);
-      float band = exp(-pow((fract(h * 0.9 - uTime * (0.07 + 0.25 * uBusy)) - 0.5) * 12.0, 2.0)); // scan line
-      vCol = mix(glow, c, uMix) * (0.7 + 0.35 * pulse + 0.75 * band);
-      vA = (0.5 + 0.5 * pulse) * (aVert > 0.5 ? 1.0 : 0.8);
+      vCol = mix(glow, c, uMix);
       vec4 mv = modelViewMatrix * vec4(p, 1.0);
-      gl_Position = projectionMatrix * mv;
-      // the far side glows dimmer, so the front's rows of dots stay legible
       float depth = (mv.z - (modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).z) / uR;
-      vA *= mix(0.22, 1.0, smoothstep(-0.7, 0.45, depth));
-      float breath = 1.0 + 0.09 * sin(uTime * 1.15) + 0.12 * uBusy * sin(uTime * 7.0 + aSeed * 9.0);
-      float size = uSize * (aVert > 0.5 ? 1.35 : 1.0) * (0.7 + 0.55 * pulse) * breath;
-      gl_PointSize = max(size * uScale / -mv.z, 1.4 * uPx);
+      vA = mix(0.22, 1.0, smoothstep(-0.7, 0.45, depth));
+      return mv;
+    }`;
+const surfaceUniforms = {
+  uPos: { value: null }, uCol: { value: null }, uNrm: { value: null }, uCurve: { value: 0.75 }, uR: { value: 1 },
+  uW: { value: TEX_W }, uMix: { value: 0 }, uZ0: { value: -1 }, uZ1: { value: 1 },
+  uBusy: { value: 0 }, uTime: { value: 0 },
+};
+const cloudMat = new THREE.ShaderMaterial({
+  uniforms: { ...surfaceUniforms, uSize: { value: 0.02 }, uScale: { value: 500 }, uPx: { value: 1 } },
+  vertexShader: /* glsl */`${SURFACE_GLSL}
+    uniform float uSize, uScale, uPx, uBusy, uTime;
+    attribute float aVert;
+    void main() {
+      vec4 mv = surface();
+      vA *= aVert > 0.5 ? 1.0 : 0.85;
+      // busy: each dot pulses on its own phase and a scan line sweeps up the object
+      float seed = fract(sin(float(gl_VertexID) * 12.9898) * 43758.5453);
+      float pulse = 0.5 + 0.5 * sin(uTime * 5.5 + seed * 6.2832);
+      float h = clamp((at(uPos, aTri.x).z - uZ0) / max(uZ1 - uZ0, 1e-5), 0.0, 1.0);
+      float band = exp(-pow((fract(h * 0.9 - uTime * 0.3) - 0.5) * 12.0, 2.0));
+      vCol *= 1.0 + uBusy * (0.35 * pulse - 0.15 + 0.75 * band);
+      vA *= 1.0 - uBusy * 0.4 * (1.0 - pulse);
+      gl_Position = projectionMatrix * mv;
+      float size = uSize * (aVert > 0.5 ? 1.35 : 1.0) * (1.0 + uBusy * (0.55 * pulse - 0.25));
+      gl_PointSize = max(size * uScale / -mv.z, 1.6 * uPx);
     }`,
   fragmentShader: /* glsl */`
     varying vec3 vCol; varying float vA;
@@ -130,6 +145,21 @@ const cloudMat = new THREE.ShaderMaterial({
     }`,
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
 });
+// Thin edges: every mesh edge, split into short segments along the same curved
+// surface, faint beside the dots (WebGL lines are one pixel wide)
+const WIRE_SEGMENTS = 6;
+const wireGeom = new THREE.BufferGeometry();
+const wireMat = new THREE.ShaderMaterial({
+  uniforms: cloudMat.uniforms, // shared, so the dots and edges always agree
+  vertexShader: /* glsl */`${SURFACE_GLSL}
+    void main() { gl_Position = projectionMatrix * surface(); }`,
+  fragmentShader: /* glsl */`
+    varying vec3 vCol; varying float vA;
+    void main() { float a = 0.32 * vA; gl_FragColor = vec4(vCol * a, a); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const wire = new THREE.LineSegments(wireGeom, wireMat);
+wire.frustumCulled = false;
 const cloud = new THREE.Points(cloudGeom, cloudMat);
 cloud.frustumCulled = false;
 
@@ -149,8 +179,8 @@ const discTexture = (fill, ring, width) => {
 };
 const mateGeom = new THREE.BufferGeometry();
 const mates = new THREE.Points(mateGeom, new THREE.PointsMaterial({ map: discTexture('rgb(230, 150, 0)', '#14161e', 12), alphaTest: 0.5, size: 0.08 }));
-edgeLines.visible = mates.visible = cloud.visible = false;
-scene.add(cloud, edgeLines, mates);
+edgeLines.visible = mates.visible = cloud.visible = wire.visible = false;
+scene.add(wire, cloud, edgeLines, mates);
 
 function resize() {
   const w = viewer.clientWidth || innerWidth, h = viewer.clientHeight || innerHeight;
@@ -255,15 +285,6 @@ function setMesh(d, key) {
   syncHud(); syncStale();
 }
 
-function mulberry32(a) {
-  return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 // Sample the surface: points spread over every face by area, plus every vertex itself
 // (drawn larger), each tied to its triangle's corners by barycentric weights.
 function buildCloud(d) {
@@ -281,10 +302,11 @@ function buildCloud(d) {
   // dot pitch: ~70 dots across the object, coarser if that would pass ~60k dots
   let spacing = objRadius / 27;
   spacing = Math.max(spacing, Math.sqrt(total / 60000));
-  const rnd = mulberry32(7), T = [], B = [], seeds = [], verts = [];
+  const T = [], B = [], verts = [];
+  const WT = [], WB = [], WF = []; // the thin edges: segment end points, as (triangle, weights)
   const len = (a, b) => Math.hypot(V[a][0] - V[b][0], V[a][1] - V[b][1], V[a][2] - V[b][2]);
   const F = [];
-  const put = (t, b, face, isVert = 0) => { T.push(...t); B.push(...b); F.push(face); seeds.push(rnd()); verts.push(isVert); };
+  const put = (t, b, face, isVert = 0) => { T.push(...t); B.push(...b); F.push(face); verts.push(isVert); };
   // a regular lattice on each face: interior points per face, edge points once per edge,
   // and every vertex (drawn larger), so the cloud reads as even rows of dots
   const edgeSeen = new Set();
@@ -296,25 +318,28 @@ function buildCloud(d) {
       if (edgeSeen.has(key)) return;
       edgeSeen.add(key);
       const k = Math.max(1, Math.round(len(x, y) / spacing));
-      for (let i = 1; i < k; i++) {
-        const w = [0, 0, 0];
-        w[p] = 1 - i / k; w[q] = i / k;
-        put([a, b, c], w, t);
+      const along = (u) => { const w = [0, 0, 0]; w[p] = 1 - u; w[q] = u; return w; };
+      for (let i = 1; i < k; i++) put([a, b, c], along(i / k), t);
+      for (let i = 0; i < WIRE_SEGMENTS; i++) { // the edge itself, curved like its dots
+        for (const u of [i / WIRE_SEGMENTS, (i + 1) / WIRE_SEGMENTS]) { WT.push(a, b, c); WB.push(...along(u)); WF.push(t); }
       }
     });
   });
   for (let i = 0; i < n; i++) put([i, i, i], [1, 0, 0], 0, 1);
-  const count = seeds.length;
-  const tri = Float32Array.from(T), bary = Float32Array.from(B), seed = Float32Array.from(seeds), vert = Float32Array.from(verts);
+  const count = verts.length;
+  const tri = Float32Array.from(T), bary = Float32Array.from(B), vert = Float32Array.from(verts);
   // faces round each vertex, for the corner normals
   S.vertFaces = Array.from({ length: n }, () => []);
   tris.forEach((t, k) => t.forEach((i) => S.vertFaces[i].push(k)));
   cloudGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3)); // unused; three needs it
   cloudGeom.setAttribute('aTri', new THREE.BufferAttribute(tri, 3));
   cloudGeom.setAttribute('aBary', new THREE.BufferAttribute(bary, 3));
-  cloudGeom.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
   cloudGeom.setAttribute('aVert', new THREE.BufferAttribute(vert, 1));
   cloudGeom.setAttribute('aFace', new THREE.BufferAttribute(Float32Array.from(F), 1));
+  wireGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WF.length * 3), 3)); // unused
+  wireGeom.setAttribute('aTri', new THREE.BufferAttribute(Float32Array.from(WT), 3));
+  wireGeom.setAttribute('aBary', new THREE.BufferAttribute(Float32Array.from(WB), 3));
+  wireGeom.setAttribute('aFace', new THREE.BufferAttribute(Float32Array.from(WF), 1));
   const rows = Math.ceil(n / TEX_W);
   const tex = () => new THREE.DataTexture(new Float32Array(TEX_W * rows * 4), TEX_W, rows, THREE.RGBAFormat, THREE.FloatType);
   posTex?.dispose(); colTex?.dispose(); nrmTex?.dispose();
@@ -330,7 +355,7 @@ function buildCloud(d) {
   const zs = V.map((p) => p[2]);
   cloudMat.uniforms.uZ0.value = Math.min(...zs); cloudMat.uniforms.uZ1.value = Math.max(...zs);
   mates.material.size = spacing * 2.5;
-  cloud.visible = true;
+  cloud.visible = wire.visible = true;
   frameCamera();
 }
 
@@ -449,6 +474,7 @@ function draw() {
     edgeGeom.attributes.position.needsUpdate = true;
   }
   edgeLines.visible = !!S.edges;
+  wire.visible = cloud.visible && !S.edges; // the read-edges overlay replaces the thin edges
   placeMates();
 }
 
@@ -1206,8 +1232,16 @@ addEventListener('drop', async (e) => {
 
 // ---------- run buttons
 $('run').addEventListener('click', () => run(1));
+// frames show how the readout moves the mesh, so they switch the colour to error
+function useErrorColour() {
+  if (P.colour === 'error') return;
+  P.colour = 'error';
+  syncDrawer();
+  rebuild();
+}
 $('play').addEventListener('click', () => {
   const fresh = S.run === runKey() && S.frames.length > 1;
+  useErrorColour();
   if (!fresh) return run(P.frames);
   S.playing = !S.playing;
   if (S.playing && S.step + 1 >= S.seq.length) S.step = 0;
@@ -1277,6 +1311,7 @@ function frame(now) {
   last = now;
   controls.autoRotate = P.spin && app.dataset.screen === 'home';
   controls.update();
+  // the shimmer eases in while a run encodes / reads, and back out when it lands
   busyLevel += ((S.busy || S.loading ? 1 : 0) - busyLevel) * Math.min(1, dt * 3);
   cloudMat.uniforms.uBusy.value = busyLevel;
   cloudMat.uniforms.uTime.value = now / 1000;

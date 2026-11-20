@@ -77,11 +77,12 @@ How it works:
 - **Landing:** drop an `.obj` file anywhere (or click *drop an .obj file*), or pick the
   cube, blob or sphere (apple and Suzanne are linked below them). Uploads open at full
   detail; if one is too big for the lattice, a run decimates it and retries.
-- **Object:** drawn as a pulsing point cloud: an even lattice of dots on every face,
-  with faces gently curved between vertices (hard edges stay sharp). The dots sit on
-  the decoded vertex positions, so they move only as the readout does.
+- **Object:** drawn as a point cloud: an even lattice of dots on every face, with faces
+  gently curved between vertices (hard edges stay sharp) and every edge as a faint thin
+  line. The dots sit on the decoded vertex positions, so they move only as the readout
+  does; they keep a steady size and brightness, and shimmer only while a run is working.
 - **Run buttons:** the gear ▶ encodes and reads once; ▶|| runs **Frames** readouts,
-  then plays and pauses them. The gear glows while the settings differ from the last run.
+  then plays and pauses them, and switches the colour to **error**. The gear glows while the settings differ from the last run.
 - **Settings:** click (or right-click, or press on a touch screen) and hold the object:
   **Encode** and **Decode** pills appear. Release on one to open its arc of options
   (**load**, **mode**, **vert layout**, **clamps**, **compression**; **DRR**,
