@@ -254,6 +254,111 @@ back is strictly worse than RAM. The decode also simulates one commuting cell at
 time, which shows that this loader is classically easy to simulate. Tessa is a
 loading stage, and the edge readout is the first step past loading.
 
+## Morph (desktop only)
+
+**Mode** *morph A→B* carries two meshes in one state. Mesh A (the selected
+**Shape**) sets every slot's θ and is read in Z. Mesh B (an uploaded OBJ) sets its φ
+and is read in X. It is Tessa's pair mode, as in *θ + colour φ*, with B's
+geometry in φ instead of a hue: no extra qubits or two-qubit gates, only the
+second measurement setting.
+
+1. Choose **Mode** *morph A→B*. **Payload** switches to *xyz* (radial still
+   works), and **Clamp φ** greys out and follows **Clamp θ** (0 = Tessa's pair
+   default, 0.2π), so equal geometry gets equal angles in both fields.
+2. In the **Morph options** box (lower left), press **Upload B (.obj)**.
+3. Set **Morph t** and press **Run** or **Run frames**. Before any run, the view
+   shows the noiseless morph at the slider's t.
+
+How B is matched to A:
+- **Alignment.** B's centroid moves onto A's, and B is scaled so its RMS radius
+  matches A's. Nothing is rotated, so a deliberately rotated B stays rotated.
+- **Shared topology** off: each A vertex takes the closest point on B's
+  full-resolution surface. The info panel reports how much of B's area those points
+  cover. Very different shapes can pile A's vertices onto one part of B.
+- **Shared topology** on: vertices pair by index, so the counts must match. When A
+  is an uploaded OBJ at *mid* or *low*, A's own collapses are replayed on B
+  (`mesh.replay_decimation`), since decimating B on its own would choose different
+  edges.
+- **Colour** *morph Δ* shows |B − A| per vertex, so you can see where the shapes
+  disagree before running anything.
+
+**Style**:
+
+| Style | Each frame | Morph t | At t = 1 |
+|---|---|---|---|
+| *blend* | Tessa's pair decode: A′ from Z, B′ from X (two settings) | lerp A′ → B′ after decoding, so moving t needs no new readout | B′, with B's own (larger) noise |
+| *basis sweep* | one setting: RY(−α) on every data qubit, then Z, with α = t·π/2 | picks the measurement axis, so every t is a new readout | raw decode: "B seen through A", cos α cos θ + sin α sin θ cos φ; **Transition decode**: exactly B |
+
+**Transition decode** (Morph options) turns each tilted readout into a frame the way
+Tessa's transition does (`tessa.hardware.pipeline._transition_frames`, the same
+formula as InterwovenQPIXL's `tilted_readout.py`). An α = 0 (Z) readout gives sin θ,
+which is divided out of the X part of the tilted readout. Without noise each frame
+is then w cos θ + (1 − w) cos φ, with w = cos α / (cos α + sin α): exactly A at t = 0
+and exactly B at t = 1, with no change of size. **Run frames** reads one Z readout at
+the run's seed and shares it across all frames, as Tessa does; a lone **Run** reads
+its own. Each frame still gets its noise from its own tilted readout, but it combines
+two readouts and divides by sin θ, so it is noisier than the raw decode. Measured on
+an apple → bitten apple (high, radial, clamp 0.2π, A's directions only):
+
+| Decode | Size at t = 0.5 / 1 | Rest of the apple moves | Bite ÷ noise, 4,096 / 65,536 shots |
+|---|---|---|---|
+| raw | 1.02 / 0.99 | 0.030 | 5.3× / 20.1× |
+| transition | 1.00 / 1.00 | 0.011 | 4.0× / 16.4× |
+
+With *xyz*, raw grows the apple to 1.36× and shrinks it to 0.84×; transition keeps
+1.00 and reaches the whole bite depth, but at 4,096 shots its noise (0.15) is about
+as big as the bite (0.21). Use 65,536 shots there (5.5×).
+
+The raw decode pulls every value toward the middle of its range. With *xyz* that middle
+is the mesh's centre, so the mesh changes size as t grows: an apple swells to about
+1.3× mid-sweep and ends at 0.72×. *Radial* morph therefore centres its range on A's
+mean radius, not (0, r_max). A's radii then sit near θ = π/2, where the sweep barely
+changes them, so the apple stays within 2 % of its size. The narrower range also
+lowers the noise: the apple's bite at 4,096 shots went from 4.9× to 6.6× its noise.
+
+With A = B on an *xyz* range the raw sweep still moves: values spanning the whole range come back
+between about 0.22 and 0.78 of it at t = 1. The outermost ~8 % at each end folds
+back inward (they decode at 0.24 and 0.76, inside the extremes).
+
+- **Hold t** on: **Run frames** keeps t fixed and varies only the seed. Off: t runs
+  from 0 to 1 over the frames, one seed per frame, so the morph and the noise move
+  together. **Loop** plays it back and forth.
+- **A's directions only** (radial payload): only the radius is quantum; each
+  vertex's direction is classical. By default it turns from A's to B's (slerp) with
+  t, which lands on B's true shape. Ticked, it stays A's, which shows B wrapped onto
+  A, with only quantum motion.
+- In **Fidelity** each frame's error, and in **Material** its gain, are measured
+  from that frame's noiseless morph, not from A.
+
+**Batches.** A morph bigger than one run is read in several. *xyz* Suzanne at
+*high* (1,521 values per field) needs 2 runs on the 10×12 lattice or Phoenix and 4 on
+Fez. The mesh is cut into even, connected surface patches of whole vertices
+(254 + 253 vertices), so a seam is not a step in noise level. Every run shares one
+value range, uses its own seed (`seed + 1000·k`), and is stitched back by vertex.
+The mesh is then K separate quantum states, and the info panel says so. On a chip,
+**Batch placement** sets which qubits later runs use:
+- *next-best qubits* (default): each run's ranking starts after the best qubits the
+  earlier runs filled, so the best qubits are spread across the runs.
+- *same qubits*: every run starts on the best qubit, so the chip's noise pattern
+  repeats once per run.
+
+Measured (Suzanne at *high*, 4,096 shots, error as a fraction of the bounding box,
+each against its noiseless reference):
+
+| B | Payload | Backend | Runs | A at t = 0 | B at t = 1 | Sweep at t = 1 |
+|---|---|---|---|---|---|---|
+| sculpted Suzanne (shared topology) | xyz | noiseless | 2 | 2.9 % | 3.0 % | 4.3 % |
+| | xyz | phoenix | 2 | 6.7 % | 6.1 % | 7.8 % |
+| | radial | noiseless | 1 | 0.9 % | 0.9 % | 1.0 % |
+| | radial | phoenix | 1 | 1.6 % | 1.4 % | 1.3 % |
+| UV sphere 24×16 (closest point, 78 % covered) | xyz | noiseless | 2 | 2.8 % | 4.0 % | 3.9 % |
+| | xyz | phoenix | 2 | 6.7 % | 7.8 % | 7.3 % |
+| | radial | noiseless | 1 | 0.8 % | 1.1 % | 1.0 % |
+| | radial | phoenix | 1 | 1.6 % | 1.1 % | 1.0 % |
+
+A frame costs one readout per run, so batched morphs on the chips take a few
+seconds per frame. The status line gives an estimate before **Run frames**.
+
 ## The controls
 
 Controls fall into three tiers by how much work a change costs:
@@ -319,11 +424,12 @@ it opens exactly as exported.
     ripple and fits three times the vertices.
   - *xyz*: noise moves vertices in any direction. It suits meshes that aren't
     star-shaped.
-- *In Tessa:* *radial* encodes `N` values on `value_range=(0, r_max(1 + headroom))`;
+- *In Tessa:* *radial* encodes `N` values on `value_range=(0, r_max(1 + headroom))`
+  (morph: centred on A's mean radius instead, see Morph);
   *xyz* encodes `3N` values on one symmetric range `(-m, m)` shared by all axes, so
   the mesh isn't stretched per axis.
 
-**Mode** (shape θ (Z) / shape φ (X) / θ + colour φ / shape θ+φ)
+**Mode** (shape θ (Z) / shape φ (X) / θ + colour φ / shape θ+φ / morph A→B)
 
 What each slot's qubit holds, and which basis reads it. Each slot is a qubit
 state `cos(θ/2)|0⟩ + e^{iφ} sin(θ/2)|1⟩`: θ is read in the Z basis, φ in the X
@@ -653,6 +759,12 @@ map with `bridge.qubit_map(e)`.
   same `weight` argument of `bridge.place`.
 - **Full-lattice coherences.** Hadamards on the address qubits of the whole
   encoded mesh, instead of isolated pairs.
+- **Morph in the web version.** Morph is desktop only.
+- **Collision morph.** `bridge.sweep_circuit` already takes one α per data qubit.
+  Driving it from contact distance would spread the morph patch by patch from the
+  contact point.
+- **Batching for the other modes.** It is built generic in `encode_mesh` but only
+  switched on for morph (`can_batch`).
 - **Real hardware.** Tessa would run whole circuits there with
   `decode(..., per_group=False)`, and that needs its `ibm` extra.
 
@@ -660,12 +772,15 @@ map with `bridge.qubit_map(e)`.
 
 ```
 tessa_ripple/
-  mesh.py      blob, cube, uv_sphere, edges, bfs_order, load_obj, write_obj
-  bridge.py    all Tessa calls: Params, payloads, placement, fit_lattice, encode_mesh,
-               samplers (incl. chip snapshots), decode_raw, restore, fidelity_curves,
+  mesh.py      blob, cube, uv_sphere, edges, bfs_order, decimate (+ replay_decimation),
+               load_obj, write_obj
+  morph.py     morph geometry: align, closest_points, correspond, coverage, slerp
+  bridge.py    all Tessa calls: Params, payloads, placement, fit_lattice, encode_mesh
+               (incl. morph and batches), samplers (incl. chip snapshots), decode_raw,
+               restore, sweep_circuit, morph_frame / morph_expected, fidelity_curves,
                resources (Why Tessa), read_edges (coherence readout)
   animate.py   run_frames, random_mask, blend, interpolate, timeline, export_obj_sequence
   app.py       matplotlib window: views, colours, controls, playback, export
 tests/         meshes, placement, round trips, pair colour, chip backend, resources,
-               edge readout, seeding, interpolation, export
+               edge readout, seeding, interpolation, export, morph (test_morph.py)
 ```

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tessa_ripple.mesh import bfs_order, blob, cube, edges, load_obj, uv_sphere, write_obj
+from tessa_ripple.mesh import _normal, bfs_order, blob, cube, edges, load_obj, uv_sphere, write_obj
 
 
 @pytest.mark.parametrize("n", [2, 3, 4, 5])
@@ -87,3 +87,11 @@ def test_grow_patches_are_compact_and_cover_the_mesh():
     edge = np.linalg.norm(v[E[:, 0]] - v[E[:, 1]], axis=1).mean()
     radius = np.mean([np.linalg.norm(v[p] - v[p].mean(0), axis=1).mean() for p in patches])
     assert radius < 2.5 * edge  # BFS arcs were about 4 edge lengths
+
+
+@pytest.mark.parametrize("n", [2, 3, 4])
+def test_cube_faces_wind_outward(n):
+    v, f = cube(n)
+    for q in f:
+        p = v[q]
+        assert _normal(p) @ p.mean(0) > 0

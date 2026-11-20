@@ -26,11 +26,38 @@ TIME_BUDGET = 45.0  # seconds of decoding per request, under the 60 s function l
 
 
 def mesh_of(req):
+    """The mesh a request names.
+
+    Args:
+        req: request dict; reads ``shape`` (a SHAPES key, default "blob") and
+            ``resolution`` (index into that shape's presets, clamped; default 0).
+
+    Returns:
+        (verts (N, 3), faces).
+
+    Raises:
+        KeyError: unknown shape.
+    """
     presets = list(SHAPES[req.get("shape", "blob")].values())
     return presets[min(int(req.get("resolution", 0)), len(presets) - 1)]()
 
 
 def params_of(req) -> bridge.Params:
+    """The bridge.Params a request sets.
+
+    Every non-null request key named like a Params field is passed through; shots
+    is clamped to [256, 65536].
+
+    Args:
+        req: request dict.
+
+    Returns:
+        bridge.Params.
+
+    Raises:
+        ValueError: unknown backend.
+        TypeError: a key of the wrong type for Params.
+    """
     kw = {f.name: req[f.name] for f in fields(bridge.Params) if req.get(f.name) is not None}
     if kw.get("backend", "noiseless") not in bridge.BACKENDS:
         raise ValueError(f"unknown backend {kw['backend']!r}")
@@ -39,11 +66,37 @@ def params_of(req) -> bridge.Params:
 
 
 def rounded(a, digits=5):
+    """An array as nested lists of floats rounded for JSON.
+
+    Args:
+        a: array-like.
+        digits: decimal places.
+
+    Returns:
+        Nested list of floats.
+    """
     return np.round(np.asarray(a, dtype=float), digits).tolist()
 
 
 def run(req):
-    """Encode once, decode up to ``frames`` readouts (seed, seed+1, ...)."""
+    """Encode once, decode up to ``frames`` readouts (seeds seed, seed + 1, ...).
+
+    Decoding stops early after TIME_BUDGET seconds (at least one frame always runs).
+
+    Args:
+        req: request dict; reads the mesh keys (:func:`mesh_of`), Params keys
+            (:func:`params_of`), ``frames`` (1..MAX_FRAMES, default 1) and ``drr``
+            (a DRR method, default "none").
+
+    Returns:
+        Dict: ``verts``, ``faces`` (the original mesh); ``frames`` (decoded
+        positions per frame); ``requested`` (frames asked for); ``colours`` (decoded
+        colour per frame, colour mode only, else None); ``colour`` (original colour
+        field or None); ``qubits`` (data qubit per vertex); ``map``
+        (bridge.qubit_map); ``stats`` (Encoded.stats); ``split`` (some vertex spans
+        several data qubits); ``error`` (mean bridge.mesh_error over frames);
+        ``seconds``.
+    """
     verts, faces = mesh_of(req)
     p, t0 = params_of(req), time.time()
     e = bridge.encode_mesh(verts, faces, p)
@@ -57,12 +110,21 @@ def run(req):
             "colours": None if colours[0] is None else rounded(colours, 4),
             "colour": None if e.colour is None else rounded(e.colour, 4),
             "qubits": bridge.vertex_qubits(e).tolist(), "map": bridge.qubit_map(e), "stats": e.stats,
-            "split": bool((np.diff(np.searchsorted(bridge.cells(e.graph)[:, 1], e.slots, side="right"), axis=1) != 0).any()),
+            "split": e.straddles,
             "error": float(np.mean([bridge.mesh_error(verts, f) for f in frames])),
             "seconds": time.time() - t0}
 
 
 def edges(req):
+    """Edge lengths read from coherences (bridge.read_edges).
+
+    Args:
+        req: request dict; reads the mesh keys and Params keys.
+
+    Returns:
+        Dict: ``edges`` (E, 2) vertex pairs, ``measured`` and ``exact`` lengths (E,),
+        ``seconds``.
+    """
     verts, faces = mesh_of(req)
     t0 = time.time()
     E, measured, exact = bridge.read_edges(verts, faces, params_of(req))
@@ -71,12 +133,30 @@ def edges(req):
 
 
 def resources(req):
+    """The "Why Tessa" resource table for the request's encoding.
+
+    Args:
+        req: request dict; reads the mesh keys and Params keys.
+
+    Returns:
+        Dict: ``rows`` (bridge.resources), ``stats`` (Encoded.stats), ``payload``,
+        ``mode``.
+    """
     verts, faces = mesh_of(req)
     e = bridge.encode_mesh(verts, faces, params_of(req))
     return {"rows": bridge.resources(e), "stats": e.stats, "payload": e.payload, "mode": e.mode}
 
 
 def curves(req):
+    """Fidelity curves (bridge.fidelity_curves) for the request's mesh and settings.
+
+    Args:
+        req: request dict; reads the mesh keys and Params keys.
+
+    Returns:
+        Dict: ``shots`` [(shots, error)], ``mesh`` and ``naive`` [(compression %,
+        depth, error)], ``same`` (both layouts place values identically).
+    """
     verts, faces = mesh_of(req)
     return bridge.fidelity_curves(verts, faces, params_of(req))
 
@@ -85,11 +165,26 @@ ACTIONS = {"run": run, "edges": edges, "resources": resources, "curves": curves}
 
 
 def _json_default(x):
+    """JSON fallback: numpy scalars to Python numbers, anything else to str.
+
+    Args:
+        x: object json cannot encode.
+
+    Returns:
+        A JSON-encodable value.
+    """
     return x.item() if isinstance(x, np.generic) else str(x)
 
 
 class handler(BaseHTTPRequestHandler):
+    """Vercel's request handler for /api/tessa."""
     def _send(self, code, body):
+        """Send a JSON response.
+
+        Args:
+            code: HTTP status code.
+            body: JSON-encodable response body.
+        """
         data = json.dumps(body, default=_json_default).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -98,6 +193,12 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
+        """Run the action the JSON body names and send its result.
+
+        Body: ``{"action": "run" | "edges" | "resources" | "curves", ...}`` plus the
+        action's keys. Sends 200 with the action's dict, or 400 with ``{"error": ...}``
+        for an unknown action or a ValueError, KeyError or TypeError from it.
+        """
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             action = ACTIONS.get(req.get("action"))
@@ -108,5 +209,6 @@ class handler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(err)})
 
     def do_GET(self):
+        """Health check: sends ``ok``, the ``actions``, ``shapes``, ``backends`` and ``drr`` methods."""
         self._send(200, {"ok": True, "actions": sorted(ACTIONS), "shapes": sorted(SHAPES),
                          "backends": list(bridge.BACKENDS), "drr": list(bridge.DRR_METHODS)})

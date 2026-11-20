@@ -9,6 +9,7 @@ description = "Animate a mesh with the readout noise of Tessa-encoded vertex coo
 requires-python = ">=3.11"
 dependencies = [
     "tessa-paper @ git+https://github.com/moth-quantum/Tessa@5812e9d04a454d3600cc61d4fb35ef22fa66c6b1",
+    "scipy",  # morph: closest points on B (already installed with qiskit)
 ]
 
 [project.optional-dependencies]

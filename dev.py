@@ -16,12 +16,16 @@ spec.loader.exec_module(api)
 
 
 class Dev(api.handler, SimpleHTTPRequestHandler):
+    """One handler for both servers: /api/tessa goes to the function, every other path is
+    a static file from public/."""
     def do_GET(self):
+        """Route GET /api/tessa to the API handler, other paths to the static file server."""
         if self.path.startswith("/api/tessa"):
             return api.handler.do_GET(self)
         return SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
+        """Route POST /api/tessa to the API handler; any other POST gets 404."""
         if self.path.startswith("/api/tessa"):
             return api.handler.do_POST(self)
         self.send_error(404)

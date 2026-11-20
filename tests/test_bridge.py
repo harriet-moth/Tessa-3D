@@ -161,3 +161,9 @@ def test_x_basis_mode_reads_the_value_from_phi_with_one_setting():
     z, x = (encode_mesh(v, f, Params(mode=m)) for m in ("theta", "phi"))
     assert x.enc.mode == "single" and x.stats["twoq"] == z.stats["twoq"]  # one setting, same gates
     assert mesh_error(v, read_mesh(x, Params(mode="phi"))) < 0.02
+
+
+def test_colour_mode_counts_each_hue_once_with_xyz_payload():
+    v, f = blob(8, 6)
+    e = encode_mesh(v, f, Params(mode="colour", payload="xyz"))
+    assert e.stats["values"] == 3 * len(v) + len(v)
