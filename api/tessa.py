@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np  # noqa: E402
 
 from tessa_ripple import bridge  # noqa: E402
+from tessa_ripple import interfere as interf  # noqa: E402
 from tessa_ripple.mesh import PRESETS, load_decimated, write_obj  # noqa: E402
 from tessa_ripple.morph import correspond  # noqa: E402
 
@@ -119,26 +120,49 @@ def mesh_of(req):
     return np.array(v), f, logs, len(load_decimated(path, 0)[0])
 
 
-def encode_of(req, verts, faces, logs, full, p):
-    """Encode the request's mesh; a morph first matches B to it (closest point).
+def morph_options(req) -> dict:
+    """The desktop app's morph check boxes, from a request (all default off).
 
     Args:
-        req: request dict (reads ``shape_b`` / ``obj_b`` for a morph).
+        req: request dict; reads ``shared_topology`` (pair B with A by vertex index),
+            ``hold_t`` (every frame at ``morph_t``), ``a_dirs`` (radial: keep A's
+            directions) and ``interference`` (read by turning selector qubits,
+            :mod:`tessa_ripple.interfere`, instead of the basis sweep).
+
+    Returns:
+        dict of those four keys -> bool.
+    """
+    return {k: bool(req.get(k)) for k in ("shared_topology", "hold_t", "a_dirs", "interference")}
+
+
+def encode_of(req, verts, faces, logs, full, p):
+    """Encode the request's mesh. A morph first matches B to it (closest point, or by
+    vertex index with ``shared_topology``), then encodes for the basis sweep or, with
+    ``interference``, for the selector readout.
+
+    Args:
+        req: request dict (reads ``shape_b`` / ``obj_b`` and :func:`morph_options`).
         verts, faces, logs, full: from :func:`mesh_of`.
         p: bridge.Params.
 
     Returns:
-        (Encoded, match): match is the :func:`morph.correspond` dict, or None.
+        (Encoded, match, ie): match is the :func:`morph.correspond` dict and ie the
+        ``interfere.Interfered`` (interference only), else None.
 
     Raises:
-        ValueError: a morph without B, or a mesh that does not fit.
+        ValueError: a morph without B, a shared topology that does not match, or a
+            mesh that does not fit.
     """
-    match = None
-    if p.mode == "morph":
-        if not (req.get("obj_b") or req.get("shape_b")):
-            raise ValueError("Morph: drop a second mesh (B) first")
-        match = correspond(verts, faces, mesh_path(req, "_b"), False, logs, full)
-    return bridge.encode_mesh(verts, faces, p, target=match), match
+    if p.mode != "morph":
+        return bridge.encode_mesh(verts, faces, p), None, None
+    if not (req.get("obj_b") or req.get("shape_b")):
+        raise ValueError("Morph: drop a second mesh (B) first")
+    opts = morph_options(req)
+    match = correspond(verts, faces, mesh_path(req, "_b"), opts["shared_topology"], logs, full)
+    if opts["interference"]:
+        ie = interf.encode_interfere(verts, faces, p, match)
+        return ie.e, match, ie
+    return bridge.encode_mesh(verts, faces, p, target=match), match, None
 
 
 def params_of(req) -> bridge.Params:
@@ -204,51 +228,68 @@ def mesh(req):
     return {"verts": rounded(v), "faces": [list(map(int, x)) for x in f]}
 
 
-def morph_frames(e, p, want: int, drr: str, t_one: float, t0: float):
-    """Read a morph A -> B: frame k at t = k / (n - 1), sharing one alpha = 0 readout
-    (as animate.run_frames does).
+def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, t0: float):
+    """Read a morph A -> B.
 
-    The first frame (t = 0) times the readout; n is then cut so the rest fits in
-    TIME_BUDGET, and the remaining t still span 0 -> 1.
+    Frames run along t = 0 -> 1, or all at ``t_one`` with ``hold_t`` (one readout
+    reads at ``t_one`` either way). The basis sweep shares one alpha = 0 readout over
+    its frames, as animate.run_frames does; the interference readout reads each frame
+    on its own (interfere.read). The first frame times the readout; the frame count is
+    then cut so the rest fits in TIME_BUDGET.
 
     Args:
         e: A morph encoding.
+        ie: Its ``interfere.Interfered`` for the interference readout, else None.
         p: Readout settings.
-        want: Frames asked for; 1 reads once at ``t_one``.
+        want: Frames asked for.
         drr: DRR method.
-        t_one: The t of a single readout.
+        t_one: The t of a single readout, and of every frame with ``hold_t``.
+        opts: :func:`morph_options`.
         t0: Request start time (time.time()).
 
     Returns:
-        (frames, refs, ts): decoded (N, 3) positions, the noiseless morph at each t
-        (bridge.morph_expected), and each frame's t.
+        (frames, refs, ts, kept): decoded (N, 3) positions; the noiseless morph at each
+        t (bridge.morph_expected, or the interference ideal); each frame's t; and, for
+        interference, the share of shots each frame was decoded from (else None).
     """
+    hold, a_dirs = opts["hold_t"], opts["a_dirs"]
     start = time.time()
-    reference = bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
-    ts, frames = ([t_one] if want == 1 else [0.0]), []
+    reference = None if ie else bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
+    ts, frames, kept = ([t_one] if want == 1 or hold else [0.0]), [], []
     while len(frames) < len(ts):
-        k = len(frames)
-        q = replace(p, morph_t=float(ts[k]))
-        frames.append(bridge.morph_frame(e, bridge.decode_raw(e, q, p.seed + k, reference), ts[k], drr))
+        k, t = len(frames), float(ts[len(frames)])
+        if ie:
+            raw, share = interf.read(ie, p, t, p.seed + k)
+            frames.append(interf.frame(ie, raw, t, drr, a_dirs))
+            kept.append(float(share))
+        else:
+            raw = bridge.decode_raw(e, replace(p, morph_t=t), p.seed + k, reference)
+            frames.append(bridge.morph_frame(e, raw, t, drr, a_dirs))
         if want > 1 and k == 0:
-            per = max(time.time() - start, 1e-3) / 2  # the reference cost about one readout
+            per = max(time.time() - start, 1e-3) / (1 if ie else 2)  # the sweep's reference cost about one readout
             n = int(np.clip(1 + (TIME_BUDGET - (time.time() - t0)) // per, 2, want))
-            ts = list(np.linspace(0.0, 1.0, n))
-    return frames, [bridge.morph_expected(e, t) for t in ts], [float(t) for t in ts]
+            ts = [t_one] * n if hold else list(np.linspace(0.0, 1.0, n))
+    refs = {}
+    for t in ts:
+        if t not in refs:
+            refs[t] = (interf.frame(ie, interf.ideal(ie, t), t, "none", a_dirs) if ie
+                       else bridge.morph_expected(e, t, a_dirs))
+    return frames, [refs[t] for t in ts], [float(t) for t in ts], (kept if ie else None)
 
 
 def run(req):
     """Encode once, decode up to ``frames`` readouts (seeds seed, seed + 1, ...).
 
     Decoding stops early after TIME_BUDGET seconds (at least one frame always runs).
-    A morph (``mode`` "morph") reads its frames along t = 0 -> 1 instead
-    (:func:`morph_frames`), each compared with the noiseless morph at its t.
+    A morph (``mode`` "morph") reads its frames along t = 0 -> 1 (or at a held t)
+    instead (:func:`morph_frames`), each compared with the noiseless morph at its t.
 
     Args:
         req: request dict; reads the mesh keys (:func:`mesh_of`), Params keys
             (:func:`params_of`), ``frames`` (1..MAX_FRAMES, default 1), ``drr``
             (a DRR method, default "none") and, for a morph, ``shape_b`` / ``obj_b``
-            and ``morph_t`` (the t of a single readout, default 0.5).
+            ``morph_t`` (the t of a single readout or of held frames, default 0.5)
+            and the :func:`morph_options` flags.
 
     Returns:
         Dict: ``verts``, ``faces`` (the original mesh); ``frames`` (decoded
@@ -257,19 +298,23 @@ def run(req):
         (bridge.qubit_map); ``stats`` (Encoded.stats); ``split`` (some vertex spans
         several data qubits); ``error`` (mean bridge.mesh_error over frames, against
         each frame's reference); ``seconds``. A morph adds ``refs`` (noiseless
-        positions per frame), ``ts`` (t per frame) and ``match`` (B's matching:
-        method, coverage, mean distance).
+        positions per frame), ``ts`` (t per frame), ``match`` (B's matching:
+        method, coverage, mean distance), ``options`` (:func:`morph_options`),
+        ``clamp`` (the one clamp both fields use, in units of π) and, for the
+        interference readout, ``kept`` (share of shots each frame was decoded from).
     """
     verts, faces, logs, full = mesh_of(req)
     p, t0 = params_of(req), time.time()
-    e, match = encode_of(req, verts, faces, logs, full, p)
+    e, match, ie = encode_of(req, verts, faces, logs, full, p)
     want, frames, drr = int(np.clip(req.get("frames", 1), 1, MAX_FRAMES)), [], req.get("drr", "none")
     extra = {}
     if match is not None:
         t_one = float(np.clip(float(req.get("morph_t", 0.5)), 0.0, 1.0))
-        frames, refs, ts = morph_frames(e, p, want, drr, t_one, t0)
-        extra = {"refs": [rounded(r) for r in refs], "ts": ts,
-                 "match": {k: match[k] for k in ("method", "coverage", "distance")}}
+        opts = morph_options(req)
+        frames, refs, ts, kept = morph_frames(e, ie, p, want, drr, t_one, opts, t0)
+        extra = {"refs": [rounded(r) for r in refs], "ts": ts, "options": opts,
+                 "match": {k: match[k] for k in ("method", "coverage", "distance")},
+                 "clamp": bridge.morph_clamp(p) / np.pi, **({"kept": kept} if ie else {})}
     else:
         refs = [verts]
         while len(frames) < want and (not frames or time.time() - t0 < TIME_BUDGET):
@@ -327,7 +372,7 @@ def resources(req):
         ``mode``.
     """
     verts, faces, logs, full = mesh_of(req)
-    e = encode_of(req, verts, faces, logs, full, params_of(req))[0]
+    e = encode_of(req, verts, faces, logs, full, params_of(req))[0]  # interference: its sweep encoding
     return {"rows": bridge.resources(e), "stats": e.stats, "payload": e.payload, "mode": e.mode}
 
 

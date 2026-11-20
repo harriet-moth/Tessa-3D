@@ -106,6 +106,18 @@
         <div class="drop-b-presets">or morph into: <button data-shape-b="sphere">sphere</button> <button data-shape-b="cube">cube</button> <button data-shape-b="blob">blob</button> <button data-shape-b="apple">apple</button> <button data-shape-b="suzanne">suzanne</button></div>
       </div>
 
+      <!-- morph options (the desktop app's), under the drop box -->
+      <div id="morphOpts" class="morph-opts" hidden>
+        <div class="chips" role="group" aria-label="Morph options">
+          <button class="chip" data-opt="hold_t" aria-pressed="false" title="Every frame reads at morph t instead of running t 0 → 1">hold t</button>
+          <button class="chip" data-opt="interference" aria-pressed="false" title="Read by turning selector qubits from A (0) to B (1), instead of the basis sweep">interference readout</button>
+          <button class="chip" data-opt="shared_topology" aria-pressed="false" title="Pair B's vertices with A's by index (B must have A's vertex count and faces)">shared topology</button>
+          <button class="chip" data-opt="a_dirs" aria-pressed="false" title="Radial load: keep A's directions; only the radii morph">A's directions only</button>
+        </div>
+        <label class="morph-t"><span>morph t</span><input id="morph_t" type="range" min="0" max="1" step="0.05" value="0.5" aria-label="Morph t: the single run's t, and every frame's with hold t"><output></output></label>
+        <p id="morphNote" class="morph-note"></p>
+      </div>
+
       <div class="run-buttons">
         <button id="run" class="run-btn" title="Encode and read once (default settings unless you change them)" aria-label="Encode and run">
           <img class="ring" src="assets/run-ellipse.svg" alt="" width="101" height="101">
@@ -146,7 +158,6 @@
     <h2>advanced <small>(needs run)</small></h2>
     <label>headroom<input id="headroom" type="range" min="0" max="0.5" step="0.01" value="0.1"><output></output></label>
     <label>seed<input id="seed" type="number" min="0" max="999" value="0"></label>
-    <label><span>morph t <small>(single run)</small></span><input id="morph_t" type="range" min="0" max="1" step="0.05" value="0.5"><output></output></label>
   </aside>
 
   <div id="info" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>

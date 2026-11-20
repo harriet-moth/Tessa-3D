@@ -207,6 +207,28 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .drop-b-presets button { color: var(--ink-dim); margin: 0 3px; text-decoration: underline; text-underline-offset: 3px; }
 .drop-b-presets button:hover, .drop-b-presets button.on { color: #fff; }
 
+/* morph options under the drop box: glass chips and the morph t slider */
+.morph-opts { position: absolute; left: 792px; top: 698px; width: 484px; display: flex; flex-direction: column; gap: 14px;
+  opacity: 0; transform: translateY(14px); transition: opacity 500ms 120ms var(--ease), transform 600ms 120ms var(--ease); }
+.morph-opts[hidden] { display: flex; visibility: hidden; }
+.morph-opts.shown { opacity: 1; transform: none; }
+#stage .morph-opts button, #stage .morph-opts input { pointer-events: auto; }
+.chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip { padding: 9px 18px; border-radius: 46px; border: 1px solid var(--orb-line); background: rgba(13, 13, 13, 0.45);
+  font: 300 19px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px; color: var(--ink-dim);
+  transition: color 250ms, border-color 250ms, background 250ms, box-shadow 250ms; }
+.chip:hover { color: #fff; border-color: rgba(255, 255, 255, 0.8); box-shadow: 0 0 16px rgba(94, 242, 255, 0.25); }
+.chip[aria-pressed="true"] { color: #fff; border: 2px solid #fff; padding: 8px 17px;
+  background: radial-gradient(circle, rgba(217, 217, 217, 0.5) 0%, rgba(115, 115, 115, 0.5) 100%); }
+.chip:disabled { opacity: 0.35; pointer-events: none; }
+.morph-t { display: grid; grid-template-columns: auto 1fr 56px; align-items: center; gap: 14px;
+  font: 300 20px "IBM Plex Sans", sans-serif; color: var(--ink-dim); }
+.morph-t input { accent-color: var(--cyan); width: 100%; }
+.morph-t output { font: 16px "IBM Plex Mono", monospace; color: var(--ink-faint); text-align: right; }
+.morph-note { margin: 0; font: 300 16px/1.35 "IBM Plex Sans", sans-serif; color: var(--ink-faint); }
+#app.portrait .morph-opts { left: 478px; top: 905px; }
+#app.portrait .chip { font-size: 21px; }
+
 /* run buttons (Figma 21:12) */
 .run-btn { position: absolute; top: calc(896px + var(--B, 0px)); width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
 .run-btn img, .run-btn span { position: absolute; display: block; pointer-events: none; }

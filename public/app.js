@@ -17,6 +17,7 @@ const P = {
   clamp: 0, clamp_b: 0, compression: 0, quant_bits: 0, headroom: 0.1,
   backend: 'noiseless', placement: 'quality', shots: 12, noise_strength: 1, seed: 0, drr: 'none',
   frames: 12, morph_t: 0.5, shapeB: null,
+  hold_t: false, interference: false, shared_topology: false, a_dirs: false, // morph options
   view: 'fidelity', colour: 'glow', gain: 3, between: 8, fps: 24, loop: true, orig: true, spin: true,
 };
 // S: what the page has loaded and is showing
@@ -220,6 +221,7 @@ function ramp(cs, t) { // blends in sRGB, like CSS gradients and matplotlib, so 
 }
 
 // ---------- API
+const MORPH_OPTS = ['hold_t', 'interference', 'shared_topology', 'a_dirs'];
 // Settings the server reads; an uploaded mesh travels as OBJ text.
 function params() {
   const p = {
@@ -232,6 +234,8 @@ function params() {
   if (S.objText) p.obj = S.objText; else p.shape = P.shape;
   if (P.mode === 'morph') {
     if (S.objTextB) p.obj_b = S.objTextB; else if (P.shapeB) p.shape_b = P.shapeB;
+    for (const k of MORPH_OPTS) p[k] = P[k];
+    p.clamp_b = p.clamp; // morph uses one clamp for both fields (bridge.morph_clamp)
   }
   return p;
 }
@@ -482,6 +486,8 @@ function showInfo(d, p) {
   const s = d.stats;
   $('stats').textContent = [
     `${objLabel()}${d.ts ? ` → ${bLabel()} (morph, ${d.match.method}, ${(100 * d.match.coverage).toFixed(0)}% of B covered)` : ''} · ${d.verts.length} verts · ${p.payload}, ${p.layout} layout`,
+    ...(d.ts ? [`${d.options.interference ? `interference readout · selector 0 = A, 1 = B${d.kept ? ` · decoded from ${(100 * d.kept.reduce((a, b) => a + b, 0) / d.kept.length).toFixed(0)}% of shots` : ''}` : 'basis sweep · θ = A, φ = B'} · clamp ${d.clamp.toFixed(2)}π (θ and φ)`
+      + `${d.options.hold_t ? ` · held at t = ${d.ts[0]}` : ''}${d.options.a_dirs ? " · A's directions" : ''}`] : []),
     s.graph + (s.quality != null ? ` · data-qubit quality ${s.quality.toFixed(2)}` : ''),
     `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`,
     `depth ${s.depth} · 2q gates ${s.twoq}` + (s.twoq_single !== s.twoq ? ` (θ alone ${s.twoq_single})` : ''),
@@ -894,7 +900,8 @@ function closePanel(now = false) {
   if (panelEl.hidden) return;
   panelEl.classList.remove('shown');
   $('dropB').classList.remove('shown');
-  const done = () => { if (!panelEl.classList.contains('shown')) { panelEl.hidden = true; $('dropB').hidden = true; syncShift(); } };
+  $('morphOpts').classList.remove('shown');
+  const done = () => { if (!panelEl.classList.contains('shown')) { panelEl.hidden = true; $('dropB').hidden = true; $('morphOpts').hidden = true; syncShift(); } };
   if (now) done(); else setTimeout(done, 380);
   panelEl.dataset.key = '';
   syncShift();
@@ -912,7 +919,7 @@ function closeAll() {
 const HOLD_MS = 220;
 let hold = null;
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, .run-buttons, #hint, #hud, #drawer, #qmap, dialog, .logo');
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #hud, #drawer, #qmap, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
   for (const side of ['encode', 'decode']) {
@@ -977,6 +984,7 @@ const icon = (src, cls = '') => `<img class="icon ${cls}" src="assets/${src}" al
 const MORPH_ORB = `<div class="morph"><img src="assets/morph-vector.svg" alt="" style="left:22.2px;top:16.74px;width:18px;height:21.522px">`
   + `<img src="assets/morph-ellipse-a.svg" alt="" style="left:0;top:0;width:32.4px;height:32.283px">`
   + `<img src="assets/morph-ellipse-b.svg" alt="" style="left:31.2px;top:21.52px;width:34.8px;height:33.478px"><span>θ+φ</span></div>`;
+const clampFmt = (v) => (v ? `${v.toFixed(2)}π` : P.mode === 'morph' ? '0.20π' : 'off');
 const PANELS = {
   load: { title: 'load', key: 'payload', items: [
     { v: 'xyz', html: '(x,y,z)', tip: 'xyz: three values per vertex' },
@@ -989,9 +997,13 @@ const PANELS = {
   layout: { title: 'vert layout', key: 'layout', items: [
     { v: 'mesh', html: 'mesh', tip: 'neighbouring vertices share data qubits' },
     { v: 'naive', html: 'naive', tip: 'values in file order' }] },
+  // Morph uses one clamp for both fields (bridge.morph_clamp: φ follows θ, so equal
+  // geometry gets equal angles), so there the two knobs move as one; 0 is Tessa's
+  // pair default, 0.2π.
   clamps: { title: 'clamps', sliders: [
-    { key: 'clamp', label: 'clamp θ', min: 0, max: 0.45, step: 0.01, fmt: (v) => (v ? `${v.toFixed(2)}π` : 'off') },
-    { key: 'clamp_b', label: 'clamp φ', min: 0, max: 0.45, step: 0.01, fmt: (v) => (v ? `${v.toFixed(2)}π` : 'off'), off: () => P.mode !== 'split' && 'φ clamp: θ+φ mode only' }] },
+    { key: 'clamp', label: () => (P.mode === 'morph' ? 'clamp θ (= φ)' : 'clamp θ'), min: 0, max: 0.45, step: 0.01, fmt: clampFmt, link: 'clamp_b' },
+    { key: 'clamp_b', label: () => (P.mode === 'morph' ? 'clamp φ (= θ)' : 'clamp φ'), min: 0, max: 0.45, step: 0.01, fmt: clampFmt, link: 'clamp',
+      off: () => P.mode === 'theta' && 'φ clamp: θ+φ and morph modes only' }] },
   compression: { title: 'compression', sliders: [
     { key: 'compression', label: 'compression', min: 0, max: 100, step: 1, fmt: (v) => `${v}%` },
     { key: 'quant_bits', label: 'quant bits', min: 0, max: 8, step: 1, fmt: (v) => (v ? `${v} bit${v > 1 ? 's' : ''}` : 'off') }] },
@@ -1074,6 +1086,7 @@ function choose(key, v) {
   // the spherical payload fills θ and φ itself, so it only pairs with mode θ
   if (key === 'payload' && v === 'spherical' && P.mode !== 'theta') { P.mode = 'theta'; status('spherical fills θ and φ itself: mode set to θ'); }
   if (key === 'mode' && v !== 'theta' && P.payload === 'spherical') { P.payload = 'radial'; status('θ+φ modes need a radial or xyz load: load set to radial'); }
+  if (key === 'mode' && v === 'morph') P.clamp_b = P.clamp; // one clamp for both fields
   if (key === 'mode') { placeOrbs(); syncMorphBox(); syncHud(); }
   syncPanel(); syncStale();
 }
@@ -1096,19 +1109,24 @@ function arcSlider(side, sl, r) {
   const label = document.createElementNS(svgNS, 'text');
   const [lx, ly] = ringPoint(side, A0 + 6, r + 28); // just outside the track's start
   label.setAttribute('x', lx); label.setAttribute('y', ly + 5); label.setAttribute('text-anchor', 'middle');
-  label.textContent = sl.label;
+  const labelText = () => (typeof sl.label === 'function' ? sl.label() : sl.label);
+  label.textContent = labelText();
   svg.appendChild(label);
   const knob = document.createElement('button');
   knob.className = 'knob';
   knob.setAttribute('role', 'slider');
-  knob.setAttribute('aria-label', sl.label);
+  knob.setAttribute('aria-label', labelText());
   knob.setAttribute('aria-valuemin', sl.min); knob.setAttribute('aria-valuemax', sl.max);
   wrap.append(svg, knob);
   const angleOf = (v) => A0 + ((A1 - A0) * (v - sl.min)) / (sl.max - sl.min);
   const set = (v) => {
     v = Math.min(sl.max, Math.max(sl.min, Math.round(v / sl.step) * sl.step));
     v = +v.toFixed(4);
-    if (v !== P[sl.key]) { P[sl.key] = v; syncStale(); syncDrawer(); }
+    if (v !== P[sl.key]) {
+      P[sl.key] = v;
+      if (sl.link && P.mode === 'morph') { P[sl.link] = v; syncPanel(); } // morph: θ and φ clamps move as one
+      syncStale(); syncDrawer();
+    }
     wrap.sync();
   };
   wrap.sync = () => {
@@ -1117,6 +1135,7 @@ function arcSlider(side, sl, r) {
     const off = sl.off && sl.off();
     wrap.style.opacity = off ? 0.35 : 1;
     knob.title = off || '';
+    label.textContent = labelText();
     const a = angleOf(P[sl.key]), [x, y] = ringPoint(side, a, r);
     knob.style.left = `${x}px`; knob.style.top = `${y}px`;
     knob.textContent = sl.fmt(P[sl.key]);
@@ -1154,11 +1173,25 @@ function syncMorphBox() {
   const box = $('dropB');
   if (on) { box.hidden = false; requestAnimationFrame(() => box.classList.add('shown')); } else box.classList.remove('shown');
   box.classList.toggle('ready', !!bLabel());
+  const opts = $('morphOpts');
+  if (on) { opts.hidden = false; requestAnimationFrame(() => opts.classList.add('shown')); } else opts.classList.remove('shown');
+  for (const c of opts.querySelectorAll('.chip')) c.setAttribute('aria-pressed', P[c.dataset.opt]);
+  const aDirs = opts.querySelector('[data-opt="a_dirs"]');
+  aDirs.disabled = P.payload !== 'radial';
+  aDirs.title = P.payload === 'radial' ? "Radial load: keep A's directions; only the radii morph" : "A's directions only: radial load only";
+  $('morph_t').value = P.morph_t;
+  $('morph_t').nextElementSibling.textContent = P.morph_t.toFixed(2);
+  $('morphNote').textContent = (P.interference ? 'Interference: t turns the selector qubits from A (0) to B (1).' : 'Basis sweep: t turns the readout from Z (A) to X (B).')
+    + (P.hold_t ? ` Every frame reads at t = ${P.morph_t.toFixed(2)}.` : ` Frames run t 0 → 1; one ▶ reads at t = ${P.morph_t.toFixed(2)}.`);
   $('dropBText').textContent = bLabel() ? `B: ${bLabel()} ✓ — press ▶ to morph (drop to replace)` : 'drop second mesh (.obj)';
   for (const b of box.querySelectorAll('[data-shape-b]')) b.classList.toggle('on', !S.objTextB && b.dataset.shapeB === P.shapeB);
   placeOrbs();
   syncShift();
 }
+for (const c of document.querySelectorAll('#morphOpts .chip')) {
+  c.addEventListener('click', () => { P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
+}
+$('morph_t').addEventListener('input', () => { P.morph_t = +$('morph_t').value; syncMorphBox(); syncStale(); });
 $('dropB').addEventListener('click', (e) => {
   const b = e.target.closest('[data-shape-b]');
   if (b) { e.stopPropagation(); P.shapeB = b.dataset.shapeB; S.objTextB = S.objNameB = null; syncMorphBox(); syncStale(); return; }
@@ -1274,7 +1307,7 @@ $('viewToggle').onclick = () => {
   $('viewToggle').setAttribute('aria-expanded', open);
 };
 
-const DRAWER_RANGES = ['gain', 'between', 'fps', 'headroom', 'morph_t'];
+const DRAWER_RANGES = ['gain', 'between', 'fps', 'headroom'];
 function syncDrawer() {
   for (const id of DRAWER_RANGES) { $(id).value = P[id]; $(id).nextElementSibling.textContent = P[id]; }
   $('seed').value = P.seed;

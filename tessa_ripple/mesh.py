@@ -87,27 +87,38 @@ def uv_sphere(segments: int = 8, rings: int = 6):
 
 
 def blob(segments: int = 12, rings: int = 8):
-    """A UV sphere with smooth bumps.
+    """A soft five-lobed cushion, like the Tessa3D landing page's blob.
 
-    Star-shaped, so one radius per vertex describes it, but (unlike a sphere) the
-    radii vary smoothly, so there is real data to encode.
+    A UV sphere pushed out into five uneven lobes round its equator (fading towards
+    the poles), flattened to about two thirds of its height, and tipped 50° so its top
+    faces the default view. Star-shaped, so one radius per vertex describes it, and (unlike a
+    sphere) the radii vary smoothly, so there is real data to encode.
 
     Args:
-        segments: vertices around each ring.
+        segments: vertices around each ring (five lobes want 20 or more).
         rings: latitude bands.
 
     Returns:
-        (verts, faces) as :func:`uv_sphere`, with each vertex scaled by its bump radius.
+        (verts, faces) as :func:`uv_sphere`.
     """
     v, f = uv_sphere(segments, rings)
     az = np.arctan2(v[:, 1], v[:, 0])
-    r = 1 + 0.2 * np.cos(3 * az) * (1 - v[:, 2] ** 2) + 0.15 * v[:, 2] ** 3
-    return v * r[:, None], f
+    z = v[:, 2]
+    side = np.sqrt(np.clip(1 - z ** 2, 0, 1))  # 1 at the equator, 0 at the poles
+    lobes = np.cos(5 * az + 0.45 * np.sin(2 * az + 0.6))  # five lobes, unevenly spaced
+    r = 1 + (0.3 * lobes + 0.07 * np.cos(2 * az + 1.1)) * side ** 2.2
+    out = v * r[:, None]
+    out[:, 2] *= 0.62 * (1 + 0.1 * lobes * side)  # a cushion: flat, puffier over the lobes
+    # tip the top towards the default view (from -y, a little above), as in the design
+    tilt = np.radians(50)
+    y, zz = out[:, 1].copy(), out[:, 2].copy()
+    out[:, 1], out[:, 2] = y * np.cos(tilt) - zz * np.sin(tilt), y * np.sin(tilt) + zz * np.cos(tilt)
+    return out, f
 
 
 PRESETS = {
-    "blob": {"12x8": lambda: blob(12, 8), "16x10": lambda: blob(16, 10),
-             "24x12": lambda: blob(24, 12)},
+    "blob": {"20x10": lambda: blob(20, 10), "30x14": lambda: blob(30, 14),
+             "40x18": lambda: blob(40, 18)},
     "sphere": {"8x6": lambda: uv_sphere(8, 6), "12x8": lambda: uv_sphere(12, 8),
                "16x8": lambda: uv_sphere(16, 8)},
     "cube": {"3/edge": lambda: cube(3), "4/edge": lambda: cube(4), "5/edge": lambda: cube(5)},
