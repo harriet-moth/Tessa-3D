@@ -53,9 +53,11 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 @keyframes drift-a { from { transform: none; } to { transform: translate(-10px, -6px) scale(1.025); } }
 @keyframes drift-b { from { transform: none; } to { transform: translate(10px, 6px) scale(1.025); } } /* drift outward: the window edge never shows a gap */
 
-.logo { position: absolute; left: 640px; top: calc(34px - var(--T, 0px)); width: 160px; height: 96px; transition: top 400ms; }
+.logo { position: absolute; left: 640px; top: calc(34px - var(--T, 0px)); width: 160px; height: 96px; border-radius: 14px;
+  transform-origin: 50% 0; transition: top 400ms, transform 700ms var(--ease), background 200ms; }
 .logo img { display: block; width: 160px; height: 96px; transition: filter 300ms; }
-.logo { border-radius: 14px; transition: background 200ms; }
+/* past the landing page the logo shrinks to a smaller mark at the top, leaving the object more room */
+#app:not([data-screen="landing"]) .logo { transform: scale(0.55); }
 .logo:hover { background: var(--flip-light); }
 .logo:hover img { filter: invert(1); }
 
