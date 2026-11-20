@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 
 from tessa_ripple import app as appmod  # noqa: E402
 from tessa_ripple.bridge import mesh_error  # noqa: E402
-from tessa_ripple.mesh import blob, write_obj  # noqa: E402
+from tessa_ripple.mesh import PRESETS, write_obj  # noqa: E402
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -27,7 +27,7 @@ def pick(app, name, label):
 
 @pytest.fixture
 def app(tmp_path):
-    """The app on the 12x8 blob, morphing to a stretched copy (radial, 1,024 shots).
+    """The app on the low-resolution blob, morphing to a stretched copy (radial, 1,024 shots).
 
     Args:
         tmp_path: pytest's temporary folder, for B's OBJ.
@@ -35,7 +35,7 @@ def app(tmp_path):
     Returns:
         App: Encoded with the basis sweep, ready to toggle the interference readout.
     """
-    v, f = blob(12, 8)
+    v, f = next(iter(PRESETS["blob"].values()))()  # the Shape "blob" at resolution low
     b = v * [1.2, 1.0, 0.8]  # B: the blob stretched, same topology
     a = appmod.App([])
     a.b_path = str(write_obj(tmp_path / "b.obj", b, f))

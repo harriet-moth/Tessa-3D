@@ -95,7 +95,7 @@ def blob(segments: int = 12, rings: int = 8):
     sphere) the radii vary smoothly, so there is real data to encode.
 
     Args:
-        segments: vertices around each ring (five lobes want 20 or more).
+        segments: vertices around each ring (five lobes want 30 or more).
         rings: latitude bands.
 
     Returns:
@@ -105,8 +105,11 @@ def blob(segments: int = 12, rings: int = 8):
     az = np.arctan2(v[:, 1], v[:, 0])
     z = v[:, 2]
     side = np.sqrt(np.clip(1 - z ** 2, 0, 1))  # 1 at the equator, 0 at the poles
-    lobes = np.cos(5 * az + 0.45 * np.sin(2 * az + 0.6))  # five lobes, unevenly spaced
-    r = 1 + (0.3 * lobes + 0.07 * np.cos(2 * az + 1.1)) * side ** 2.2
+    # five round lobes with softly pinched valleys, unevenly spaced: broad near +1,
+    # dipping to -1 only between lobes
+    phase = 2.5 * az + 0.22 * np.sin(2 * az + 0.6)
+    lobes = 1 - 2 * np.abs(np.sin(phase)) ** 2.4
+    r = 1 + (0.17 * lobes + 0.06 * np.cos(2 * az + 1.1)) * side ** 2
     out = v * r[:, None]
     out[:, 2] *= 0.62 * (1 + 0.1 * lobes * side)  # a cushion: flat, puffier over the lobes
     # tip the top towards the default view (from -y, a little above), as in the design
@@ -117,8 +120,8 @@ def blob(segments: int = 12, rings: int = 8):
 
 
 PRESETS = {
-    "blob": {"20x10": lambda: blob(20, 10), "30x14": lambda: blob(30, 14),
-             "40x18": lambda: blob(40, 18)},
+    "blob": {"30x12": lambda: blob(30, 12), "40x16": lambda: blob(40, 16),
+             "50x20": lambda: blob(50, 20)},
     "sphere": {"8x6": lambda: uv_sphere(8, 6), "12x8": lambda: uv_sphere(12, 8),
                "16x8": lambda: uv_sphere(16, 8)},
     "cube": {"3/edge": lambda: cube(3), "4/edge": lambda: cube(4), "5/edge": lambda: cube(5)},

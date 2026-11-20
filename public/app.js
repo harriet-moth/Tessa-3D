@@ -259,11 +259,13 @@ function status(msg, err = false) { $('status').textContent = msg; $('status').c
 async function busy(label, fn) {
   S.busy = true;
   app.classList.add('busy');
+  syncPlay();
   document.querySelectorAll('#hud button').forEach((b) => { b.disabled = true; });
   status(label);
   try { await fn(); } catch (err) { status(`⚠ ${err.message}`, true); } finally {
     S.busy = false;
     app.classList.remove('busy');
+    syncPlay();
     syncHud();
   }
 }
@@ -1280,7 +1282,10 @@ $('play').addEventListener('click', () => {
   if (S.playing && S.step + 1 >= S.seq.length) S.step = 0;
   syncPlay();
 });
-function syncPlay() { $('play').classList.toggle('playing', S.playing); }
+function syncPlay() {
+  $('play').classList.toggle('playing', S.playing);
+  home.classList.toggle('quiet', S.playing || S.busy); // no "click and hold" prompt while frames run or play
+}
 // the run button glows while the settings differ from the last run
 function syncStale() { $('run').classList.toggle('stale', !!S.mesh && S.run !== runKey()); }
 

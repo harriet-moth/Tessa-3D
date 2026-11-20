@@ -63,3 +63,35 @@ def test_morph_without_b_and_fixed_mesh_actions_are_refused():
     for action in (api.edges, api.curves):
         with pytest.raises(ValueError, match="morph mode"):
             action({"shape": "blob", "mode": "morph", "shape_b": "sphere"})
+
+
+def test_morph_hold_t_reads_every_frame_at_morph_t():
+    """``hold_t`` reads every frame at ``morph_t`` instead of running t 0 -> 1."""
+    r = api.run({"shape": "blob", "mode": "morph", "shape_b": "sphere", "frames": 3, "hold_t": True, "morph_t": 0.4})
+    assert r["ts"] == pytest.approx([0.4] * 3) and r["options"]["hold_t"]
+
+
+def test_morph_uses_one_clamp_for_both_fields():
+    """Morph reports the one clamp θ and φ share: θ's, or Tessa's pair default (0.2π)."""
+    base = {"shape": "blob", "mode": "morph", "shape_b": "sphere"}
+    assert api.run(base)["clamp"] == pytest.approx(0.2)
+    assert api.run({**base, "clamp": 0.3 * np.pi, "clamp_b": 0.1 * np.pi})["clamp"] == pytest.approx(0.3)
+
+
+def test_morph_interference_readout_reports_its_kept_shots():
+    """The interference readout runs on the web too and says how many shots it kept."""
+    r = api.run({"shape": "blob", "mode": "morph", "shape_b": "sphere", "frames": 2, "interference": True,
+                 "shots": 65536})
+    assert r["options"]["interference"] and len(r["kept"]) == len(r["frames"]) == 2
+    assert all(0 < k <= 1 for k in r["kept"]) and r["error"] < 0.05
+
+
+def test_shared_topology_pairs_by_index_and_refuses_other_meshes():
+    """Shared topology pairs B with A by vertex index, and refuses a B of another size."""
+    v = api.mesh({"shape": "blob"})
+    b = "\n".join([f"v {x * 1.2} {z} {-y}" for x, y, z in v["verts"]]
+                  + ["f " + " ".join(str(i + 1) for i in f) for f in v["faces"]])
+    r = api.run({"shape": "blob", "mode": "morph", "obj_b": b, "shared_topology": True})
+    assert r["match"]["method"] == "by index"
+    with pytest.raises(ValueError, match="Shared topology"):
+        api.run({"shape": "blob", "mode": "morph", "shape_b": "cube", "shared_topology": True})

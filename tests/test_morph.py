@@ -15,10 +15,11 @@ A, AF = blob(12, 8)
 
 
 def sculpted(v):
-    """Same topology, different shape: squash z, bulge the sides."""
+    """Same topology, different shape: squash z, bulge the sides (strong enough to move
+    even the flat, tilted blob by several percent of its box)."""
     out = v.copy()
-    out[:, 0] *= 1 + 0.3 * np.abs(v[:, 2])
-    out[:, 2] *= 0.7
+    out[:, 0] *= 1 + 0.5 * np.abs(v[:, 2])
+    out[:, 2] *= 0.6
     return out
 
 

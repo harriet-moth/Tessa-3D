@@ -92,8 +92,11 @@ How it works:
   toggles fade in. **Back** (or Esc) goes up one layer: from the toggles to the arc, from
   the arc to the home screen. Clicking well away from the object also goes home.
 - **Morph:** **mode → θ+φ morph** opens a box for mesh B: drop an `.obj` or pick a
-  shape. ▶|| then reads the morph A → B along t = 0 → 1 (closest-point matching,
-  as in the desktop app); one ▶ reads at **morph t** (in **view**, default 0.5).
+  shape. Under it are the desktop app's morph options (**hold t**, **interference
+  readout**, **shared topology**, **A's directions only**) and the **morph t** slider.
+  ▶|| reads the morph A → B along t = 0 → 1 (or every frame at morph t with hold t);
+  one ▶ reads at morph t. Morph uses one clamp for both fields, so in **clamps** the
+  θ and φ knobs move together (0 means Tessa's pair default, 0.2π).
 - **Top right:** why tessa, curves, read edges, qubit map, download .obj, and **view**
   (fidelity / material, gain, colour, playback, resolution, headroom, seed).
 
@@ -102,8 +105,8 @@ Differences from the desktop app:
 - **Run frames** is capped at 30 frames and stops after about 45 s to stay under
   Vercel's 60 s limit. On the chip backends a frame takes about 7 s there, so
   expect about 6 frames; a morph spreads the frames it has time for over t = 0 → 1.
-- Morph uses the basis sweep with closest-point matching only (no shared topology,
-  front or interference readout), and curves and edge readouts are off in morph mode.
+- Morph has every desktop option except the morph front (a prototype with no UI in
+  either app); curves and edge readouts are off in morph mode.
 - There's no GIF export; **Download OBJ** saves the current step.
 - The landing background is Figma's WebGPU shader fill (`@figma/expressive-components`);
   browsers without WebGPU show plain black there.
@@ -170,7 +173,7 @@ add-on can reuse them.
 | Coherences carry differences | **Read edges**: edge lengths read from the state |
 | Real devices have good and bad qubits | **Backend** *phoenix* / *fez*, **Placement**, **Colour** *error* or *qubit* |
 
-Example: the default blob (86 values, radial), **Why Tessa**, 4,096 shots.
+Example: the earlier default blob (86 values, radial), **Why Tessa**, 4,096 shots.
 
 | encoding | qubits | 2q gates | depth | SWAPs | outcomes per cell | shots per value |
 |---|---|---|---|---|---|---|
@@ -186,6 +189,11 @@ amplitude) need deep routed circuits and split each shot budget over many outcom
 Tessa uses a few values per qubit, no SWAPs, and modest depth.
 
 ## Findings worth knowing
+
+The blob figures below were measured on the earlier three-bump blob (12×8, 86
+vertices). The blob is now the five-lobed cushion of the Tessa3D design (30×12, 332
+vertices at low), so its numbers will differ; the Suzanne, apple and lattice figures
+are unaffected.
 
 Measured while building this; the README states them as measured, not as claims.
 
