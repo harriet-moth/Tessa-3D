@@ -24,10 +24,13 @@
 <div id="app" data-screen="landing">
   <div id="shaderBg" aria-hidden="true"></div>
   <div id="viewer" aria-label="Point cloud of the current mesh"></div>
+  <!-- decorative dot ribbons, pinned to the window's corners as in the Figma frame -->
+  <div id="waves" aria-hidden="true">
+    <img class="wave wave-a" src="assets/wave-a.png" alt="">
+    <img class="wave wave-b" src="assets/wave-b.png" alt="">
+  </div>
 
   <div id="stage">
-    <img class="wave wave-a" src="assets/wave-a.png" alt="" aria-hidden="true">
-    <img class="wave wave-b" src="assets/wave-b.png" alt="" aria-hidden="true">
     <button id="logo" class="logo" title="New object" aria-label="Tessa3D: start over with a new object"><img src="assets/logo.svg" alt="" width="160" height="96"></button>
 
     <!-- landing: drop an OBJ or pick a shape -->
@@ -42,38 +45,59 @@
     </section>
 
     <!-- home: the object, its arc menus and the run buttons -->
-    <section id="home" class="screen" aria-label="Encode and decode your object">
-      <p id="hint" class="hint">hover or right-click</p>
-      <div id="hitzone" aria-hidden="true"></div>
+    <section id="home" class="screen" data-layer="0" aria-label="Encode and decode your object">
+      <button id="hint" class="hint" aria-label="Open the settings menu">click and hold</button>
 
+      <!-- Menu layers 1 (Encode / Decode pills, while held) and 2 (an arc of options).
+           Every shape is a band of constant width on a circle round the object, drawn by
+           app.js; an arc collapsed to zero length is the circle the back button sits on. -->
       <div id="menu" data-state="closed">
-        <img class="menu-line" src="assets/menu-line.svg" alt="" width="1" height="531">
-        <button id="encodePill" class="pill encode" data-side="encode"><img src="assets/encode-pill.svg" alt=""><span>Encode</span></button>
-        <button id="decodePill" class="pill decode" data-side="decode"><img src="assets/decode-pill.svg" alt=""><span>Decode</span></button>
+        <svg id="menuSvg" viewBox="0 0 1440 1024" width="1440" height="1024" aria-hidden="true">
+          <defs>
+            <filter id="bandShade" x="-10%" y="-20%" width="120%" height="140%">
+              <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+              <feOffset dx="2" dy="8"/><feGaussianBlur stdDeviation="3.3"/>
+              <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+              <feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.25 0"/>
+              <feBlend mode="normal" in2="SourceGraphic"/>
+            </filter>
+            <radialGradient id="pillEncFill"><stop offset="0" stop-color="#fff" stop-opacity="0.9"/><stop offset="1" stop-color="#fff" stop-opacity="0.28"/></radialGradient>
+            <radialGradient id="pillDecFill"><stop offset="0" stop-color="#d9d9d9"/><stop offset="1" stop-color="#737373"/></radialGradient>
+          </defs>
+          <g id="pills">
+            <path class="menu-line" d=""/>
+            <path id="encodePillBand" class="pill-band encode"/>
+            <path id="decodePillBand" class="pill-band decode"/>
+          </g>
+          <path id="encodeArcBand" class="arc-band encode"/>
+          <path id="decodeArcBand" class="arc-band decode"/>
+        </svg>
+        <button id="encodePill" class="pill-label encode" data-side="encode">Encode</button>
+        <button id="decodePill" class="pill-label decode" data-side="decode">Decode</button>
         <div id="encodeArc" class="arc encode" role="menu" aria-label="Encode settings">
-          <img class="arc-shape" src="assets/encode-arc.svg" alt="">
-          <button class="arc-label" role="menuitem" data-panel="load" style="left:488.34px;top:333.19px;--r:-49.64deg">load</button>
-          <button class="arc-label" role="menuitem" data-panel="mode" style="left:575.12px;top:260.06px;--r:-29.51deg">mode</button>
-          <button class="arc-label tight" role="menuitem" data-panel="layout" style="left:688.83px;top:228.38px;--r:-6.22deg">vert layout</button>
-          <button class="arc-label tight" role="menuitem" data-panel="clamps" style="left:817.92px;top:237.35px;--r:17.44deg">clamps</button>
-          <button class="arc-label tight" role="menuitem" data-panel="compression" style="left:934.97px;top:307.54px;--r:43.97deg">compression</button>
+          <button class="arc-label" role="menuitem" data-panel="load">load</button>
+          <button class="arc-label" role="menuitem" data-panel="mode">mode</button>
+          <button class="arc-label tight" role="menuitem" data-panel="layout">vert layout</button>
+          <button class="arc-label tight" role="menuitem" data-panel="clamps">clamps</button>
+          <button class="arc-label tight" role="menuitem" data-panel="compression">compression</button>
         </div>
         <div id="decodeArc" class="arc decode" role="menu" aria-label="Decode settings">
-          <img class="arc-shape" src="assets/decode-arc.svg" alt="">
-          <button class="arc-label" role="menuitem" data-panel="drr" style="left:486.51px;top:726.26px;--r:48.23deg">DRR</button>
-          <button class="arc-label" role="menuitem" data-panel="frames" style="left:566.96px;top:794.82px;--r:30.19deg">frames</button>
-          <button class="arc-label tight" role="menuitem" data-panel="shots" style="left:672.66px;top:828.63px;--r:6.74deg">shots</button>
-          <button class="arc-label tighter" role="menuitem" data-panel="placement" style="left:807.71px;top:820.16px;--r:-19deg">chip placement</button>
-          <button class="arc-label tight" role="menuitem" data-panel="backend" style="left:946.5px;top:734.69px;--r:-48.22deg">backend</button>
+          <button class="arc-label" role="menuitem" data-panel="drr">DRR</button>
+          <button class="arc-label" role="menuitem" data-panel="frames">frames</button>
+          <button class="arc-label tight" role="menuitem" data-panel="shots">shots</button>
+          <button class="arc-label tighter" role="menuitem" data-panel="placement">chip placement</button>
+          <button class="arc-label tight" role="menuitem" data-panel="backend">backend</button>
         </div>
       </div>
 
       <!-- layer 3: one setting's toggles (built by app.js) -->
       <div id="panel" data-side="encode" hidden>
         <div class="panel-title"><span id="panelTitle">load</span><img src="assets/title-underline.svg" alt="" width="95.6667" height="5.33333"></div>
-        <button id="back" class="back" aria-label="Back to the settings arc"><img src="assets/back.svg" alt="" width="68" height="68"></button>
         <div id="panelBody"></div>
       </div>
+
+      <!-- one back button for layers 2 and 3: it sits on the arc's end cap -->
+      <button id="back" class="back" aria-label="Back"><img src="assets/back.svg" alt="" width="68" height="68"></button>
 
       <!-- morph: drop the second mesh -->
       <div id="dropB" class="drop-b" hidden>

@@ -38,12 +38,18 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #stage button, #stage .drop-b, #stage .more-shapes { pointer-events: auto; }
 
 /* decorative dot waves, drifting slowly */
+/* The ribbons sit outside the stage: the top one hangs from the window's top-left corner
+   and the bottom one from its bottom-right, as in the frame (Figma 15:9, 15:10), scaled
+   by --c (the factor that makes the frame cover the window) so they reach its edges. */
+#waves { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .wave { position: absolute; object-fit: cover; pointer-events: none; transition: opacity 900ms; }
-.wave-a { left: -11px; top: -2px; width: 1373px; height: 772px; opacity: 0.67; animation: drift-a 14s ease-in-out infinite alternate; }
-.wave-b { left: 176px; top: 321px; width: 1264px; height: 711px; opacity: 0.86; animation: drift-b 17s ease-in-out infinite alternate; }
+.wave-a { left: calc(-11px * var(--c, 1)); top: calc(-2px * var(--c, 1)); width: calc(1373px * var(--c, 1)); height: calc(772px * var(--c, 1));
+  opacity: 0.67; transform-origin: 0 0; animation: drift-a 14s ease-in-out infinite alternate; }
+.wave-b { right: 0; bottom: calc(-8px * var(--c, 1)); width: calc(1264px * var(--c, 1)); height: calc(711px * var(--c, 1));
+  opacity: 0.86; transform-origin: 100% 100%; animation: drift-b 17s ease-in-out infinite alternate; }
 #app[data-screen="landing"] .wave-a, #app[data-screen="landing"] .wave-b { opacity: 0.5; }
-@keyframes drift-a { from { transform: translate(0, 0); } to { transform: translate(14px, 8px) scale(1.01); } }
-@keyframes drift-b { from { transform: translate(0, 0); } to { transform: translate(-16px, -6px) scale(1.012); } }
+@keyframes drift-a { from { transform: none; } to { transform: translate(-10px, -6px) scale(1.025); } }
+@keyframes drift-b { from { transform: none; } to { transform: translate(10px, 6px) scale(1.025); } } /* drift outward: the window edge never shows a gap */
 
 .logo { position: absolute; left: 640px; top: calc(34px - var(--T, 0px)); width: 160px; height: 96px; transition: top 400ms; }
 .logo img { display: block; width: 160px; height: 96px; transition: filter 300ms; }
@@ -64,63 +70,71 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .preset.cube { left: 192px; top: 455px; width: 339px; height: 471px; }
 .preset.blob { left: 562px; top: 503px; width: 332.5px; height: 374.5px; animation-delay: -1.4s; }
 .preset.sphere { left: 925px; top: 552px; width: 261px; height: 276px; animation-delay: -2.8s; }
+/* each shape slides out from the centre by its offset × --spread (offsets: cube −358.5, sphere +335.5) */
+.preset.cube { translate: calc(-358.5px * var(--spread, 0)) 0; }
+.preset.sphere { translate: calc(335.5px * var(--spread, 0)) 0; }
 .preset:hover { transform: scale(1.06); filter: drop-shadow(0 0 22px var(--cyan-glow)) brightness(1.15); animation-play-state: paused; }
 @keyframes breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18) drop-shadow(0 0 10px rgba(94, 242, 255, 0.25)); } }
 .more-shapes { position: absolute; left: 0; right: 0; top: 950px; text-align: center; font: 300 18px "IBM Plex Sans", sans-serif; color: var(--ink-faint); }
 .more-shapes button { color: var(--ink-dim); text-decoration: underline; text-underline-offset: 4px; }
 .more-shapes button:hover { color: #fff; }
 
-/* ---------- home (Figma 10:2, 18:230) */
+/* ---------- home (Figma 10:2, 18:230). #home[data-layer] is the menu layer, 0–3. */
 .hint { position: absolute; left: 720px; top: 795px; width: 452px; transform: translate(-50%, -50%); margin: 0;
   font: 400 24px/normal "Funnel Sans", sans-serif; text-align: center; color: #fff; opacity: 0.85;
   transition: opacity 400ms; animation: hint 3.2s ease-in-out infinite; }
 @keyframes hint { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.95; } }
-#home.menu-open .hint, #home.panel-open .hint { opacity: 0; animation: none; }
+#home:not([data-layer="0"]) .hint { opacity: 0; animation: none; pointer-events: none; }
+/* the run buttons belong to home and layer 1; layers 2 and 3 hand the space to the menu */
+.run-buttons { transition: opacity 400ms var(--ease); }
+#home[data-layer="2"] .run-buttons, #home[data-layer="3"] .run-buttons { opacity: 0; pointer-events: none; }
+#home[data-layer="2"] .run-btn, #home[data-layer="3"] .run-btn { pointer-events: none; }
 
 #menu { position: absolute; inset: 0; pointer-events: none; }
 #menu button { pointer-events: none; }
-.menu-line { position: absolute; left: 719.5px; top: 266px; width: 1px; height: 531px; opacity: 0; transition: opacity 400ms; }
-.pill { position: absolute; width: 274.356px; height: 88.4117px; opacity: 0; transform: scale(0.6);
-  transition: opacity 380ms var(--ease), transform 520ms var(--ease), filter 300ms; }
-.pill img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.pill span { position: absolute; left: 50%; width: 261px; transform: translate(-50%, -50%);
-  font: 400 24px/normal "Funnel Sans", sans-serif; letter-spacing: -1.2px; text-align: center; white-space: nowrap; }
-.pill.encode { left: 581.5px; top: 203px; transform-origin: 50% 100%; }
-.pill.encode span { top: 36px; color: #fff; } /* text centre at y 239 */
-.pill.decode { left: 582px; top: 770px; transform-origin: 50% 0%; }
-.pill.decode img { transform: scaleY(-1); }
-.pill.decode span { top: 52.4px; color: #000; } /* text centre at y 822.4 */
-.pill:hover { filter: drop-shadow(0 0 16px var(--cyan-glow)); }
+#menuSvg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 
-#menu[data-state="open"] .menu-line { opacity: 1; }
-#menu[data-state="open"] .pill { opacity: 1; transform: none; pointer-events: auto; animation: pill-pulse 2.8s ease-in-out infinite; }
-#menu[data-state="open"] .pill.decode { animation-delay: -1.4s; }
-@keyframes pill-pulse { 0%, 100% { filter: drop-shadow(0 0 0 rgba(94, 242, 255, 0)); } 50% { filter: drop-shadow(0 0 10px rgba(94, 242, 255, 0.28)); } }
+/* geometric bands: the design's glass (Figma "Subtract": #D9D9D9 at 43 %, faint rim, inner shine) */
+.arc-band, .pill-band { stroke-width: 2; stroke-linejoin: round; filter: url(#bandShade); }
+.arc-band { fill: rgba(217, 217, 217, 0.43); stroke: rgba(206, 206, 206, 0.37); opacity: 0; transition: opacity 250ms; }
+#menu[data-state="encode"] .arc-band.encode, #menu[data-state="decode"] .arc-band.decode { opacity: 1; }
+.pill-band.encode { fill: url(#pillEncFill); fill-opacity: 0.64; stroke: rgba(136, 136, 136, 0.47); }
+.pill-band.decode { fill: url(#pillDecFill); stroke: rgba(190, 190, 190, 0.56); }
+.pill-band { transition: fill-opacity 200ms, stroke 200ms; }
+.pill-band.hot { fill-opacity: 0.95; stroke: rgba(94, 242, 255, 0.9); stroke-width: 3; }
+.menu-line { stroke: #fff; stroke-width: 1; fill: none; }
 
-/* layer 2: an arc of options grows out of its pill */
-.arc { position: absolute; inset: 0; opacity: 0; pointer-events: none;
-  transition: opacity 320ms var(--ease), transform 560ms var(--ease); }
-.arc.encode { transform-origin: 720px 247px; transform: scale(0.45, 0.3); }
-.arc.decode { transform-origin: 720px 814px; transform: scale(0.45, 0.3); }
-.arc-shape { position: absolute; left: 438.6px; width: 564.985px; height: 192.993px; display: block; }
-.arc.encode .arc-shape { top: 193px; }
-.arc.decode .arc-shape { top: 670px; transform: scaleY(-1); }
+/* layer 1: the pills pop out of the object while it is held */
+#pills { opacity: 0; transform: scale(0.82); transform-origin: 720px 512px; transition: opacity 260ms var(--ease), transform 420ms var(--ease); }
+#menu[data-state="open"] #pills { opacity: 1; transform: none; }
+.pill-label { position: absolute; transform: translate(-50%, -50%) scale(0.82); opacity: 0; white-space: nowrap;
+  font: 400 24px/normal "Funnel Sans", sans-serif; letter-spacing: -1.2px; text-align: center;
+  transition: opacity 260ms var(--ease), transform 420ms var(--ease), text-shadow 200ms; }
+.pill-label.encode { color: #fff; }
+.pill-label.decode { color: #000; }
+#menu[data-state="open"] .pill-label { opacity: 1; transform: translate(-50%, -50%); pointer-events: auto; }
+.pill-label.hot, .pill-label:focus-visible { text-shadow: 0 0 12px var(--cyan); outline: none; }
+
+/* layer 2: labels light up as the sweep passes them */
+.arc { position: absolute; inset: 0; pointer-events: none; }
 .arc-label { position: absolute; transform: translate(-50%, -50%) rotate(var(--r)); white-space: nowrap;
   font: 400 24px/normal "Funnel Sans", sans-serif; color: #fff; opacity: 0;
-  transition: opacity 300ms, text-shadow 250ms, transform 300ms var(--ease); }
+  transition: opacity 180ms, text-shadow 250ms, transform 300ms var(--ease); }
 .arc-label.tight { letter-spacing: -1.2px; }
 .arc-label.tighter { letter-spacing: -2.4px; }
+.arc-label.lit { opacity: 1; }
+#menu[data-state="encode"] .arc.encode .arc-label.lit, #menu[data-state="decode"] .arc.decode .arc-label.lit { pointer-events: auto; }
 .arc-label:hover, .arc-label:focus-visible { text-shadow: 0 0 14px var(--cyan), 0 0 2px #fff;
   transform: translate(-50%, -50%) rotate(var(--r)) scale(1.08); outline: none; }
-#menu[data-state="encode"] .arc.encode, #menu[data-state="decode"] .arc.decode { opacity: 1; transform: none; }
-#menu[data-state="encode"] .arc.encode .arc-label, #menu[data-state="decode"] .arc.decode .arc-label { opacity: 1; pointer-events: auto; }
-#menu[data-state="encode"] .arc.encode .arc-label:nth-of-type(2), #menu[data-state="decode"] .arc.decode .arc-label:nth-of-type(2) { transition-delay: 60ms, 0s, 0s; }
-#menu[data-state="encode"] .arc.encode .arc-label:nth-of-type(3), #menu[data-state="decode"] .arc.decode .arc-label:nth-of-type(3) { transition-delay: 110ms, 0s, 0s; }
-#menu[data-state="encode"] .arc.encode .arc-label:nth-of-type(4), #menu[data-state="decode"] .arc.decode .arc-label:nth-of-type(4) { transition-delay: 160ms, 0s, 0s; }
-#menu[data-state="encode"] .arc.encode .arc-label:nth-of-type(5), #menu[data-state="decode"] .arc.decode .arc-label:nth-of-type(5) { transition-delay: 210ms, 0s, 0s; }
-#menu[data-state="encode"] .arc.encode .arc-label:nth-of-type(6), #menu[data-state="decode"] .arc.decode .arc-label:nth-of-type(6) { transition-delay: 260ms, 0s, 0s; }
-/* the arc sweeping into the back button (class set by app.js for the duration) */
-.arc.sweep { transition: transform 520ms cubic-bezier(0.55, 0, 0.3, 1), opacity 520ms ease-in !important; }
+
+/* the back button (Figma 40:74): sits on the arc's start cap in layers 2 and 3 */
+.back { position: absolute; left: 442.8px; top: 320.1px; width: 68px; height: 68px; border-radius: 50%; pointer-events: none;
+  opacity: 0; transform: scale(0.9); transition: opacity 220ms, transform 300ms var(--ease), filter 300ms, left 450ms var(--ease), top 450ms var(--ease); }
+.back.shown { opacity: 1; transform: none; }
+#stage .back { pointer-events: none; }
+#stage .back.shown { pointer-events: auto; }
+.back img { display: block; width: 68px; height: 68px; }
+.back:hover { filter: drop-shadow(0 0 14px var(--cyan-glow)) brightness(1.25); }
 
 /* ---------- layer 3: settings panel (Figma 18:156, 20:14, 18:246, 20:44) */
 #panel { position: absolute; inset: 0; pointer-events: none; }
@@ -129,12 +143,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
   font: 300 24px/19px "IBM Plex Sans", sans-serif; letter-spacing: 0.48px; color: var(--ink-dim);
   opacity: 0; transform: translateX(-12px); transition: opacity 400ms 150ms, transform 500ms 150ms var(--ease); }
 .panel-title img { width: 95.6667px; height: 5.33333px; margin-top: -2.67px; }
-.back { position: absolute; left: 388px; top: 350px; width: 68px; height: 68px; border-radius: 50%;
-  transform: scale(0.3) rotate(-120deg); opacity: 0; transition: transform 520ms var(--ease), opacity 300ms, filter 300ms, left 700ms var(--ease), top 700ms var(--ease); }
-.back img { display: block; width: 68px; height: 68px; }
-.back:hover { filter: drop-shadow(0 0 14px var(--cyan-glow)) brightness(1.25); }
 #panel.shown .panel-title { opacity: 1; transform: none; }
-#panel.shown .back { opacity: 1; transform: none; }
 
 .orb { position: absolute; width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 46px;
   border: 1px solid var(--orb-line); background: rgba(13, 13, 13, 0.4); color: #fff;
@@ -308,7 +317,6 @@ svg text { fill: var(--ink-dim); font-size: 11px; }
 #app.portrait .drop-b p { top: 30px; height: 80px; font-size: 22px; }
 #app.portrait .drop-b-presets { bottom: 16px; font-size: 16px; }
 #app.portrait .hint { top: 820px; font-size: 30px; }
-#app.portrait .arc-label { font-size: 26px; }
 
 /* ---------- compact (narrow or portrait): tools fold into one button; stats behind a tap */
 #app.compact #hudMore { display: block; }

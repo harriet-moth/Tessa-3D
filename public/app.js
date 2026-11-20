@@ -9,8 +9,7 @@ const $ = (id) => document.getElementById(id);
 const app = $('app'), home = $('home'), menuEl = $('menu'), panelEl = $('panel');
 const W_STAGE = 1440, H_STAGE = 1024, CX = 720, CY = 512;
 const HOVER = matchMedia('(hover: hover)').matches;
-const OBJ_R = 270; // stage px: hovering inside this radius of the object opens the menu
-const FAR_R = 450; // ... and moving beyond this (past the arcs) closes it
+const OBJ_R = 270; // stage px: holding inside this radius of the object opens the menu
 
 // ---------- settings: everything a run or the view reads
 const P = {
@@ -48,6 +47,10 @@ function fitStage() {
   app.classList.toggle('portrait', portrait);
   app.classList.toggle('compact', compact);
   app.style.setProperty('--s', scale);
+  // ribbons: as big as the frame would be if it covered the window (portrait: the frame's own size)
+  app.style.setProperty('--c', portrait ? Math.max(w / W_STAGE, scale) : Math.max(w / W_STAGE, h / H_STAGE));
+  // wide windows: spread the landing shapes out with the width (up to 1.35× the frame's spacing)
+  app.style.setProperty('--spread', portrait ? 0 : Math.min(Math.max(w / scale / W_STAGE, 1), 1.35) - 1);
   app.style.setProperty('--T', `${layout.T}px`);
   app.style.setProperty('--B', `${layout.B}px`);
   app.style.setProperty('--vl', `${Math.max(0, layout.vl)}px`);
@@ -703,134 +706,244 @@ $('qcanvas').addEventListener('pointermove', (e) => {
 $('qcanvas').addEventListener('pointerleave', () => setFocus(null));
 
 // ====================================================================================
-// Game UI: screens, the hover / right-click arc menu, and the settings panels
+// Game UI: screens, the click-and-hold arc menu, and the settings panels
+//   layer 0  home: the object and the run buttons
+//   layer 1  while held: Encode and Decode pills; releasing on one opens its arc
+//   layer 2  an arc of options, unsweeping from its back button
+//   layer 3  one setting's toggles; the arc has swept back into the back button
 // ====================================================================================
 function setScreen(name) {
   app.dataset.screen = name;
   if (name === 'landing') { closeAll(); S.playing = false; }
 }
 
-// object offset in stage px (the design nudges it down under the open menu, and left
-// for the morph drop box)
+// object offset in stage px (left of, or in portrait above, the morph drop box)
 function setShift(x, y) { app.style.setProperty('--ox', `${x}px`); app.style.setProperty('--oy', `${y}px`); }
 let shift = [0, 0];
 // the morph box sits right of the object (design) or, in portrait, below it
 const MORPH_SHIFT = () => (portrait ? [0, -100] : [-240, 10]);
+const morphBoxOpen = () => !panelEl.hidden && panelEl.dataset.key === 'mode' && P.mode === 'morph';
 function syncShift() {
-  const morphBox = !panelEl.hidden && panelEl.dataset.key === 'mode' && P.mode === 'morph';
-  shift = morphBox ? MORPH_SHIFT() : menuEl.dataset.state === 'open' ? [0, 26] : [0, 0];
+  shift = morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
   setShift(...shift);
 }
 
+// ---------- geometry: every menu shape is a band of constant width on a circle round
+// the object, so the arcs are exactly even (the design's are hand-drawn prototypes)
+const rad = THREE.MathUtils.degToRad;
+const ARC = { R: 295, h: 32, a0: -60, a1: 60 }; // layer 2: the back button sits on the a0 cap
+const PILL = { R: 300, h: 28, span: 23 }; // layer 1
+// a point at angle a (degrees from straight up) on a circle of radius r round the
+// object: the encode side above it, the decode side mirrored below
+const onRing = (side, r, a) => [CX + r * Math.sin(rad(a)), side === 'decode' ? CY + r * Math.cos(rad(a)) : CY - r * Math.cos(rad(a))];
+// The outline of a band from angle a0 to a1: outer arc, round cap, inner arc, round cap.
+// With a0 = a1 it is a circle of diameter 2h: the arc collapsed into an ellipse.
+function bandPath(side, R, h, a0, a1) {
+  const p = (r, a) => onRing(side, r, a).map((v) => v.toFixed(2)).join(' ');
+  const big = a1 - a0 > 180 ? 1 : 0, cw = side === 'decode' ? 0 : 1, ccw = 1 - cw;
+  return `M ${p(R + h, a0)} A ${R + h} ${R + h} 0 ${big} ${cw} ${p(R + h, a1)} A ${h} ${h} 0 0 ${cw} ${p(R - h, a1)}`
+    + ` A ${R - h} ${R - h} 0 ${big} ${ccw} ${p(R - h, a0)} A ${h} ${h} 0 0 ${cw} ${p(R + h, a0)} Z`;
+}
+const capAt = (side) => onRing(side, ARC.R, ARC.a0); // the arc's start cap: home of the back button
+
+function drawMenuShapes() {
+  for (const side of ['encode', 'decode']) {
+    $(`${side}PillBand`).setAttribute('d', bandPath(side, PILL.R, PILL.h, -PILL.span, PILL.span));
+    const [x, y] = onRing(side, PILL.R, 0);
+    Object.assign($(`${side}Pill`).style, { left: `${x}px`, top: `${y}px` });
+    $(`${side}ArcBand`).setAttribute('d', bandPath(side, ARC.R, ARC.h, ARC.a0, ARC.a0));
+    // labels: measured, then spaced evenly along the arc between the back button and the
+    // far cap, so long words never collide
+    const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
+    const widths = labels.map((b) => b.offsetWidth || 8 * b.textContent.length);
+    const deg = (px) => THREE.MathUtils.radToDeg(px / ARC.R);
+    const start = ARC.a0 + deg(34 + 10), end = ARC.a1 - deg(ARC.h * 0.6);
+    const gap = (end - start - widths.reduce((t, w) => t + deg(w), 0)) / (labels.length - 1);
+    let at = start;
+    labels.forEach((b, i) => {
+      const a = at + deg(widths[i]) / 2, [lx, ly] = onRing(side, ARC.R, a);
+      at += deg(widths[i]) + gap;
+      Object.assign(b.style, { left: `${lx}px`, top: `${ly}px` });
+      b.style.setProperty('--r', `${side === 'decode' ? -a : a}deg`);
+      b.dataset.a = a;
+    });
+  }
+  // the thin line from each pill towards the object
+  const inner = PILL.R - PILL.h;
+  document.querySelector('#menuSvg .menu-line').setAttribute('d', `M ${CX} ${CY - inner} V ${CY - inner + 52} M ${CX} ${CY + inner} V ${CY + inner - 52}`);
+}
+drawMenuShapes();
+document.fonts?.ready.then(drawMenuShapes); // re-space the labels once Funnel Sans has loaded
+
+// ---------- the sweep: an arc grows from (or shrinks into) its start cap
+const sweep = { encode: { a: ARC.a0, raf: 0 }, decode: { a: ARC.a0, raf: 0 } };
+function setSweep(side, a) {
+  sweep[side].a = a;
+  $(`${side}ArcBand`).setAttribute('d', bandPath(side, ARC.R, ARC.h, ARC.a0, a));
+  // a label shows once the sweep has passed it, and hides as it sweeps back
+  for (const b of $(`${side}Arc`).querySelectorAll('.arc-label')) b.classList.toggle('lit', a >= +b.dataset.a + 8);
+}
+function sweepTo(side, to, ms) {
+  cancelAnimationFrame(sweep[side].raf);
+  const from = sweep[side].a, t0 = performance.now();
+  const ease = to > from ? (t) => 1 - (1 - t) ** 3 : (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+  return new Promise((done) => {
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms);
+      setSweep(side, from + (to - from) * ease(t));
+      if (t < 1) sweep[side].raf = requestAnimationFrame(step); else done();
+    };
+    sweep[side].raf = requestAnimationFrame(step);
+  });
+}
+
+// ---------- the back button: on the arc's start cap (shifted with the morph layout)
+function placeBack(side) {
+  const [x, y] = capAt(side), [dx, dy] = panelEl.hidden ? [0, 0] : morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
+  Object.assign($('back').style, { left: `${x + dx - 34}px`, top: `${y + dy - 34}px` });
+}
+const showBack = (on) => $('back').classList.toggle('shown', on);
+
+// menu state: closed | open (layer 1) | encode / decode (layer 2) | panel (layer 3)
 function setMenu(state) {
   menuEl.dataset.state = state;
-  home.classList.toggle('menu-open', state !== 'closed');
+  home.dataset.layer = { closed: 0, open: 1, encode: 2, decode: 2, panel: 3 }[state];
   syncShift();
 }
-function closeAll() {
-  closePanel(true);
+let menuGen = 0; // bumped by every transition, so a superseded animation stops quietly
+
+// layer 1 → 2: the chosen arc unsweeps out of its start cap
+async function openArc(side) {
+  const gen = ++menuGen;
+  setSweep(side, ARC.a0);
+  placeBack(side);
+  setMenu(side);
+  showBack(true);
+  await sweepTo(side, ARC.a1, 560);
+  if (gen === menuGen) $(`${side}Arc`).querySelector('.arc-label')?.focus({ preventScroll: true });
+}
+// layer 2 → home: the arc sweeps back into its cap, which then fades
+async function closeArc() {
+  const side = menuEl.dataset.state, gen = ++menuGen;
+  if (side !== 'encode' && side !== 'decode') return setMenu('closed');
+  await sweepTo(side, ARC.a0, 420);
+  if (gen !== menuGen) return;
+  showBack(false);
   setMenu('closed');
 }
-
-// pointer distance from the object's centre, in stage px
-const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('#menu .pill, .arc-label, #panel, #dropB, .run-buttons, #hud, #drawer, #qmap, dialog, .logo');
-
-addEventListener('pointermove', (e) => {
-  if (app.dataset.screen !== 'home' || !panelEl.hidden || e.buttons & 1) return;
-  const [sx, sy] = toStage(e.clientX, e.clientY), d = objDist(sx, sy), st = menuEl.dataset.state;
-  if (st === 'closed') {
-    if (d < OBJ_R && e.pointerType === 'mouse') setMenu('open');
-  } else if (d > FAR_R) {
-    setMenu('closed');
-  } else if (st === 'encode' && sy > CY + 170) {
-    setMenu('open'); // heading for the decode side: fold the encode arc back into its pill
-  } else if (st === 'decode' && sy < CY - 170) {
-    setMenu('open');
-  }
-});
-// right-click (or a tap) on the object opens the menu too
-addEventListener('contextmenu', (e) => {
-  if (app.dataset.screen !== 'home' || e.target.closest('#hud, #drawer, dialog, #qmap')) return;
-  e.preventDefault();
-  const [sx, sy] = toStage(e.clientX, e.clientY);
-  if (objDist(sx, sy) < OBJ_R && panelEl.hidden) setMenu('open');
-});
-addEventListener('pointerdown', (e) => {
-  if (app.dataset.screen !== 'home' || insideUi(e.target)) return;
-  const [sx, sy] = toStage(e.clientX, e.clientY), d = objDist(sx, sy);
-  if (e.button === 2 && d < OBJ_R && panelEl.hidden) return setMenu('open');
-  if (e.pointerType !== 'mouse' && d < OBJ_R && panelEl.hidden && menuEl.dataset.state === 'closed') return setMenu('open');
-  if (d > OBJ_R) closeAll(); // a click outside the menu closes it
-});
-
-// layer 1 → 2: hovering (or clicking) a pill grows its arc of options
-for (const pill of document.querySelectorAll('.pill')) {
-  const expand = () => { if (menuEl.dataset.state !== 'closed') setMenu(pill.dataset.side); };
-  pill.addEventListener('pointerenter', expand);
-  pill.addEventListener('click', expand);
-}
-
-// layer 2 → 3: a label sweeps the arc into the back button; the toggles fade in
-const ARC_ORIGIN = { encode: [720, 247], decode: [720, 814] };
-let backAt = [422, 384]; // centre of the back button, set by placeOrbs
-function sweepTransform(side) {
-  const [bx, by] = backAt, [ox, oy] = ARC_ORIGIN[side];
-  return `translate(${bx - ox}px, ${by - oy}px) scale(0.12) rotate(${side === 'encode' ? -150 : 150}deg)`;
-}
-for (const label of document.querySelectorAll('.arc-label')) {
-  label.addEventListener('click', () => openPanel(label.closest('.arc').classList.contains('encode') ? 'encode' : 'decode', label.dataset.panel));
-}
-
-function openPanel(side, key) {
-  const arc = $(`${side}Arc`);
+// layer 2 → 3: the arc sweeps into the back button and the toggles fade in
+async function openPanel(side, key) {
+  const gen = ++menuGen;
+  if (menuEl.dataset.state === side) await sweepTo(side, ARC.a0, 420);
+  if (gen !== menuGen) return;
   panelEl.dataset.side = side;
   panelEl.dataset.key = key;
   buildPanel(side, key);
-  if (menuEl.dataset.state === side) {
-    arc.classList.add('sweep');
-    arc.style.transform = sweepTransform(side);
-    arc.style.opacity = '0';
-  }
   panelEl.hidden = false;
-  home.classList.add('panel-open');
-  setTimeout(() => {
-    panelEl.classList.add('shown');
-    syncMorphBox();
-  }, menuEl.dataset.state === side ? 300 : 20);
-  setTimeout(() => {
-    arc.classList.remove('sweep');
-    arc.style.transition = 'none';
-    setMenu('closed');
-    arc.style.transform = ''; arc.style.opacity = '';
-    void arc.offsetWidth;
-    arc.style.transition = '';
-  }, 560);
+  setMenu('panel');
+  placeBack(side);
+  showBack(true);
+  requestAnimationFrame(() => { panelEl.classList.add('shown'); syncMorphBox(); });
 }
-
-// back: the button sweeps out into its arc again
-function backToArc() {
-  const side = panelEl.dataset.side, arc = $(`${side}Arc`);
-  arc.style.transition = 'none';
-  arc.style.transform = sweepTransform(side);
-  arc.style.opacity = '0';
-  void arc.offsetWidth;
-  arc.style.transition = '';
+// layer 3 → 2: the toggles fade and the back button unsweeps into the arc again
+async function backToArc() {
+  const side = panelEl.dataset.side, gen = ++menuGen, moved = morphBoxOpen();
   closePanel();
+  placeBack(side);
+  setSweep(side, ARC.a0);
   setMenu(side);
-  requestAnimationFrame(() => { arc.style.transform = ''; arc.style.opacity = ''; });
+  if (moved) await new Promise((r) => setTimeout(r, 450)); // let the back button slide home first
+  if (gen === menuGen) await sweepTo(side, ARC.a1, 560);
 }
-$('back').addEventListener('click', backToArc);
+function goBack() {
+  const st = menuEl.dataset.state;
+  if (st === 'panel') backToArc();
+  else if (st === 'encode' || st === 'decode') closeArc();
+  else if (st === 'open') setMenu('closed');
+}
+$('back').addEventListener('click', goBack);
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && app.dataset.screen === 'home' && !$('dialog').open) goBack(); });
 
 function closePanel(now = false) {
   if (panelEl.hidden) return;
-  panelEl.classList.remove('shown', 'shifted');
-  home.classList.remove('panel-open');
+  panelEl.classList.remove('shown');
   $('dropB').classList.remove('shown');
   const done = () => { if (!panelEl.classList.contains('shown')) { panelEl.hidden = true; $('dropB').hidden = true; syncShift(); } };
   if (now) done(); else setTimeout(done, 380);
   panelEl.dataset.key = '';
   syncShift();
+}
+function closeAll() {
+  ++menuGen;
+  closePanel(true);
+  for (const side of ['encode', 'decode']) { cancelAnimationFrame(sweep[side].raf); setSweep(side, ARC.a0); }
+  showBack(false);
+  setMenu('closed');
+}
+
+// ---------- layer 1: click (or right-click, or touch) and hold the object; release on
+// a pill to open its arc, anywhere else to cancel. A drag before the hold rotates the object.
+const HOLD_MS = 220;
+let hold = null;
+const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, .run-buttons, #hint, #hud, #drawer, #qmap, dialog, .logo');
+// which pill (if any) is at stage point (sx, sy)
+function pillAt(sx, sy) {
+  for (const side of ['encode', 'decode']) {
+    const dx = sx - CX, dy = side === 'encode' ? CY - sy : sy - CY;
+    const r = Math.hypot(dx, dy), a = THREE.MathUtils.radToDeg(Math.atan2(dx, dy));
+    if (Math.abs(r - PILL.R) <= PILL.h + 16 && Math.abs(a) <= PILL.span + 8) return side;
+  }
+  return null;
+}
+function hotPill(side) { for (const s of ['encode', 'decode']) { $(`${s}PillBand`).classList.toggle('hot', s === side); $(`${s}Pill`).classList.toggle('hot', s === side); } }
+
+addEventListener('pointerdown', (e) => {
+  if (app.dataset.screen !== 'home' || insideUi(e.target)) return;
+  const [sx, sy] = toStage(e.clientX, e.clientY), d = objDist(sx, sy), st = menuEl.dataset.state;
+  if (st === 'closed' && d < OBJ_R && (e.button === 0 || e.button === 2)) {
+    const h = { id: e.pointerId, x: e.clientX, y: e.clientY, open: false };
+    h.timer = setTimeout(() => {
+      h.open = true;
+      controls.enabled = false; // the hold is for the menu now, not for rotating
+      setMenu('open');
+      hotPill(pillAt(...toStage(h.x, h.y)));
+    }, HOLD_MS);
+    hold = h;
+  } else if ((st === 'encode' || st === 'decode' || st === 'panel') && d > OBJ_R) {
+    // a click well away from the object and the menu goes home
+    if (st === 'panel') { closePanel(); showBack(false); ++menuGen; setMenu('closed'); } else closeArc();
+  }
+});
+addEventListener('pointermove', (e) => {
+  if (!hold || e.pointerId !== hold.id) return;
+  if (!hold.open) {
+    if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) { clearTimeout(hold.timer); hold = null; } // a drag: rotate instead
+    return;
+  }
+  hotPill(pillAt(...toStage(e.clientX, e.clientY)));
+});
+function endHold(e, cancelled) {
+  if (!hold || e.pointerId !== hold.id) return;
+  clearTimeout(hold.timer);
+  const opened = hold.open;
+  hold = null;
+  controls.enabled = true;
+  hotPill(null);
+  if (!opened) return;
+  const side = cancelled ? null : pillAt(...toStage(e.clientX, e.clientY));
+  if (side) openArc(side); else setMenu('closed');
+}
+addEventListener('pointerup', (e) => endHold(e, false));
+addEventListener('pointercancel', (e) => endHold(e, true));
+// the browser's own menu would interrupt a right-click hold
+addEventListener('contextmenu', (e) => { if (app.dataset.screen === 'home' && !e.target.closest('#hud, #drawer, dialog, #qmap, input')) e.preventDefault(); });
+
+// keyboard (and a plain click on the hint): open layer 1, then pick a pill
+$('hint').addEventListener('click', () => { if (menuEl.dataset.state === 'closed') { setMenu('open'); $('encodePill').focus(); } });
+for (const pill of document.querySelectorAll('.pill-label')) pill.addEventListener('click', () => { if (menuEl.dataset.state === 'open') openArc(pill.dataset.side); });
+for (const label of document.querySelectorAll('.arc-label')) {
+  label.addEventListener('click', () => openPanel(label.closest('.arc').classList.contains('encode') ? 'encode' : 'decode', label.dataset.panel));
 }
 
 // ---------- panel contents
@@ -881,9 +994,10 @@ function ringPoint(side, deg, r = RING.r) {
   return side === 'encode' ? [CX + r * Math.sin(a), RING.cyEnc - r * Math.cos(a)] : [CX + r * Math.sin(a), RING.cyDec + r * Math.cos(a)];
 }
 function orbAngles(n) {
-  const gap = n <= 3 ? 21.8 : Math.min(21.8, 64 / (n - 1));
+  const gap = n <= 3 ? 21.8 : 52 / (n - 1);
   return [...Array(n).keys()].map((i) => (i - (n - 1) / 2) * gap);
 }
+const orbRadius = (n) => (n <= 3 ? RING.r : 505); // longer rows sit a little further out, clear of the back button
 
 function buildPanel(side, key) {
   const spec = PANELS[key], body = $('panelBody');
@@ -897,7 +1011,7 @@ function buildPanel(side, key) {
       b.innerHTML = it.html;
       b.title = it.tip; b.setAttribute('aria-label', it.tip);
       b.dataset.v = it.v;
-      [b.dataset.x, b.dataset.y] = ringPoint(side, angles[i]);
+      [b.dataset.x, b.dataset.y] = ringPoint(side, angles[i], orbRadius(spec.items.length));
       b.style.transitionDelay = `${120 + 60 * i}ms, ${120 + 60 * i}ms, 0s, 0s, 0s, 0s, 0s`;
       b.addEventListener('click', () => choose(spec.key, it.v));
       body.appendChild(b);
@@ -908,20 +1022,14 @@ function buildPanel(side, key) {
   syncPanel();
 }
 
-// The back button sits where the design puts it (388, 350; mirrored for decode) unless a
-// long row of toggles needs the room, then just past the row's first toggle.
+// Toggles (and the back button) move with the object when the morph box needs the room.
 function placeOrbs() {
-  const side = panelEl.dataset.side, spec = PANELS[panelEl.dataset.key];
-  const [dx, dy] = panelEl.dataset.key === 'mode' && P.mode === 'morph' ? MORPH_SHIFT() : [0, 0];
+  const [dx, dy] = morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
   for (const b of $('panelBody').querySelectorAll('.orb')) {
     b.style.left = `${+b.dataset.x + dx}px`;
     b.style.top = `${+b.dataset.y + dy}px`;
   }
-  const n = spec?.items?.length || 0;
-  const [bx, by] = n > 3 ? ringPoint(side, orbAngles(n)[0] - 19, 470) : [422, side === 'encode' ? 384 : 640];
-  backAt = [bx + dx, by + dy];
-  $('back').style.left = `${backAt[0] - 34}px`;
-  $('back').style.top = `${backAt[1] - 34}px`;
+  if (!panelEl.hidden) placeBack(panelEl.dataset.side);
 }
 
 function syncPanel() {
@@ -946,7 +1054,7 @@ function choose(key, v) {
 
 // ---------- arc sliders for continuous settings: drag the knob round the ring
 function arcSlider(side, sl, r) {
-  const SPAN = 30, svgNS = 'http://www.w3.org/2000/svg';
+  const A0 = -24, A1 = 30, svgNS = 'http://www.w3.org/2000/svg'; // starts clear of the back button
   const wrap = document.createElement('div');
   wrap.className = 'slider-wrap';
   const svg = document.createElementNS(svgNS, 'svg');
@@ -956,11 +1064,11 @@ function arcSlider(side, sl, r) {
     return `M ${x0} ${y0} A ${r} ${r} 0 0 ${side === 'encode' ? 1 : 0} ${x1} ${y1}`;
   };
   const mk = (cls, d) => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('class', cls); p.setAttribute('d', d); svg.appendChild(p); return p; };
-  mk('track', arcPath(-SPAN, SPAN));
-  const fill = mk('fill', arcPath(-SPAN, -SPAN));
-  const hit = mk('hit', arcPath(-SPAN, SPAN));
+  mk('track', arcPath(A0, A1));
+  const fill = mk('fill', arcPath(A0, A0));
+  const hit = mk('hit', arcPath(A0, A1));
   const label = document.createElementNS(svgNS, 'text');
-  const [lx, ly] = ringPoint(side, -SPAN + 6, r + 28); // just outside the track's start
+  const [lx, ly] = ringPoint(side, A0 + 6, r + 28); // just outside the track's start
   label.setAttribute('x', lx); label.setAttribute('y', ly + 5); label.setAttribute('text-anchor', 'middle');
   label.textContent = sl.label;
   svg.appendChild(label);
@@ -970,7 +1078,7 @@ function arcSlider(side, sl, r) {
   knob.setAttribute('aria-label', sl.label);
   knob.setAttribute('aria-valuemin', sl.min); knob.setAttribute('aria-valuemax', sl.max);
   wrap.append(svg, knob);
-  const angleOf = (v) => -SPAN + (2 * SPAN * (v - sl.min)) / (sl.max - sl.min);
+  const angleOf = (v) => A0 + ((A1 - A0) * (v - sl.min)) / (sl.max - sl.min);
   const set = (v) => {
     v = Math.min(sl.max, Math.max(sl.min, Math.round(v / sl.step) * sl.step));
     v = +v.toFixed(4);
@@ -987,13 +1095,13 @@ function arcSlider(side, sl, r) {
     knob.style.left = `${x}px`; knob.style.top = `${y}px`;
     knob.textContent = sl.fmt(P[sl.key]);
     knob.setAttribute('aria-valuenow', P[sl.key]);
-    fill.setAttribute('d', arcPath(-SPAN, a));
+    fill.setAttribute('d', arcPath(A0, a));
   };
   const fromPointer = (e) => {
     const [sx, sy] = toStage(e.clientX, e.clientY), cy = side === 'encode' ? RING.cyEnc : RING.cyDec;
     let a = THREE.MathUtils.radToDeg(Math.atan2(sx - CX, side === 'encode' ? cy - sy : sy - cy));
-    a = Math.min(SPAN, Math.max(-SPAN, a));
-    set(sl.min + ((a + SPAN) / (2 * SPAN)) * (sl.max - sl.min));
+    a = Math.min(A1, Math.max(A0, a));
+    set(sl.min + ((a - A0) / (A1 - A0)) * (sl.max - sl.min));
   };
   const drag = (e) => {
     e.preventDefault();
@@ -1065,7 +1173,7 @@ async function enterHome() {
   try {
     status(`Loading ${objLabel()}…`);
     await loadMesh();
-    status(`${objLabel()} ready. ${HOVER ? 'Press ▶ to encode and read it, or hover it for settings.' : 'Press ▶ to encode and read it, or tap it for settings.'}`);
+    status(`${objLabel()} ready. Press ▶ to encode and read it, or ${HOVER ? 'click' : 'press'} and hold it for settings.`);
   } catch (err) { status(`⚠ ${err.message}`, true); } finally { S.loading = false; }
 }
 for (const b of document.querySelectorAll('[data-shape]')) b.addEventListener('click', () => chooseShape(b.dataset.shape));
@@ -1189,7 +1297,7 @@ function frame(now) {
 }
 
 // touch screens have no hover: say "tap" instead
-if (!HOVER) $('hint').textContent = 'tap or long-press';
+if (!HOVER) $('hint').textContent = 'press and hold';
 // compact windows fold the tools into one button, and the stats behind a tap
 $('hudMore').addEventListener('click', () => {
   const open = !$('hud').classList.contains('open');
