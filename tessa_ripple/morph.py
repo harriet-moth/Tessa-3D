@@ -9,9 +9,6 @@ import numpy as np
 
 from .mesh import edge_lengths, edges, load_decimated, replay_decimation
 
-STYLES = ("blend", "sweep")
-
-
 def align(b_verts, a_verts) -> np.ndarray:
     """B moved onto A: centroid on A's, uniformly scaled to A's RMS radius.
 

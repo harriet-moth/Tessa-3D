@@ -1,6 +1,8 @@
 # Tessa Ripple — Morph mode: implementation plan
 
 Status: implemented (see README, Morph). Desktop app only. Payload xyz (default) or radial.
+The *blend* style below was later removed: morph is now the basis sweep only, with the
+transition decode as the default (raw stays as an option).
 Meshes too large for one run are read in several batches (see Batching).
 
 ## What Morph does

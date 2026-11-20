@@ -83,12 +83,13 @@ def test_closest_point_correspondence_reports_coverage(tmp_path):
     assert m["method"] == "closest point" and 0.5 < m["coverage"] <= 1
 
 
-# --- M2: encode + blend ------------------------------------------------------------
-def test_blend_endpoints_noiseless(b_path):
-    e, p = morph(A, AF, b_path)
-    raw, raw_b = decode_raw(e, p)
-    assert mesh_error(A, morph_frame(e, raw, raw_b, 0.0)) < 0.02
-    assert mesh_error(e.target, morph_frame(e, raw, raw_b, 1.0)) < 0.03
+# --- M2: encode + read the endpoints -----------------------------------------------
+def test_sweep_endpoints_noiseless(b_path):
+    e, p = morph(A, AF, b_path)  # transition decode by default
+    assert p.sweep_decode == "transition"
+    for t, want in ((0.0, A), (1.0, e.target)):
+        raw, second = decode_raw(e, Params(**{**p.__dict__, "morph_t": t}))
+        assert second is None and mesh_error(want, morph_frame(e, raw, t)) < 0.03
     assert not np.allclose(e.target, A, atol=0.05)  # B really differs
 
 
@@ -106,16 +107,15 @@ def test_keys():
     base = Params(mode="morph", target="b.obj")
     assert base.encoder_key != Params(mode="morph", target="c.obj").encoder_key
     assert base.encoder_key != Params(mode="morph", target="b.obj", shared_topology=True).encoder_key
-    blend = Params(mode="morph", morph_style="blend")
-    assert blend.readout_key == Params(mode="morph", morph_style="blend", morph_t=0.5).readout_key
-    sweep = Params(mode="morph", morph_style="sweep")
-    assert sweep.readout_key != Params(mode="morph", morph_style="sweep", morph_t=0.5).readout_key
+    sweep = Params(mode="morph")
+    assert sweep.readout_key != Params(mode="morph", morph_t=0.5).readout_key
+    assert Params().readout_key == Params(morph_t=0.5).readout_key  # t only matters in morph
     assert Params(target="b.obj").encoder_key == Params().encoder_key  # only morph cares
 
 
 # --- M3: basis sweep ---------------------------------------------------------------
 def test_sweep_at_zero_matches_theta_mode(b_path):
-    e, p = morph(A, AF, b_path, morph_style="sweep", shots=20_000)
+    e, p = morph(A, AF, b_path, sweep_decode="raw", shots=20_000)
     sweep = read_mesh(e, p)
     theta = Params(clamp=morph_clamp(p), shots=20_000)
     z = read_mesh(encode_mesh(A, AF, theta), theta)
@@ -123,9 +123,9 @@ def test_sweep_at_zero_matches_theta_mode(b_path):
 
 
 def test_sweep_at_one_matches_closed_form(b_path):
-    e, p = morph(A, AF, b_path, morph_style="sweep", morph_t=1.0, shots=65_536)
+    e, p = morph(A, AF, b_path, sweep_decode="raw", morph_t=1.0, shots=65_536)
     got = decode_raw(e, p)[0].reshape(e.slots.shape)
-    want = sweep_values(e, np.pi / 2)
+    want = sweep_values(e, np.pi / 2, "raw")
     lo, hi = e.enc.ranges[0]
     assert np.abs(got - want).mean() / (hi - lo) < 0.01
     # the opposite rotation sign would read cos(-φ)... sin θ: compare against a flipped φ
@@ -142,9 +142,9 @@ def test_a_equals_b(tmp_path):
     v, f = cube(5)  # xyz spans exactly -1..1, so with no headroom the values fill the range
     path = write_obj(tmp_path / "a.obj", v, f)
     e, p = morph(v, f, str(path), payload="xyz", headroom=0.0, shots=65_536)
-    raw, raw_b = decode_raw(e, p)
-    assert mesh_error(morph_frame(e, raw, raw_b, 0), morph_frame(e, raw, raw_b, 1)) < 0.02
-    q = Params(**{**p.__dict__, "morph_style": "sweep", "morph_t": 1.0})
+    ends = [read_mesh(e, Params(**{**p.__dict__, "morph_t": t})) for t in (0.0, 1.0)]
+    assert mesh_error(*ends) < 0.02  # transition: A = B reads the same at both ends
+    q = Params(**{**p.__dict__, "sweep_decode": "raw", "morph_t": 1.0})
     lo, hi = e.enc.ranges[0]
     x_in = (e.prep.reference - lo) / (hi - lo)
     x_out = (decode_raw(e, q)[0] - lo) / (hi - lo)
@@ -164,7 +164,7 @@ def test_sweep_circuit_takes_one_angle_per_data_qubit(b_path):
         sweep_circuit(e, np.zeros(g + 1))
     # per-qubit alpha: the closed form follows each qubit's own angle
     alpha = np.where(np.arange(g) % 2, np.pi / 2, 0.0)
-    vals = sweep_values(e, alpha)
+    vals = sweep_values(e, alpha, "raw")
     cell = np.searchsorted(cells(e.graph)[:, 1], e.slots, side="right")
     at0 = alpha[cell] == 0
     assert np.allclose(vals[at0], e.prep.reference.reshape(e.slots.shape)[at0])
@@ -186,8 +186,7 @@ def test_batching_splits_suzanne_into_even_runs(suzanne_batched):
     for k in range(2):  # every vertex in exactly one batch, its own slot within the batch
         s = e.slots[e.batches == k].ravel()
         assert len(set(s)) == len(s)
-    raw, raw_b = decode_raw(e, p)
-    assert mesh_error(v, morph_frame(e, raw, raw_b, 0.0)) < 0.03
+    assert mesh_error(v, read_mesh(e, p)) < 0.03
 
 
 @pytest.mark.parametrize("backend, runs", [("phoenix", 2), ("fez", 4)])
@@ -229,15 +228,16 @@ def test_a_mesh_that_fits_is_one_run_as_before(b_path):
     assert np.array_equal(e.slots, encode_mesh(A, AF, Params(mode="colour")).slots)
 
 
-def test_morph_frames_sweep_t(b_path):
-    e, p = morph(A, AF, b_path, morph_style="sweep")
+@pytest.mark.parametrize("decode", ["raw", "transition"])
+def test_morph_frames_sweep_t(b_path, decode):
+    e, p = morph(A, AF, b_path, sweep_decode=decode)
     vals, second = run_frames(e, p, 3, ts=[0.0, 0.5, 1.0])
     assert vals.shape == (3, e.slots.size) and second is None
     assert mesh_error(A, restore(e, vals[0])) < 0.02
     for t, raw in zip([0.0, 0.5, 1.0], vals):  # each frame read at its own angle
-        want = morph_expected(e, t, "sweep")
-        assert mesh_error(want, morph_frame(e, raw, None, t)) < 0.02
-    assert mesh_error(morph_expected(e, 0, "sweep"), morph_expected(e, 1, "sweep")) > 0.03
+        want = morph_expected(e, t, sweep_decode=decode)
+        assert mesh_error(want, morph_frame(e, raw, t)) < 0.03
+    assert mesh_error(morph_expected(e, 0, sweep_decode=decode), morph_expected(e, 1, sweep_decode=decode)) > 0.03
 
 
 def test_radial_sweep_keeps_the_mesh_size(b_path):
@@ -246,7 +246,7 @@ def test_radial_sweep_keeps_the_mesh_size(b_path):
     r = e.prep.reference
     assert lo < r.min() and r.max() < hi and abs((lo + hi) / 2 - r.mean()) < 1e-9  # centred on A's mean radius
     rms = lambda x: np.sqrt(((x - e.centre) ** 2).sum(1).mean())  # noqa: E731
-    size = [rms(morph_expected(e, t, "sweep", True)) / rms(A) for t in np.linspace(0, 1, 9)]
+    size = [rms(morph_expected(e, t, True, "raw")) / rms(A) for t in np.linspace(0, 1, 9)]
     assert max(abs(np.array(size) - 1)) < 0.03
 
 
@@ -264,7 +264,7 @@ def test_transition_closed_form_runs_exactly_from_a_to_b(b_path):
 
 @pytest.mark.parametrize("payload", ["radial", "xyz"])
 def test_transition_decode_matches_its_closed_form(b_path, payload):
-    e, p = morph(A, AF, b_path, payload=payload, morph_style="sweep", sweep_decode="transition", shots=65_536)
+    e, p = morph(A, AF, b_path, payload=payload, shots=65_536)
     lo, hi = e.enc.ranges[0]
     for t in (0.5, 1.0):
         q = Params(**{**p.__dict__, "morph_t": t})
@@ -274,7 +274,7 @@ def test_transition_decode_matches_its_closed_form(b_path, payload):
 
 
 def test_transition_frames_share_one_z_reference(b_path, monkeypatch):
-    e, p = morph(A, AF, b_path, morph_style="sweep", sweep_decode="transition")
+    e, p = morph(A, AF, b_path)
     seeds, real = [], bridge.sampler
     monkeypatch.setattr(bridge, "sampler", lambda g, q, s: seeds.append(s) or real(g, q, s))
     vals, _ = run_frames(e, p, 3, ts=[0.0, 0.5, 1.0])
@@ -291,9 +291,8 @@ def test_transition_keeps_the_size_when_a_equals_b(tmp_path):
     e, _ = morph(A, AF, str(path), payload="xyz")
     rms = lambda x: np.sqrt(((x - e.centre) ** 2).sum(1).mean())  # noqa: E731
     for t in np.linspace(0, 1, 5):
-        assert rms(morph_expected(e, t, "sweep", sweep_decode="transition")) == pytest.approx(rms(A))
-    assert Params(mode="morph", morph_style="sweep").readout_key != \
-        Params(mode="morph", morph_style="sweep", sweep_decode="transition").readout_key
+        assert rms(morph_expected(e, t)) == pytest.approx(rms(A))
+    assert Params(mode="morph").readout_key != Params(mode="morph", sweep_decode="raw").readout_key
 
 
 def test_sweep_circuit_is_tessas_tilted_for_one_angle(b_path):

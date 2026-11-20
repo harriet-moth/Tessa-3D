@@ -257,10 +257,13 @@ loading stage, and the edge readout is the first step past loading.
 ## Morph (desktop only)
 
 **Mode** *morph A→B* carries two meshes in one state. Mesh A (the selected
-**Shape**) sets every slot's θ and is read in Z. Mesh B (an uploaded OBJ) sets its φ
-and is read in X. It is Tessa's pair mode, as in *θ + colour φ*, with B's
-geometry in φ instead of a hue: no extra qubits or two-qubit gates, only the
-second measurement setting.
+**Shape**) sets every slot's θ and mesh B (an uploaded OBJ) sets its φ. It is
+Tessa's pair mode, as in *θ + colour φ*, with B's geometry in φ instead of a hue: no
+extra qubits or two-qubit gates. The morph itself is a **basis sweep**: at **Morph t**
+every data qubit gets RY(−α), α = t·π/2, before its Z measurement, so it reads
+cos α Z + sin α X. At t = 0 that is A's Z readout, at t = 1 B's X readout, and every
+t in between is a new readout of the same state in a turned basis. Nothing is mixed
+classically.
 
 1. Choose **Mode** *morph A→B*. **Payload** switches to *xyz* (radial still
    works), and **Clamp φ** greys out and follows **Clamp θ** (0 = Tessa's pair
@@ -282,12 +285,12 @@ How B is matched to A:
 - **Colour** *morph Δ* shows |B − A| per vertex, so you can see where the shapes
   disagree before running anything.
 
-**Style**:
+Two ways turn a tilted readout into a frame:
 
-| Style | Each frame | Morph t | At t = 1 |
-|---|---|---|---|
-| *blend* | Tessa's pair decode: A′ from Z, B′ from X (two settings) | lerp A′ → B′ after decoding, so moving t needs no new readout | B′, with B's own (larger) noise |
-| *basis sweep* | one setting: RY(−α) on every data qubit, then Z, with α = t·π/2 | picks the measurement axis, so every t is a new readout | raw decode: "B seen through A", cos α cos θ + sin α sin θ cos φ; **Transition decode**: exactly B |
+| Decode | At t = 1 |
+|---|---|
+| **Transition decode** (on by default) | exactly B |
+| raw (untick it) | "B seen through A": arccos(cos α cos θ + sin α sin θ cos φ) read back through A's angle map |
 
 **Transition decode** (Morph options) turns each tilted readout into a frame the way
 Tessa's transition does (`tessa.hardware.pipeline._transition_frames`, the same
@@ -345,16 +348,18 @@ The mesh is then K separate quantum states, and the info panel says so. On a chi
 Measured (Suzanne at *high*, 4,096 shots, error as a fraction of the bounding box,
 each against its noiseless reference):
 
-| B | Payload | Backend | Runs | A at t = 0 | B at t = 1 | Sweep at t = 1 |
-|---|---|---|---|---|---|---|
-| sculpted Suzanne (shared topology) | xyz | noiseless | 2 | 2.9 % | 3.0 % | 4.3 % |
-| | xyz | phoenix | 2 | 6.7 % | 6.1 % | 7.8 % |
-| | radial | noiseless | 1 | 0.9 % | 0.9 % | 1.0 % |
-| | radial | phoenix | 1 | 1.6 % | 1.4 % | 1.3 % |
-| UV sphere 24×16 (closest point, 78 % covered) | xyz | noiseless | 2 | 2.8 % | 4.0 % | 3.9 % |
-| | xyz | phoenix | 2 | 6.7 % | 7.8 % | 7.3 % |
-| | radial | noiseless | 1 | 0.8 % | 1.1 % | 1.0 % |
-| | radial | phoenix | 1 | 1.6 % | 1.1 % | 1.0 % |
+| B | Payload | Backend | Runs | A at t = 0 | B at t = 1 |
+|---|---|---|---|---|---|
+| sculpted Suzanne (shared topology) | xyz | noiseless | 2 | 3.1 % | 3.2 % |
+| | xyz | phoenix | 2 | 6.8 % | 5.9 % |
+| | radial | noiseless | 1 | 0.9 % | 1.0 % |
+| | radial | phoenix | 1 | 1.6 % | 1.4 % |
+| UV sphere 24×16 (closest point, 78 % covered) | xyz | noiseless | 2 | 2.8 % | 4.1 % |
+| | xyz | phoenix | 2 | 6.7 % | 7.7 % |
+| | radial | noiseless | 1 | 0.8 % | 1.1 % |
+| | radial | phoenix | 1 | 1.6 % | 1.1 % |
+
+(Transition decode, each frame against its noiseless reference.)
 
 A frame costs one readout per run, so batched morphs on the chips take a few
 seconds per frame. The status line gives an estimate before **Run frames**.

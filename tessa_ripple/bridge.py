@@ -34,7 +34,7 @@ from tessa.hardware.pipeline import _angle_readout, _tilted, _transition_frames,
 from tessa.symbols import _slot_ranges
 
 from .mesh import bfs_order, edge_lengths, edges, grow_patches, importance
-from .morph import STYLES, correspond, slerp
+from .morph import correspond, slerp
 
 MAX_ROWS, MAX_COLS = 10, 12  # largest lattice: the whole ibm_phoenix chip, turned on its side
 PHOENIX_ROWS, PHOENIX_COLS = 12, 10  # ibm_phoenix: 12 rows of 10 qubits, row-major
@@ -54,10 +54,12 @@ MODES = ("theta", "phi", "colour", "split", "morph")
 # on the next-best data qubits (spreading the best ones) or reuse the same ones
 BATCH_PLACEMENTS = ("next-best", "same")
 BATCH_SEED_STEP = 1000  # batch k of a readout with seed s uses seed s + 1000 k
-# how a basis-sweep readout becomes values: "raw" maps arccos(E) through A's map ("B
-# seen through A" at t = 1); "transition" divides out sin(theta) with an alpha = 0 (Z)
-# readout, as Tessa's transition and InterwovenQPIXL's tilted_readout.py do (exactly B)
-SWEEP_DECODES = ("raw", "transition")
+# Morph is read by a basis sweep: at t the data qubits are measured along
+# cos(alpha) Z + sin(alpha) X, alpha = t * pi/2. How that readout becomes values:
+# "transition" (default) divides out sin(theta) with an alpha = 0 (Z) readout, as Tessa's
+# transition and InterwovenQPIXL's tilted_readout.py do (exactly A at t = 0, exactly B at
+# t = 1); "raw" maps arccos(E) through A's map ("B seen through A" at t = 1)
+SWEEP_DECODES = ("transition", "raw")
 MODE_ALIASES = {"single": "theta", "pair": "colour"}  # the names before the split mode
 DRR_METHODS = DYNAMIC_RANGE_METHODS  # Tessa's dynamic range recovery methods
 
@@ -104,9 +106,8 @@ class Params:
         shots: Shots per measurement setting.
         noise_strength: Scales the "flat noise" rates only.
         seed: Sampler seed of the first readout.
-        morph_style: Morph: one of morph.STYLES ("blend" or "sweep").
-        morph_t: Morph: blend weight, or sweep angle t * pi/2.
-        sweep_decode: Morph sweep: one of SWEEP_DECODES.
+        morph_t: Morph: the basis sweep reads at alpha = t * pi/2 (0 = A, 1 = B).
+        sweep_decode: Morph: one of SWEEP_DECODES.
     """
     # encoder (changing any of these re-encodes)
     payload: str = "radial"
@@ -126,9 +127,8 @@ class Params:
     shots: int = 4096
     noise_strength: float = 1.0
     seed: int = 0
-    morph_style: str = "blend"
     morph_t: float = 0.0
-    sweep_decode: str = "raw"
+    sweep_decode: str = "transition"
 
     @property
     def canonical_mode(self) -> str:
@@ -161,17 +161,14 @@ class Params:
     def readout_key(self):
         """Cache key of everything that changes a readout of one encoding.
 
-        Blend applies t after decoding, so only the sweep (which reads in a basis set
-        by t) keys on ``morph_t`` and ``sweep_decode``.
+        Morph keys on ``morph_t`` and ``sweep_decode``: the sweep reads in a basis set by t.
 
         Returns:
             tuple: Hashable key; equal keys give the same decoded values.
         """
         morph = self.canonical_mode == "morph"
-        # blend applies t after decoding; the sweep reads in a basis set by t
         return (self.shots, self.backend, self.noise_strength, self.seed,
-                *((self.morph_style,) if morph else ()),
-                *((self.morph_t, self.sweep_decode) if morph and self.morph_style == "sweep" else ()))
+                *((self.morph_t, self.sweep_decode) if morph else ()))
 
 
 @dataclass(frozen=True)
@@ -1144,7 +1141,7 @@ def transition_values(e: Encoded, angle_alpha, angle_z, alpha) -> np.ndarray:
 def decode_raw(e: Encoded, p: Params, seed: int | None = None, reference=None):
     """One readout of the encoding, before DRR.
 
-    Morph sweep reads one field at alpha = p.morph_t * pi/2; with
+    Morph is a basis sweep: it reads one field at alpha = p.morph_t * pi/2; with
     ``p.sweep_decode == "transition"`` it is turned into values with an alpha = 0
     readout (:func:`tilted_angles`).
 
@@ -1157,11 +1154,11 @@ def decode_raw(e: Encoded, p: Params, seed: int | None = None, reference=None):
 
     Returns:
         tuple: ``(values, second)``: values (N*comps,), and the colour (N,) in colour
-        mode, B's raw values (N*comps,) in morph blend, else None.
+        mode, else None.
     """
     seed = p.seed if seed is None else seed
     runs = e.parts or ((e.circuit, e.enc),)
-    if e.mode == "morph" and p.morph_style == "sweep":
+    if e.mode == "morph":
         alpha = p.morph_t * np.pi / 2
         if p.sweep_decode == "transition":
             angle = tilted_angles(e, p, seed, alpha)
@@ -1172,8 +1169,8 @@ def decode_raw(e: Encoded, p: Params, seed: int | None = None, reference=None):
     a, b = _read(e, p, seed, runs)
     if e.mode == "split":  # each value from its own field
         return np.where(e.fields == 1, b, a).ravel(), None
-    if e.mode == "morph":
-        return a.ravel(), (None if b is None else b.ravel())
+    if e.mode == "morph":  # the sweep circuits read one field
+        return a.ravel(), None
     return a.ravel(), (None if b is None else b.mean(1))
 
 
@@ -1226,17 +1223,15 @@ def morph_dirs(e: Encoded, t: float, a_dirs_only: bool = False):
     return e.dirs if a_dirs_only else slerp(e.dirs, e.dirs_b, t)
 
 
-def morph_frame(e: Encoded, raw, raw_b, t: float, drr: str = "none", a_dirs_only: bool = False):
+def morph_frame(e: Encoded, raw, t: float, drr: str = "none", a_dirs_only: bool = False):
     """One decoded morph frame at t.
 
-    Blend (``raw_b`` given): lerp of decoded A and B, done classically after one
-    pair readout. Sweep (``raw_b`` None): the readout already holds the morph; it
-    only needs its direction at t (radial).
+    The basis-sweep readout already holds the morph; it only needs its direction at
+    t (radial payload).
 
     Args:
         e: A morph encoding.
-        raw: (N*comps,) decoded A values (or the sweep's values).
-        raw_b: (N*comps,) decoded B values (blend), or None (sweep).
+        raw: (N*comps,) the sweep's decoded values at t.
         t: Morph parameter in [0, 1].
         drr: One of DRR_METHODS.
         a_dirs_only: Radial: keep A's directions.
@@ -1244,14 +1239,10 @@ def morph_frame(e: Encoded, raw, raw_b, t: float, drr: str = "none", a_dirs_only
     Returns:
         np.ndarray: (N, 3) positions.
     """
-    d = morph_dirs(e, t, a_dirs_only)
-    if raw_b is None:
-        return restore(e, raw, drr, d)
-    va, vb = _values(e, raw, e.prep, drr), _values(e, raw_b, e.prep_b, drr)
-    return from_payload(e, (1 - t) * va + t * vb, d)
+    return restore(e, raw, drr, morph_dirs(e, t, a_dirs_only))
 
 
-def sweep_values(e: Encoded, alpha, decode: str = "raw") -> np.ndarray:
+def sweep_values(e: Encoded, alpha, decode: str = "transition") -> np.ndarray:
     """Noiseless sweep readout in value units.
 
     Raw: angle = arccos(cos a cos θ + sin a sin θ cos φ), mapped back through A's
@@ -1262,7 +1253,7 @@ def sweep_values(e: Encoded, alpha, decode: str = "raw") -> np.ndarray:
     Args:
         e: A morph encoding.
         alpha: Scalar, or one angle per data qubit.
-        decode: "raw" or "transition".
+        decode: One of SWEEP_DECODES.
 
     Returns:
         np.ndarray: (N, comps) values.
@@ -1279,26 +1270,19 @@ def sweep_values(e: Encoded, alpha, decode: str = "raw") -> np.ndarray:
     return (lo + (hi - lo) * m.values_from_angles(ang, e.enc.clamps)).reshape(e.slots.shape)
 
 
-def morph_expected(e: Encoded, t: float, style: str = "blend", a_dirs_only: bool = False,
-                   sweep_decode: str = "raw"):
+def morph_expected(e: Encoded, t: float, a_dirs_only: bool = False, sweep_decode: str = "transition"):
     """Noiseless reference positions of a morph frame at t, for error colouring.
 
     Args:
         e: A morph encoding.
         t: Morph parameter in [0, 1].
-        style: "blend" or "sweep".
         a_dirs_only: Radial: keep A's directions.
-        sweep_decode: Sweep only: "raw" or "transition".
+        sweep_decode: One of SWEEP_DECODES.
 
     Returns:
         np.ndarray: (N, 3) positions.
     """
-    d = morph_dirs(e, t, a_dirs_only)
-    if style == "sweep":
-        return from_payload(e, sweep_values(e, t * np.pi / 2, sweep_decode), d)
-    va = e.prep.reference.reshape(e.slots.shape)
-    vb = e.prep_b.reference.reshape(e.slots.shape)
-    return from_payload(e, (1 - t) * va + t * vb, d)
+    return from_payload(e, sweep_values(e, t * np.pi / 2, sweep_decode), morph_dirs(e, t, a_dirs_only))
 
 
 def read_mesh(e: Encoded, p: Params, seed: int | None = None, drr: str = "none") -> np.ndarray:
@@ -1313,9 +1297,9 @@ def read_mesh(e: Encoded, p: Params, seed: int | None = None, drr: str = "none")
     Returns:
         np.ndarray: (N, 3) decoded positions.
     """
-    raw, second = decode_raw(e, p, seed)
+    raw, _ = decode_raw(e, p, seed)
     if e.mode == "morph":
-        return morph_frame(e, raw, second, p.morph_t, drr)
+        return morph_frame(e, raw, p.morph_t, drr)
     return restore(e, raw, drr)
 
 

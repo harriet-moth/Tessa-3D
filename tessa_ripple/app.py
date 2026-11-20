@@ -43,7 +43,6 @@ COLOURS = ("error", "qubit", "φ colour", "morph Δ", "plain")
 # Mode: what each slot's qubit holds (bridge.MODES)
 MODE_LABELS = {"shape θ (Z)": "theta", "shape φ (X)": "phi",
                "θ + colour φ": "colour", "shape θ+φ": "split", "morph A→B": "morph"}
-STYLE_LABELS = {"blend": "blend", "basis sweep": "sweep"}
 DELTA_CMAP = colormaps["viridis"]
 PLAIN = np.array(colormaps["Blues"](0.45))
 
@@ -230,7 +229,7 @@ class App:
 
         for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Placement", "Clamp θ (π)",
                      "Clamp φ (π)", "Compression %", "Quant bits", "Headroom", "Shots (log2)",
-                     "Noise × (flat)", "Seed", "Style", "Morph t", "Batch placement"):
+                     "Noise × (flat)", "Seed", "Morph t", "Batch placement"):
             w = self.w[name]
             (w.on_clicked if isinstance(w, RadioButtons) else w.on_changed)(self.quantum_changed)
         self.w["Morph"].on_clicked(self.quantum_changed)
@@ -263,7 +262,7 @@ class App:
         """The Morph options inset (lower left of the 3D view, above the colour legends),
         shown only while Mode is morph.
 
-        Adds the Style, Morph, Upload B, Morph t and Batch placement widgets to ``self.w``
+        Adds the Morph, Upload B, Morph t and Batch placement widgets to ``self.w``
         and sets ``self.morph_artists``/``self.batch_artists``, all hidden.
         """
         fig, x0, y0 = self.fig, 0.008, 0.11
@@ -271,24 +270,24 @@ class App:
         box.set_xticks([])
         box.set_yticks([])
         box.text(0.03, 0.96, "Morph options", transform=box.transAxes, fontsize=8, weight="bold", va="top")
-        box.text(0.03, 0.87, "Style", transform=box.transAxes, fontsize=7.5, va="top")
-        self.w["Style"] = RadioButtons(fig.add_axes([x0 + 0.004, y0 + 0.17, 0.085, 0.05]), list(STYLE_LABELS))
-        self.w["Morph"] = CheckButtons(fig.add_axes([x0 + 0.093, y0 + 0.145, 0.118, 0.095]),
+        box.text(0.03, 0.87, "Basis sweep: t turns the readout from Z (A) to X (B)",
+                 transform=box.transAxes, fontsize=7, va="top")
+        self.w["Morph"] = CheckButtons(fig.add_axes([x0 + 0.004, y0 + 0.151, 0.2, 0.066]),
                                        ["Shared topology", "Hold t", "A's directions only",
                                         "Transition decode"],
-                                       [False, False, False, False])
+                                       [False, False, False, True])
         self.w["Upload B"] = Button(fig.add_axes([x0 + 0.006, y0 + 0.118, 0.07, 0.03]), "Upload B (.obj)")
         self.b_label = fig.text(x0 + 0.082, y0 + 0.133, "no B yet", fontsize=7, family="monospace", va="center")
         self.w["Morph t"] = Slider(fig.add_axes([x0 + 0.05, y0 + 0.085, 0.13, 0.02]), "Morph t", 0, 1, valinit=0)
         self.batch_title = fig.text(x0 + 0.006, y0 + 0.062, "Batch placement", fontsize=7.5)
         self.w["Batch placement"] = RadioButtons(fig.add_axes([x0 + 0.004, y0 + 0.008, 0.1, 0.05]),
                                                  ["next-best qubits", "same qubits"])
-        for w in (self.w["Style"], self.w["Morph"], self.w["Batch placement"]):
+        for w in (self.w["Morph"], self.w["Batch placement"]):
             for t in w.labels:
                 t.set_fontsize(7.5)
         self.w["Upload B"].label.set_fontsize(7.5)
         self.w["Morph t"].label.set_fontsize(8)
-        self.morph_artists = [box, self.b_label, *(self.w[k].ax for k in ("Style", "Morph", "Upload B", "Morph t"))]
+        self.morph_artists = [box, self.b_label, *(self.w[k].ax for k in ("Morph", "Upload B", "Morph t"))]
         self.batch_artists = [self.batch_title, self.w["Batch placement"].ax]
         for a in self.morph_artists + self.batch_artists:
             a.set_visible(False)
@@ -353,7 +352,7 @@ class App:
                       batch_placement=self.val("Batch placement").split()[0],
                       shots=2 ** int(self.val("Shots (log2)")),
                       noise_strength=self.val("Noise × (flat)"), seed=int(self.val("Seed")),
-                      morph_style=STYLE_LABELS[self.val("Style")], morph_t=float(self.val("Morph t")),
+                      morph_t=float(self.val("Morph t")),
                       sweep_decode="transition" if morph["transition"] else "raw")
 
     def toggles(self):
@@ -553,8 +552,8 @@ class App:
         self.redraw()
 
     def decode_key(self, p, n=None):
-        """What the cached frames were read with. The sweep's frames also depend on each
-        frame's t; blend applies t afterwards.
+        """What the cached frames were read with. Morph frames also depend on each
+        frame's t (the basis sweep reads at that t).
 
         Args:
             p: The readout's Params.
@@ -564,7 +563,7 @@ class App:
             tuple: (enc_key, p.readout_key, ts marker) to compare with ``self.raw_key``.
         """
         n, ts = n or len(self.raw), ()
-        if p.mode == "morph" and p.morph_style == "sweep" and not self.morph_opts()["hold"] and n > 1:
+        if p.mode == "morph" and not self.morph_opts()["hold"] and n > 1:
             p, ts = replace(p, morph_t=0.0), ("t 0 → 1", n)  # the slider's t is not used
         return (self.enc_key, p.readout_key, ts)
 
@@ -719,9 +718,8 @@ class App:
         Returns:
             list[np.ndarray]: (N, 3) expected positions per t.
         """
-        e, style = self.encoded, STYLE_LABELS[self.val("Style")]
         o = self.morph_opts()
-        return [morph_expected(e, t, style, o["a_dirs"], "transition" if o["transition"] else "raw")
+        return [morph_expected(self.encoded, t, o["a_dirs"], "transition" if o["transition"] else "raw")
                 for t in ts]
 
     def positions(self):
@@ -742,12 +740,9 @@ class App:
             return [self.verts]
         e, drr, n = self.encoded, self.val("DRR"), len(self.raw)
         if self.morphing:
-            sweep = STYLE_LABELS[self.val("Style")] == "sweep"
-            ts = self.raw_ts if sweep else self.frame_ts(n)  # blend: t is applied now
             a_dirs = self.morph_opts()["a_dirs"]
-            second = [None] * n if self.colours is None else self.colours
-            self.decoded = [morph_frame(e, r, b, t, drr, a_dirs) for r, b, t in zip(self.raw, second, ts)]
-            refs = self.morph_refs(ts)
+            self.decoded = [morph_frame(e, r, t, drr, a_dirs) for r, t in zip(self.raw, self.raw_ts)]
+            refs = self.morph_refs(self.raw_ts)
         else:
             self.decoded = [restore(e, r, drr) for r in self.raw]
             refs = [self.verts] * n
@@ -870,10 +865,8 @@ class App:
             if self.raw is None:
                 head = f"Morph · noiseless preview at t = {self.val('Morph t'):.2f} (press Run)"
             else:
-                style = self.val("Style")
-                if style == "basis sweep":
-                    style += " (transition decode)" if self.morph_opts()["transition"] else " (raw)"
-                head = f"Morph {style} · " + head
+                decode = "transition decode" if self.morph_opts()["transition"] else "raw"
+                head = f"Morph basis sweep ({decode}) · " + head
         self.ax.set_title(f"{head}{err}\nstep {self.idx + 1}/{len(self.seq)} · colour: "
                           f"{self.colour_label}{edge_txt}", fontsize=9)
         self.fig.canvas.draw_idle()

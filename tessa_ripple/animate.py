@@ -13,8 +13,8 @@ from .mesh import write_obj
 def run_frames(e: Encoded, p: Params, n: int, progress=None, ts=None):
     """``n`` independent readouts of one encoding, with seeds seed, seed + 1, ...
 
-    ``ts`` (morph) gives each frame its own t: the sweep reads each frame at that t's
-    angle, blend applies it afterwards. A transition-decoded sweep shares one Z
+    ``ts`` (morph) gives each frame its own t: the basis sweep reads each frame at that
+    t's angle. A transition-decoded sweep shares one Z
     (alpha = 0) readout across all frames, as Tessa's transition does.
 
     Args:
@@ -27,11 +27,11 @@ def run_frames(e: Encoded, p: Params, n: int, progress=None, ts=None):
     Returns:
         (values, second): values (n, N*comps) raw decoded values; second (n, ...)
         stacked second outputs of :func:`~tessa_ripple.bridge.decode_raw` (colour
-        (n, N) in colour mode, B's values (n, N*comps) in morph blend), else None.
+        (n, N) in colour mode), else None.
     """
     values, colours = [], []
     reference = None
-    if e.mode == "morph" and p.morph_style == "sweep" and p.sweep_decode == "transition":
+    if e.mode == "morph" and p.sweep_decode == "transition":
         # one Z (alpha = 0) readout serves every frame, as in Tessa's transition: at
         # t = 0 the first frame is exactly this readout
         reference = tilted_angles(e, p, p.seed, 0.0)
