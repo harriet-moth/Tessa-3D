@@ -8,6 +8,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const $ = (id) => document.getElementById(id);
 const app = $('app'), home = $('home'), menuEl = $('menu'), panelEl = $('panel');
 const W_STAGE = 1440, H_STAGE = 1024, CX = 720, CY = 512;
+const HOVER = matchMedia('(hover: hover)').matches;
 const OBJ_R = 270; // stage px: hovering inside this radius of the object opens the menu
 const FAR_R = 450; // ... and moving beyond this (past the arcs) closes it
 
@@ -25,11 +26,34 @@ const S = { mesh: null, meshKey: null, data: null, run: null, orig: null, frames
   objText: null, objName: null, objTextB: null, objNameB: null };
 
 // ---------- stage scaling: the Figma frame (1440 × 1024) fitted to the window
-let scale = 1;
+// The design's content sits in the middle ~1100 px of the frame, so narrow windows crop
+// the decorative sides rather than shrinking everything. Portrait windows use a narrower
+// view (760 px on phones, 900 on tablets) and a taller one: the extra height above and
+// below the frame (E) moves the logo and titles up and the run buttons down, and the
+// morph drop box goes under the object.
+let scale = 1, portrait = false, compact = false;
+const layout = { E: 0, T: 0, B: 0, vl: 0 };
 function fitStage() {
-  scale = Math.min(innerWidth / W_STAGE, innerHeight / H_STAGE);
+  const w = innerWidth, h = innerHeight;
+  portrait = w / h < 0.9;
+  compact = portrait || w < 900;
+  const minW = portrait ? (w < 600 ? 760 : 900) : 1100;
+  // portrait keeps ~40 px under the frame for the status line
+  scale = Math.min(w / minW, (h - (portrait ? 40 : 0)) / H_STAGE, Math.max(w / W_STAGE, h / H_STAGE));
+  layout.E = Math.max(0, (h / scale - H_STAGE) / 2);
+  layout.T = portrait ? Math.min(layout.E, 140) : 0;
+  // run buttons: down into spare height, but always clear of the status line (may be < 0)
+  layout.B = portrait ? Math.min(layout.E - 44 / scale, 220) : 0;
+  layout.vl = CX - w / scale / 2; // stage x of the window's left edge
+  app.classList.toggle('portrait', portrait);
+  app.classList.toggle('compact', compact);
   app.style.setProperty('--s', scale);
+  app.style.setProperty('--T', `${layout.T}px`);
+  app.style.setProperty('--B', `${layout.B}px`);
+  app.style.setProperty('--vl', `${Math.max(0, layout.vl)}px`);
   resize();
+  if (!panelEl.hidden) placeOrbs();
+  syncShift();
 }
 const toStage = (x, y) => [(x - innerWidth / 2) / scale + CX, (y - innerHeight / 2) / scale + CY];
 
@@ -690,9 +714,11 @@ function setScreen(name) {
 // for the morph drop box)
 function setShift(x, y) { app.style.setProperty('--ox', `${x}px`); app.style.setProperty('--oy', `${y}px`); }
 let shift = [0, 0];
+// the morph box sits right of the object (design) or, in portrait, below it
+const MORPH_SHIFT = () => (portrait ? [0, -100] : [-240, 10]);
 function syncShift() {
   const morphBox = !panelEl.hidden && panelEl.dataset.key === 'mode' && P.mode === 'morph';
-  shift = morphBox ? [-240, 10] : menuEl.dataset.state === 'open' ? [0, 26] : [0, 0];
+  shift = morphBox ? MORPH_SHIFT() : menuEl.dataset.state === 'open' ? [0, 26] : [0, 0];
   setShift(...shift);
 }
 
@@ -886,7 +912,7 @@ function buildPanel(side, key) {
 // long row of toggles needs the room, then just past the row's first toggle.
 function placeOrbs() {
   const side = panelEl.dataset.side, spec = PANELS[panelEl.dataset.key];
-  const dx = panelEl.dataset.key === 'mode' && P.mode === 'morph' ? -240 : 0, dy = dx ? 10 : 0;
+  const [dx, dy] = panelEl.dataset.key === 'mode' && P.mode === 'morph' ? MORPH_SHIFT() : [0, 0];
   for (const b of $('panelBody').querySelectorAll('.orb')) {
     b.style.left = `${+b.dataset.x + dx}px`;
     b.style.top = `${+b.dataset.y + dy}px`;
@@ -1017,18 +1043,30 @@ async function chooseShape(name) {
   syncDrawer();
   await enterHome();
 }
+const MAX_OBJ = 3_000_000; // characters; the server refuses more (Vercel caps requests at 4.5 MB)
+// A dropped or picked file goes straight to the home screen, which shows the loading
+// pulse while the file is read and sent; problems are reported there.
 async function loadFileA(file) {
-  S.objText = await file.text(); S.objName = file.name; P.resolution = 2;
-  syncDrawer();
-  await enterHome();
+  setScreen('home');
+  S.loading = true;
+  status(`Loading ${file.name}…`);
+  try {
+    const text = await file.text();
+    if (text.length > MAX_OBJ) throw new Error(`${file.name} is too large (${(text.length / 1e6).toFixed(1)} MB; the limit is 3 MB). Try a decimated export.`);
+    if (!/^\s*v\s/m.test(text)) throw new Error(`${file.name} has no vertices ('v' lines): is it an OBJ?`);
+    S.objText = text; S.objName = file.name; P.resolution = 2;
+    syncDrawer();
+    await enterHome();
+  } catch (err) { status(`⚠ ${err.message}`, true); } finally { S.loading = false; }
 }
 async function enterHome() {
   setScreen('home');
+  S.loading = true;
   try {
     status(`Loading ${objLabel()}…`);
     await loadMesh();
-    status(`${objLabel()} ready. Press ▶ to encode and read it, or hover it for settings.`);
-  } catch (err) { status(`⚠ ${err.message}`, true); }
+    status(`${objLabel()} ready. ${HOVER ? 'Press ▶ to encode and read it, or hover it for settings.' : 'Press ▶ to encode and read it, or tap it for settings.'}`);
+  } catch (err) { status(`⚠ ${err.message}`, true); } finally { S.loading = false; }
 }
 for (const b of document.querySelectorAll('[data-shape]')) b.addEventListener('click', () => chooseShape(b.dataset.shape));
 $('dropObj').addEventListener('click', () => $('fileA').click());
@@ -1036,7 +1074,7 @@ $('fileA').addEventListener('change', async (e) => { if (e.target.files[0]) awai
 $('logo').addEventListener('click', () => setScreen('landing'));
 
 let dragDepth = 0;
-addEventListener('dragenter', (e) => { if (!e.dataTransfer?.types.includes('Files')) return; e.preventDefault(); dragDepth++; app.classList.add('dragging'); $('dropOverlay').hidden = false; });
+addEventListener('dragenter', (e) => { if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return; e.preventDefault(); dragDepth++; app.classList.add('dragging'); $('dropOverlay').hidden = false; });
 addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; app.classList.remove('dragging'); $('dropOverlay').hidden = true; $('dropB').classList.remove('over'); } });
 addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -1048,7 +1086,12 @@ addEventListener('drop', async (e) => {
   dragDepth = 0; app.classList.remove('dragging'); $('dropOverlay').hidden = true; $('dropB').classList.remove('over');
   const file = [...(e.dataTransfer?.files || [])].find((f) => /\.obj$/i.test(f.name)) || e.dataTransfer?.files[0];
   if (!file) return;
-  if (!/\.obj$/i.test(file.name)) return status(`⚠ ${file.name} is not an .obj file`, true);
+  if (!/\.obj$/i.test(file.name)) {
+    const msg = `${file.name} is not an .obj file`;
+    if (app.dataset.screen === 'landing') { $('landingMsg').textContent = msg; $('landingMsg').hidden = false; return; }
+    return status(`⚠ ${msg}`, true);
+  }
+  $('landingMsg').hidden = true;
   if (e.target.closest?.('#dropB') && $('dropB').classList.contains('shown')) await loadFileB(file);
   else await loadFileA(file);
 });
@@ -1126,7 +1169,7 @@ function frame(now) {
   last = now;
   controls.autoRotate = P.spin && app.dataset.screen === 'home';
   controls.update();
-  busyLevel += ((S.busy ? 1 : 0) - busyLevel) * Math.min(1, dt * 3);
+  busyLevel += ((S.busy || S.loading ? 1 : 0) - busyLevel) * Math.min(1, dt * 3);
   cloudMat.uniforms.uBusy.value = busyLevel;
   cloudMat.uniforms.uTime.value = now / 1000;
   if (S.playing && S.seq.length > 1) {
@@ -1144,6 +1187,19 @@ function frame(now) {
   }
   renderer.render(scene, camera);
 }
+
+// touch screens have no hover: say "tap" instead
+if (!HOVER) $('hint').textContent = 'tap or long-press';
+// compact windows fold the tools into one button, and the stats behind a tap
+$('hudMore').addEventListener('click', () => {
+  const open = !$('hud').classList.contains('open');
+  $('hud').classList.toggle('open', open);
+  $('hudMore').setAttribute('aria-expanded', open);
+});
+$('hud').addEventListener('click', (e) => {
+  if (compact && e.target.closest('button') && e.target.id !== 'hudMore') { $('hud').classList.remove('open'); $('hudMore').setAttribute('aria-expanded', false); }
+});
+$('info').addEventListener('click', () => { if (compact) $('info').classList.toggle('open'); });
 
 window.tessa3d = { state: S, settings: P }; // read-only handle for debugging in the console
 fitStage();

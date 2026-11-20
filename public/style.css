@@ -45,7 +45,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 @keyframes drift-a { from { transform: translate(0, 0); } to { transform: translate(14px, 8px) scale(1.01); } }
 @keyframes drift-b { from { transform: translate(0, 0); } to { transform: translate(-16px, -6px) scale(1.012); } }
 
-.logo { position: absolute; left: 640px; top: 34px; width: 160px; height: 96px; }
+.logo { position: absolute; left: 640px; top: calc(34px - var(--T, 0px)); width: 160px; height: 96px; transition: top 400ms; }
 .logo img { display: block; width: 160px; height: 96px; transition: filter 300ms; }
 .logo:hover img { filter: drop-shadow(0 0 14px var(--cyan-glow)); }
 
@@ -125,7 +125,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 /* ---------- layer 3: settings panel (Figma 18:156, 20:14, 18:246, 20:44) */
 #panel { position: absolute; inset: 0; pointer-events: none; }
 #panel[hidden] { display: none; }
-.panel-title { position: absolute; left: 247px; top: 165px; width: 282px; padding: 5px 0; display: flex; flex-direction: column; gap: 10px;
+.panel-title { position: absolute; left: max(247px, calc(var(--vl, 0px) + 28px)); top: calc(165px - var(--T, 0px)); width: 282px; padding: 5px 0; display: flex; flex-direction: column; gap: 10px;
   font: 300 24px/19px "IBM Plex Sans", sans-serif; letter-spacing: 0.48px; color: var(--ink-dim);
   opacity: 0; transform: translateX(-12px); transition: opacity 400ms 150ms, transform 500ms 150ms var(--ease); }
 .panel-title img { width: 95.6667px; height: 5.33333px; margin-top: -2.67px; }
@@ -137,7 +137,8 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #panel.shown .back { opacity: 1; transform: none; }
 
 .orb { position: absolute; width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 46px;
-  border: 1px solid var(--orb-line); background: rgba(217, 217, 217, 0); color: #fff;
+  border: 1px solid var(--orb-line); background: rgba(13, 13, 13, 0.4); color: #fff;
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); /* stays legible over the glowing cloud */
   display: grid; place-items: center; text-align: center;
   font: 400 20px/normal "Funnel Sans", sans-serif;
   opacity: 0; transform: translateY(14px) scale(0.85);
@@ -198,7 +199,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .drop-b-presets button:hover, .drop-b-presets button.on { color: #fff; }
 
 /* run buttons (Figma 21:12) */
-.run-btn { position: absolute; top: 896px; width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
+.run-btn { position: absolute; top: calc(896px + var(--B, 0px)); width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
 .run-btn img, .run-btn span { position: absolute; display: block; pointer-events: none; }
 .run-btn .ring { left: 0; top: 0; width: 101px; height: 101px; }
 #run { left: 595px; }
@@ -224,6 +225,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #hud, #info, .legends, #drawer, #qmap { transition: opacity 500ms; }
 #app[data-screen="landing"] #hud, #app[data-screen="landing"] #info, #app[data-screen="landing"] .legends,
 #app[data-screen="landing"] #drawer, #app[data-screen="landing"] #qmap { opacity: 0; pointer-events: none; }
+#hudMore { display: none; }
 #hud { position: absolute; top: 18px; right: 18px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 46vw; }
 #hud button, .seg button { padding: 7px 14px; border-radius: 46px; border: 1px solid var(--orb-line);
   font: 300 14px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px; color: var(--ink-dim);
@@ -288,12 +290,43 @@ dialog .note { color: var(--ink-faint); font-size: 12px; }
 .charts svg { width: min(440px, 88vw); height: auto; color: #fff; }
 svg text { fill: var(--ink-dim); font-size: 11px; }
 
+.landing-msg { position: absolute; left: 720px; top: 395px; width: 600px; transform: translateX(-50%); margin: 0;
+  font: 300 18px "IBM Plex Sans", sans-serif; text-align: center; color: #ff9a8a; }
+.landing-msg[hidden] { display: none; }
+
+/* ---------- portrait (phones, tablets upright): landing shapes in two rows, morph box
+   under the object. The logo and titles ride up into the extra height (--T), the run
+   buttons down (--B). */
+#app.portrait .drop-title { top: calc(300px - var(--T, 0px) / 2); }
+#app.portrait .or { top: calc(420px - var(--T, 0px) / 2); }
+#app.portrait .landing-msg { top: calc(360px - var(--T, 0px) / 2); width: 520px; }
+#app.portrait .preset.cube { left: 400px; top: 480px; width: 226px; height: 314px; }
+#app.portrait .preset.sphere { left: 830px; top: 548px; width: 196px; height: 207px; }
+#app.portrait .preset.blob { left: 607px; top: calc(800px + var(--B, 0px) / 2); width: 226px; height: 255px; }
+#app.portrait .more-shapes { top: calc(1075px + var(--B, 0px)); font-size: 22px; }
+#app.portrait .drop-b { left: 478px; top: 700px; width: 484px; height: 190px; }
+#app.portrait .drop-b p { top: 30px; height: 80px; font-size: 22px; }
+#app.portrait .drop-b-presets { bottom: 16px; font-size: 16px; }
+#app.portrait .hint { top: 820px; font-size: 30px; }
+#app.portrait .arc-label { font-size: 26px; }
+
+/* ---------- compact (narrow or portrait): tools fold into one button; stats behind a tap */
+#app.compact #hudMore { display: block; }
+#app.compact #hud { flex-direction: column; align-items: flex-end; max-width: none; top: 12px; right: 12px; }
+#app.compact #hud button:not(#hudMore) { display: none; }
+#app.compact #hud.open button:not(#hudMore) { display: block; }
+#app.compact #drawer { top: 56px; right: 12px; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 80px); }
+#app.compact #info { left: 12px; right: 12px; bottom: 10px; max-width: none; pointer-events: auto; cursor: pointer; font-size: 11px; }
+#app.compact #info #stats { display: none; }
+#app.compact #info.open #stats { display: block; }
+#app.compact #status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#app.compact #info.open #status { white-space: normal; }
+#app.compact .legends { display: none; }
+/* landscape compact: status bottom-left, stopping short of the centred run buttons */
+#app.compact:not(.portrait) #info { right: calc(50% + 70px); }
+#app.compact:not(.portrait) #status { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+#app.compact #qmap { top: auto; bottom: 48px; left: 12px; max-width: calc(100vw - 24px); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 1ms !important; }
-}
-@media (max-width: 760px) {
-  #hud { max-width: 70vw; }
-  #hud button { padding: 5px 10px; font-size: 12px; }
-  #info { max-width: 60vw; font-size: 10px; }
-  .legends { display: none; }
 }

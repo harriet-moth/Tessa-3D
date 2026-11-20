@@ -34,6 +34,7 @@
     <section id="landing" class="screen" aria-label="Choose an object">
       <button id="dropObj" class="drop-title">drop an .obj file</button>
       <p class="or">or</p>
+      <p id="landingMsg" class="landing-msg" role="alert" hidden></p>
       <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.png" alt=""></button>
       <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.png" alt=""></button>
       <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.png" alt=""></button>
@@ -98,6 +99,7 @@
 
   <!-- HUD: tools not in the arc menus -->
   <nav id="hud" aria-label="Tools">
+    <button id="hudMore" aria-expanded="false" aria-controls="hud">tools</button>
     <button id="why">why tessa</button>
     <button id="curves">curves</button>
     <button id="edges">read edges</button>
