@@ -124,8 +124,18 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .arc-label.tighter { letter-spacing: -2.4px; }
 .arc-label.lit { opacity: 1; }
 #menu[data-state="encode"] .arc.encode .arc-label.lit, #menu[data-state="decode"] .arc.decode .arc-label.lit { pointer-events: auto; }
-.arc-label:hover, .arc-label:focus-visible { text-shadow: 0 0 14px var(--cyan), 0 0 2px #fff;
-  transform: translate(-50%, -50%) rotate(var(--r)) scale(1.08); outline: none; }
+.arc-label { color: transparent; } /* the curved SVG text below is what shows */
+.arc-label:focus-visible { outline: none; }
+/* curved labels: centred on the arc's centre line, glyphs upright along the curve */
+.spine { fill: none; stroke: none; }
+.arc-word { fill: #fff; font: 400 24px "Funnel Sans", sans-serif; text-anchor: middle; dominant-baseline: central;
+  opacity: 0; transition: opacity 180ms, fill 200ms; paint-order: stroke; stroke: rgba(94, 242, 255, 0); stroke-width: 6px; }
+.arc-word.tight { letter-spacing: -1.2px; }
+.arc-word.tighter { letter-spacing: -2.4px; }
+.arc-word.lit { opacity: 1; }
+.arc-word.hover { stroke: rgba(94, 242, 255, 0.35); }
+.arc-text { pointer-events: none; }
+#menu:not([data-state="encode"]) .arc-text.encode, #menu:not([data-state="decode"]) .arc-text.decode { opacity: 0; }
 
 /* the back button (Figma 40:74): sits on the arc's start cap in layers 2 and 3 */
 .back { position: absolute; left: 442.8px; top: 320.1px; width: 68px; height: 68px; border-radius: 50%; pointer-events: none;

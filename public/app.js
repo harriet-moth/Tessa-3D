@@ -793,6 +793,13 @@ function drawMenuShapes() {
     const deg = (px) => THREE.MathUtils.radToDeg(px / ARC.R);
     const start = ARC.a0 + deg(34 + 10), end = ARC.a1 - deg(ARC.h * 0.6);
     const gap = (end - start - widths.reduce((t, w) => t + deg(w), 0)) / (labels.length - 1);
+    // The visible text runs along the arc's centre line (left to right, so it reads
+    // upright on both arcs), letter by letter round the curve; the buttons stay as
+    // straight, invisible hit areas over each word.
+    const [sx, sy] = onRing(side, ARC.R, ARC.a0), [ex, ey] = onRing(side, ARC.R, ARC.a1);
+    $(`${side}Spine`).setAttribute('d', `M ${sx} ${sy} A ${ARC.R} ${ARC.R} 0 0 ${side === 'decode' ? 0 : 1} ${ex} ${ey}`);
+    const group = $(`${side}ArcText`), svgNS = 'http://www.w3.org/2000/svg';
+    group.replaceChildren();
     let at = start;
     labels.forEach((b, i) => {
       const a = at + deg(widths[i]) / 2, [lx, ly] = onRing(side, ARC.R, a);
@@ -800,6 +807,17 @@ function drawMenuShapes() {
       Object.assign(b.style, { left: `${lx}px`, top: `${ly}px` });
       b.style.setProperty('--r', `${side === 'decode' ? -a : a}deg`);
       b.dataset.a = a;
+      const text = document.createElementNS(svgNS, 'text'), path = document.createElementNS(svgNS, 'textPath');
+      text.setAttribute('class', `arc-word ${b.classList.contains('tight') ? 'tight' : ''} ${b.classList.contains('tighter') ? 'tighter' : ''}`);
+      path.setAttribute('href', `#${side}Spine`);
+      path.setAttribute('startOffset', (ARC.R * rad(a - ARC.a0)).toFixed(2));
+      path.textContent = b.textContent;
+      text.appendChild(path);
+      group.appendChild(text);
+      b.word = text;
+      const glow = (on) => text.classList.toggle('hover', on);
+      b.onpointerenter = () => glow(true); b.onpointerleave = () => glow(false);
+      b.onfocus = () => glow(true); b.onblur = () => glow(false);
     });
   }
   // the thin line from each pill towards the object
@@ -815,7 +833,11 @@ function setSweep(side, a) {
   sweep[side].a = a;
   $(`${side}ArcBand`).setAttribute('d', bandPath(side, ARC.R, ARC.h, ARC.a0, a));
   // a label shows once the sweep has passed it, and hides as it sweeps back
-  for (const b of $(`${side}Arc`).querySelectorAll('.arc-label')) b.classList.toggle('lit', a >= +b.dataset.a + 8);
+  for (const b of $(`${side}Arc`).querySelectorAll('.arc-label')) {
+    const lit = a >= +b.dataset.a + 8;
+    b.classList.toggle('lit', lit);
+    b.word?.classList.toggle('lit', lit);
+  }
 }
 function sweepTo(side, to, ms) {
   cancelAnimationFrame(sweep[side].raf);

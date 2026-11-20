@@ -71,6 +71,12 @@
           </g>
           <path id="encodeArcBand" class="arc-band encode"/>
           <path id="decodeArcBand" class="arc-band decode"/>
+          <!-- the arc labels as text along each arc's centre line (built by app.js); the
+               .arc-label buttons above are their invisible click targets -->
+          <path id="encodeSpine" class="spine" d=""/>
+          <path id="decodeSpine" class="spine" d=""/>
+          <g id="encodeArcText" class="arc-text encode"></g>
+          <g id="decodeArcText" class="arc-text decode"></g>
         </svg>
         <button id="encodePill" class="pill-label encode" data-side="encode">Encode</button>
         <button id="decodePill" class="pill-label decode" data-side="decode">Decode</button>
