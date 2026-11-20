@@ -26,8 +26,8 @@
   <div id="viewer" aria-label="Point cloud of the current mesh"></div>
   <!-- decorative dot ribbons, pinned to the window's corners as in the Figma frame -->
   <div id="waves" aria-hidden="true">
-    <img class="wave wave-a" src="assets/wave-a.svg" alt="">
-    <img class="wave wave-b" src="assets/wave-b.svg" alt="">
+    <img class="wave wave-a" src="assets/wave-a.svg?v=2" alt="">
+    <img class="wave wave-b" src="assets/wave-b.svg?v=2" alt="">
   </div>
 
   <div id="stage">
@@ -39,9 +39,9 @@
         <button id="dropObj" class="drop-title">drop an .obj file</button>
         <p class="or">or</p>
         <p id="landingMsg" class="landing-msg" role="alert" hidden></p>
-        <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.png" alt=""></button>
-        <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.png" alt=""></button>
-        <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.png" alt=""></button>
+        <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.png?v=2" alt=""></button>
+        <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.png?v=2" alt=""></button>
+        <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.png?v=2" alt=""></button>
       </div>
       <div class="more-shapes">also: <button data-shape="apple">apple</button> · <button data-shape="suzanne">suzanne</button></div>
     </section>
@@ -131,12 +131,12 @@
 
       <div class="run-buttons">
         <button id="run" class="run-btn" title="Encode and read once (default settings unless you change them)" aria-label="Encode and run">
-          <img class="ring" src="assets/run-ellipse.svg" alt="" width="101" height="101">
+          <span class="ring"></span>
           <img class="gear" src="assets/gear.svg" alt="" width="52.8758" height="52.8747">
           <img class="tri" src="assets/play.svg" alt="" width="50.2295" height="45.75">
         </button>
         <button id="play" class="run-btn" title="Run frames, then play / pause them" aria-label="Run frames, play or pause">
-          <img class="ring" src="assets/run-ellipse.svg" alt="" width="101" height="101">
+          <span class="ring"></span>
           <img class="tri" src="assets/play-small.svg" alt="" width="43.3013" height="39.75">
           <span class="bars">||</span>
         </button>

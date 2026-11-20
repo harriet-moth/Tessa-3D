@@ -265,15 +265,22 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 /* run buttons (Figma 21:12) */
 .run-btn { position: absolute; top: calc(896px + var(--B, 0px)); scale: 0.8; translate: 0 16px; /* smaller and lower than the design: room for the object */ width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
 .run-btn img, .run-btn span { position: absolute; display: block; pointer-events: none; }
-.run-btn .ring { left: 0; top: 0; width: 101px; height: 101px; }
+/* outline style: an unfilled white ring, white icons */
+.run-btn .ring { left: 0; top: 0; width: 101px; height: 101px; border: 2.5px solid #fff; border-radius: 50%; background: transparent;
+  transition: background 200ms; }
+.run-btn .gear, .run-btn .tri { filter: brightness(0) invert(1); transition: filter 200ms, transform 700ms var(--ease); }
 #run { left: 595px; translate: 12px 16px; }
-#run .gear { left: 12.06px; top: 14.06px; width: 52.8758px; height: 52.8747px; transition: transform 700ms var(--ease); }
+#run .gear { left: 12.06px; top: 14.06px; width: 52.8758px; height: 52.8747px; }
 #run .tri { left: 40.87px; top: 37.12px; width: 50.2295px; height: 45.75px; transform: rotate(90deg); }
 #play { left: 736px; width: 109px; translate: -12px 16px; }
 #play .tri { left: 15.85px; top: 30.12px; width: 43.3013px; height: 39.75px; transform: rotate(90deg); }
 #play .bars { left: 39px; top: 19px; width: 70px; height: 56px; display: grid; place-items: center;
-  font: 700 48px/normal "IBM Plex Sans", sans-serif; letter-spacing: -2.4px; color: #000; }
-.run-btn:hover { transform: scale(1.06); filter: invert(1); } /* light glass, black icons → dark glass, white icons */
+  font: 700 48px/normal "IBM Plex Sans", sans-serif; letter-spacing: -2.4px; color: #fff; transition: color 200ms; }
+/* hover flip: the ring fills white and the icons turn black */
+.run-btn:hover { transform: scale(1.06); }
+.run-btn:hover .ring { background: var(--flip-light); }
+.run-btn:hover .gear, .run-btn:hover .tri { filter: brightness(0); }
+#play:hover .bars { color: #000; }
 #run:hover .gear { transform: rotate(60deg); }
 .run-btn:active { transform: scale(0.96); }
 /* settings changed since the last run: the gear's ring breathes (no glow) */
