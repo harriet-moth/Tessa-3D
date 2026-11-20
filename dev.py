@@ -24,6 +24,13 @@ class Dev(api.handler, SimpleHTTPRequestHandler):
             return api.handler.do_GET(self)
         return SimpleHTTPRequestHandler.do_GET(self)
 
+    def end_headers(self):
+        """Ask browsers to revalidate every file, so edits show on the next reload
+        (Vercel does the same for the deployed site)."""
+        if not self.path.startswith("/api/tessa"):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def do_POST(self):
         """Route POST /api/tessa to the API handler; any other POST gets 404."""
         if self.path.startswith("/api/tessa"):

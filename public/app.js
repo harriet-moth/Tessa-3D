@@ -869,7 +869,7 @@ function setSweep(side, a) {
   $(`${side}ArcBand`).setAttribute('d', bandPath(side, ARC.R, ARC.h, ARC.a0, a));
   // a label shows once the sweep has passed it, and hides as it sweeps back
   for (const b of $(`${side}Arc`).querySelectorAll('.arc-label')) {
-    const lit = a >= +b.dataset.a + 8;
+    const lit = a >= Math.min(+b.dataset.a + 8, ARC.a1); // the last word lights when the sweep ends
     b.classList.toggle('lit', lit);
     b.word?.classList.toggle('lit', lit);
     b.band?.classList.toggle('lit', lit);
