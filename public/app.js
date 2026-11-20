@@ -786,6 +786,15 @@ function bandPath(side, R, h, a0, a1) {
 }
 const capAt = (side) => onRing(side, ARC.R, ARC.a0); // the arc's start cap: home of the back button
 
+// How far a label's letters rise above and drop below its baseline, in the arc font.
+const inkCanvas = document.createElement('canvas').getContext('2d');
+function inkMetrics(word, spacing = 0) {
+  inkCanvas.font = '400 21px "Funnel Sans", sans-serif';
+  if ('letterSpacing' in inkCanvas) inkCanvas.letterSpacing = `${spacing}px`;
+  const m = inkCanvas.measureText(word);
+  return { ascent: m.actualBoundingBoxAscent, descent: m.actualBoundingBoxDescent };
+}
+
 function drawMenuShapes() {
   for (const side of ['encode', 'decode']) {
     $(`${side}PillBand`).setAttribute('d', bandPath(side, PILL.R, PILL.h, -PILL.span, PILL.span));
@@ -797,8 +806,18 @@ function drawMenuShapes() {
     const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
     const widths = labels.map((b) => b.offsetWidth || 8 * b.textContent.length);
     const deg = (px) => THREE.MathUtils.radToDeg(px / ARC.R);
-    const start = ARC.a0 + deg(BACK / 2 + 10), end = ARC.a1 - deg(ARC.h * 0.6);
-    const gap = (end - start - widths.reduce((t, w) => t + deg(w), 0)) / (labels.length - 1);
+    // Words spread evenly along the arc: the first just past the back button, the last
+    // just short of the far cap, and the rest at equal steps between their centres. If two
+    // long neighbours would touch, fall back to equal gaps between the words instead.
+    const start = ARC.a0 + deg(BACK / 2 + 8), end = ARC.a1 - deg(10), n = labels.length;
+    const first = start + deg(widths[0]) / 2, last = end - deg(widths[n - 1]) / 2;
+    let centres = labels.map((_, i) => first + ((last - first) * i) / (n - 1));
+    const touching = centres.some((c, i) => i && c - centres[i - 1] < deg((widths[i] + widths[i - 1]) / 2 + 12));
+    if (touching) {
+      const gap = (end - start - widths.reduce((t, w) => t + deg(w), 0)) / (n - 1);
+      let at = start;
+      centres = widths.map((w) => { const c = at + deg(w) / 2; at += deg(w) + gap; return c; });
+    }
     // The visible text runs along the arc's centre line (left to right, so it reads
     // upright on both arcs), letter by letter round the curve; the buttons stay as
     // straight, invisible hit areas over each word.
@@ -806,10 +825,8 @@ function drawMenuShapes() {
     $(`${side}Spine`).setAttribute('d', `M ${sx} ${sy} A ${ARC.R} ${ARC.R} 0 0 ${side === 'decode' ? 0 : 1} ${ex} ${ey}`);
     const group = $(`${side}ArcText`), svgNS = 'http://www.w3.org/2000/svg';
     group.replaceChildren();
-    let at = start;
     labels.forEach((b, i) => {
-      const a = at + deg(widths[i]) / 2, [lx, ly] = onRing(side, ARC.R, a);
-      at += deg(widths[i]) + gap;
+      const a = centres[i], [lx, ly] = onRing(side, ARC.R, a);
       Object.assign(b.style, { left: `${lx}px`, top: `${ly}px` });
       b.style.setProperty('--r', `${side === 'decode' ? -a : a}deg`);
       b.dataset.a = a;
@@ -825,6 +842,10 @@ function drawMenuShapes() {
       path.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${side}Spine`); // older Safari reads only this
       path.setAttribute('startOffset', (ARC.R * rad(a - ARC.a0)).toFixed(2));
       path.textContent = b.textContent;
+      // centre the word's ink (not its em box) on the band's centre line: baseline on the
+      // path, then shifted along the glyphs' own "down" by half the ink's height
+      const ink = inkMetrics(b.textContent, b.classList.contains('tighter') ? -2.4 : b.classList.contains('tight') ? -1.2 : 0);
+      text.setAttribute('dy', ((ink.ascent - ink.descent) / 2).toFixed(2));
       text.appendChild(path);
       group.appendChild(text);
       b.word = text;
@@ -881,10 +902,19 @@ const showBack = (on) => $('back').classList.toggle('shown', on);
 
 // menu state: closed | open (layer 1) | encode / decode (layer 2) | panel (layer 3)
 function setMenu(state) {
+  if (state === 'open') learnedMenu();
   menuEl.dataset.state = state;
   home.dataset.layer = { closed: 0, open: 1, encode: 2, decode: 2, panel: 3 }[state];
   syncShift();
 }
+// Once someone has opened the menu, the "click and hold" hint has done its job: it stays
+// hidden (remembered in this browser).
+const LEARNED = 'tessa3d.menuLearned';
+function learnedMenu() {
+  home.classList.add('learned');
+  try { localStorage.setItem(LEARNED, '1'); } catch { /* private mode: this visit only */ }
+}
+try { if (localStorage.getItem(LEARNED)) home.classList.add('learned'); } catch { /* storage blocked */ }
 let menuGen = 0; // bumped by every transition, so a superseded animation stops quietly
 
 // layer 1 → 2: the chosen arc unsweeps out of its start cap

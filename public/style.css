@@ -93,7 +93,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
   font: 400 24px/normal "Funnel Sans", sans-serif; text-align: center; color: #fff; opacity: 0.85;
   transition: opacity 400ms; animation: hint 3.2s ease-in-out infinite; }
 @keyframes hint { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.95; } }
-#home:not([data-layer="0"]) .hint, #home.quiet .hint { opacity: 0; animation: none; pointer-events: none; }
+#home:not([data-layer="0"]) .hint, #home.quiet .hint, #home.learned .hint { opacity: 0; animation: none; pointer-events: none; }
 /* the run buttons belong to home and layer 1; layers 2 and 3 hand the space to the menu */
 .run-buttons { transition: opacity 400ms var(--ease); }
 #home[data-layer="2"] .run-buttons, #home[data-layer="3"] .run-buttons { opacity: 0; pointer-events: none; }
@@ -137,7 +137,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .arc-label:focus-visible { outline: none; }
 /* curved labels: centred on the arc's centre line, glyphs upright along the curve */
 .spine { fill: none; stroke: none; }
-.arc-word { fill: #fff; font: 400 21px "Funnel Sans", sans-serif; text-anchor: middle; dominant-baseline: central;
+.arc-word { fill: #fff; font: 400 21px "Funnel Sans", sans-serif; text-anchor: middle; dominant-baseline: alphabetic;
   opacity: 0; transition: opacity 180ms, fill 200ms; paint-order: stroke; stroke: rgba(94, 242, 255, 0); stroke-width: 6px; }
 .arc-word.tight { letter-spacing: -1.2px; }
 .arc-word.tighter { letter-spacing: -2.4px; }
