@@ -13,13 +13,14 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from functools import cache
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colormaps
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import LinearSegmentedColormap, ListedColormap, Normalize
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
@@ -30,19 +31,20 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from PIL import Image
 
 from . import animate as anim
-from .bridge import (BACKENDS, DEVICES, DRR_METHODS, Params, encode_mesh, fidelity_curves, mesh_error,
-                     morph_clamp, morph_expected, morph_frame, qubit_map, read_edges, resources, restore,
-                     vertex_qubits)
+from . import interfere as interf
+from .bridge import (BACKENDS, DEVICES, DRR_METHODS, MAX_COLS, MAX_ROWS, Lattice, Params, cells, encode_mesh,
+                     fidelity_curves, mesh_error, morph_clamp, morph_expected, morph_frame, qubit_map,
+                     read_edges, resources, restore, vertex_qubits)
 from .mesh import PRESETS, load_decimated
 from .morph import correspond
 
 OUT = Path("exports")
 RES = ("low", "mid", "high")
 DECIMATIONS = {"low": 2, "mid": 1, "high": 0}  # halvings of an uploaded OBJ per Resolution
-COLOURS = ("error", "qubit", "φ colour", "morph Δ", "plain")
+FIT_VERTICES = Lattice(MAX_ROWS, MAX_COLS).capacity  # 792: high fits radial on the largest lattice
+COLOURS = ("error", "qubit", "morph Δ", "plain")
 # Mode: what each slot's qubit holds (bridge.MODES)
-MODE_LABELS = {"shape θ (Z)": "theta", "shape φ (X)": "phi",
-               "θ + colour φ": "colour", "shape θ+φ": "split", "morph A→B": "morph"}
+MODE_LABELS = {"shape θ (Z)": "theta", "shape θ+φ": "split", "morph A→B": "morph"}
 DELTA_CMAP = colormaps["viridis"]
 PLAIN = np.array(colormaps["Blues"](0.45))
 
@@ -54,19 +56,56 @@ EDGE_CMAP = colormaps["viridis"]
 GOLDEN = 0.618034
 
 
+@cache
+def fit_passes(path) -> int:
+    """Decimation passes that bring an uploaded OBJ within the largest lattice.
+
+    0 when the file fits as it is (e.g. Suzanne, 507 vertices). A large export
+    (thousands of vertices) is halved until one radial value per vertex fits the
+    10x12 lattice, so Resolution high can still be encoded.
+
+    Args:
+        path: Path to the OBJ file.
+
+    Returns:
+        int: Passes for Resolution high (mid and low add 1 and 2).
+
+    Raises:
+        ValueError: The file cannot be read as a mesh (from ``mesh.load_obj``).
+    """
+    k = 0
+    while len(load_decimated(path, k)[0]) > FIT_VERTICES and k < 20:
+        k += 1
+    return k
+
+
+def obj_passes(path, res_name: str) -> int:
+    """Decimation passes of an uploaded OBJ at one Resolution.
+
+    Args:
+        path: Path to the OBJ file.
+        res_name: "low", "mid" or "high".
+
+    Returns:
+        int: :func:`fit_passes` plus the Resolution's own halvings (DECIMATIONS).
+    """
+    return fit_passes(path) + DECIMATIONS[res_name]
+
+
 def obj_presets(path):
-    """An uploaded OBJ at three resolutions: high is the file itself, mid is decimated
-    once (about half the vertices), low twice (about a quarter).
+    """An uploaded OBJ at three resolutions: high is the file itself (decimated first if
+    it is too big for the largest lattice, :func:`fit_passes`), mid has about half its
+    vertices, low about a quarter.
 
     Args:
         path: Path to the OBJ file.
 
     Returns:
         dict: Resolution name ("low", "mid", "high") -> zero-argument callable returning
-        (verts (N, 3), faces). Decimation runs on first call and is cached by
-        ``mesh.load_decimated``.
+        (verts (N, 3), faces). Loading and decimation run on first call (so an unreadable
+        file is reported then, in the status line) and are cached by ``mesh.load_decimated``.
     """
-    return {r: (lambda k=k: load_decimated(path, k)[:2]) for r, k in DECIMATIONS.items()}
+    return {r: (lambda r=r: load_decimated(path, obj_passes(path, r))[:2]) for r in DECIMATIONS}
 
 
 def choose_obj():
@@ -122,7 +161,6 @@ def qubit_rgba(qubits):
 LAYOUT_STYLE = {"mesh": dict(c="#3d5a98", ls="-", marker="o", ms=9, mfc="none", mew=1.8, zorder=3),
                 "naive": dict(c="#e07b39", ls="--", marker="s", ms=4, zorder=4)}
 HOT = "#e69600"  # qubit map: the hovered data qubit, its address qubits and its vertices
-HUE_CMAP = ListedColormap(hls_rgba(np.linspace(0, 1, 256), 0.55, 0.75))  # φ colour value -> hue
 
 
 class App:
@@ -136,8 +174,8 @@ class App:
         verts, faces: The current mesh A, (N, 3) and a list of faces.
         encoded: The current ``bridge.Encoded``, or None before the first encode.
         enc_key: (shape, resolution, Params.encoder_key) ``encoded`` was built with.
-        raw, colours: Cached readouts from ``animate.run_frames``: (frames, N*comps) raw
-            values and the second output per frame (colour or morph B), or None.
+        raw: Cached readouts from ``animate.run_frames``: (frames, N*comps) raw values,
+            or None.
         raw_key, raw_ts: What ``raw`` was read with (``decode_key``) and each frame's morph t.
         decoded, refs: Decoded positions per frame and the noiseless reference each is
             compared against.
@@ -163,9 +201,12 @@ class App:
         self.objs = {Path(p).stem: p for p in objs if Path(p).is_file()}
         self.shape = None
         self.b_path, self.match, self.match_key, self.mode = None, None, None, None
+        self.error = None  # status message of the last failed encode (e.g. an unreadable OBJ)
+        self.ie, self.ideal_cache = None, {}  # interference morph: its encoding, ideal frames per t
+        self.kept = None  # interference: share of shots each frame was decoded from
         self.fig = fig = plt.figure("Tessa Ripple", figsize=(15, 9))
         self.ax = fig.add_axes([0.0, 0.07, 0.49, 0.88], projection="3d")
-        self.encoded = self.raw = self.colours = self.raw_key = self.edge_data = None
+        self.encoded = self.raw = self.raw_key = self.edge_data = None
         self.idx, self.playing, self.sec_per_frame, self.decoded, self.w = 0, False, None, [], {}
         self.sec_per_run = {}  # backend -> seconds per run, for the Run frames estimate
 
@@ -188,9 +229,9 @@ class App:
             return y
 
         radios(0.50, 0.98, [("Shape", list(PRESETS)), ("Resolution", RES),
-                            ("Payload", ["radial", "xyz"]), ("Mode", list(MODE_LABELS)),
+                            ("Payload", ["radial", "xyz", "spherical"]), ("Mode", list(MODE_LABELS)),
                             ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS),
-                            ("Placement", ["quality", "importance", "graph"]), ("DRR", DRR_METHODS)])
+                            ("Placement", ["quality", "graph"]), ("DRR", DRR_METHODS)])
         y = radios(0.855, 0.98, [("View", ["fidelity", "material"]), ("Colour", COLOURS)])
         for name, y0, lo, hi, init, step in [
             # tier 1: encoder
@@ -201,9 +242,9 @@ class App:
             ("Shots (log2)", 0.79, 8, 16, 12, 1), ("Noise × (flat)", 0.76, 0, 3, 1, None),
             ("Seed", 0.73, 0, 999, 0, 1),
             # tier 3: post + animation
-            ("Gain (material)", 0.69, 0, 10, 3, None), ("Mask %", 0.66, 0, 100, 100, 1),
-            ("Frames", 0.62, 2, 60, 12, 1), ("In-between", 0.59, 0, 30, 8, 1),
-            ("Speed (fps)", 0.56, 1, 60, 24, 1),
+            ("Gain (material)", 0.69, 0, 10, 3, None),
+            ("Frames", 0.65, 2, 60, 12, 1), ("In-between", 0.62, 0, 30, 8, 1),
+            ("Speed (fps)", 0.59, 1, 60, 24, 1),
         ]:
             self.w[name] = s = Slider(fig.add_axes([0.665, y0, 0.12, 0.02]), name, lo, hi,
                                       valinit=init, valstep=step)
@@ -229,12 +270,12 @@ class App:
 
         for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Placement", "Clamp θ (π)",
                      "Clamp φ (π)", "Compression %", "Quant bits", "Headroom", "Shots (log2)",
-                     "Noise × (flat)", "Seed", "Morph t", "Batch placement"):
+                     "Noise × (flat)", "Seed", "Morph t"):
             w = self.w[name]
             (w.on_clicked if isinstance(w, RadioButtons) else w.on_changed)(self.quantum_changed)
         self.w["Morph"].on_clicked(self.quantum_changed)
         self.w["Upload B"].on_clicked(self.upload_b)
-        for name in ("DRR", "View", "Colour", "Gain (material)", "Mask %", "In-between", "Toggles"):
+        for name in ("DRR", "View", "Colour", "Gain (material)", "In-between", "Toggles"):
             w = self.w[name]
             (w.on_clicked if hasattr(w, "on_clicked") else w.on_changed)(self.redraw)
         self.w["Speed (fps)"].on_changed(self.set_speed)
@@ -262,47 +303,38 @@ class App:
         """The Morph options inset (lower left of the 3D view, above the colour legends),
         shown only while Mode is morph.
 
-        Adds the Morph, Upload B, Morph t and Batch placement widgets to ``self.w``
-        and sets ``self.morph_artists``/``self.batch_artists``, all hidden.
+        Adds the Morph, Upload B and Morph t widgets to ``self.w`` and sets
+        ``self.morph_artists``, all hidden.
         """
         fig, x0, y0 = self.fig, 0.008, 0.11
-        box = fig.add_axes([x0, y0, 0.215, 0.27], facecolor="#f4f2ec")
+        box = fig.add_axes([x0, y0 + 0.07, 0.215, 0.2], facecolor="#f4f2ec")
         box.set_xticks([])
         box.set_yticks([])
         box.text(0.03, 0.96, "Morph options", transform=box.transAxes, fontsize=8, weight="bold", va="top")
-        box.text(0.03, 0.87, "Basis sweep: t turns the readout from Z (A) to X (B)",
-                 transform=box.transAxes, fontsize=7, va="top")
-        self.w["Morph"] = CheckButtons(fig.add_axes([x0 + 0.004, y0 + 0.151, 0.2, 0.066]),
+        self.morph_note = box.text(0.03, 0.87, "", transform=box.transAxes, fontsize=7, va="top")
+        self.w["Morph"] = CheckButtons(fig.add_axes([x0 + 0.004, y0 + 0.152, 0.2, 0.07]),
                                        ["Shared topology", "Hold t", "A's directions only",
-                                        "Transition decode"],
-                                       [False, False, False, True])
+                                        "Interference readout"],
+                                       [False, False, False, False])
         self.w["Upload B"] = Button(fig.add_axes([x0 + 0.006, y0 + 0.118, 0.07, 0.03]), "Upload B (.obj)")
         self.b_label = fig.text(x0 + 0.082, y0 + 0.133, "no B yet", fontsize=7, family="monospace", va="center")
         self.w["Morph t"] = Slider(fig.add_axes([x0 + 0.05, y0 + 0.085, 0.13, 0.02]), "Morph t", 0, 1, valinit=0)
-        self.batch_title = fig.text(x0 + 0.006, y0 + 0.062, "Batch placement", fontsize=7.5)
-        self.w["Batch placement"] = RadioButtons(fig.add_axes([x0 + 0.004, y0 + 0.008, 0.1, 0.05]),
-                                                 ["next-best qubits", "same qubits"])
-        for w in (self.w["Morph"], self.w["Batch placement"]):
-            for t in w.labels:
-                t.set_fontsize(7.5)
+        for t in self.w["Morph"].labels:
+            t.set_fontsize(7.5)
         self.w["Upload B"].label.set_fontsize(7.5)
         self.w["Morph t"].label.set_fontsize(8)
         self.morph_artists = [box, self.b_label, *(self.w[k].ax for k in ("Morph", "Upload B", "Morph t"))]
-        self.batch_artists = [self.batch_title, self.w["Batch placement"].ax]
-        for a in self.morph_artists + self.batch_artists:
+        for a in self.morph_artists:
             a.set_visible(False)
 
-    def show_morph_box(self, on: bool, batches: bool = False):
+    def show_morph_box(self, on: bool):
         """Show or hide the Morph options inset.
 
         Args:
             on: Show the inset (Mode is morph).
-            batches: Also show Batch placement (several runs on a chip).
         """
         for a in self.morph_artists:
             a.set_visible(on)
-        for a in self.batch_artists:
-            a.set_visible(on and batches)
 
     def upload_b(self, *_):
         """Pick mesh B with a file dialog and re-encode; a cancelled dialog changes nothing.
@@ -349,11 +381,9 @@ class App:
                       headroom=self.val("Headroom"), backend=self.val("Backend"),
                       placement=self.val("Placement"),
                       target=self.b_path if mode == "morph" else None, shared_topology=morph["shared"],
-                      batch_placement=self.val("Batch placement").split()[0],
                       shots=2 ** int(self.val("Shots (log2)")),
                       noise_strength=self.val("Noise × (flat)"), seed=int(self.val("Seed")),
-                      morph_t=float(self.val("Morph t")),
-                      sweep_decode="transition" if morph["transition"] else "raw")
+                      morph_t=float(self.val("Morph t")))
 
     def toggles(self):
         """The Toggles check boxes.
@@ -368,9 +398,9 @@ class App:
 
         Returns:
             dict: "shared" (shared topology), "hold" (hold t), "a_dirs" (A's directions only),
-            "transition" (transition decode) -> bool.
+            "interf" (interference readout, :mod:`~tessa_ripple.interfere`) -> bool.
         """
-        return dict(zip(["shared", "hold", "a_dirs", "transition"], self.w["Morph"].get_status()))
+        return dict(zip(["shared", "hold", "a_dirs", "interf"], self.w["Morph"].get_status()))
 
     @property
     def morphing(self):
@@ -380,6 +410,15 @@ class App:
             bool: True if a morph mesh is encoded.
         """
         return self.encoded is not None and self.encoded.mode == "morph"
+
+    @property
+    def interfering(self):
+        """Whether the current encoding is an interference morph (``interfere.encode_interfere``).
+
+        Returns:
+            bool: True if the encoded morph is read by turning selector qubits.
+        """
+        return self.morphing and self.ie is not None and self.ie.e is self.encoded
 
     def frame_ts(self, n):
         """Morph t of each of n frames: the slider's t (Hold t, or one frame), else 0 -> 1
@@ -441,7 +480,7 @@ class App:
         if shape not in self.objs:
             return (), None
         path = self.objs[shape]  # both cached: the Shape preset already decimated it
-        return load_decimated(path, DECIMATIONS.get(res_name, 0))[2], len(load_decimated(path)[0])
+        return load_decimated(path, obj_passes(path, res_name))[2], len(load_decimated(path)[0])
 
     @property
     def fidelity(self):
@@ -480,14 +519,16 @@ class App:
         self.shape = shape
         presets = list(PRESETS[shape].items())
         name, make = presets[min(RES.index(self.val("Resolution")), len(presets) - 1)]
-        key = (shape, name, p.encoder_key)
+        interf_on = p.mode == "morph" and self.morph_opts()["interf"]
+        key = (shape, name, p.encoder_key, interf_on)
         self.b_label.set_text(f"{Path(self.b_path).name}" if self.b_path else "no B yet")
+        self.error = None  # set again below if this encode fails
         if p.mode == "morph" and self.b_path is None:
             self.show_morph_box(True)
             return self.say("Morph: upload a B mesh")
         if self.encoded is None or key != self.enc_key:
-            verts, faces = make()
             try:
+                verts, faces = make()
                 target = None
                 if p.mode == "morph":
                     mkey = (shape, name, p.target, p.shared_topology)
@@ -497,22 +538,31 @@ class App:
                         self.match = correspond(verts, faces, p.target, p.shared_topology, logs, full)
                         self.match_key = mkey
                     target = self.match
-                encoded = encode_mesh(verts, faces, p, target)
-            except ValueError as err:
+                if interf_on:  # A and B in the two slots of each selector, one field
+                    ie = interf.encode_interfere(verts, faces, p, target)
+                    encoded = ie.e
+                else:
+                    ie, encoded = None, encode_mesh(verts, faces, p, target)
+            except (ValueError, OSError) as err:  # e.g. an unreadable OBJ (Shape or B)
                 self.show_morph_box(p.mode == "morph")
-                return self.say(f"⚠ {err}")
+                self.error = f"⚠ {err}"
+                return self.say(self.error)
+            self.error = None
             # swap everything together, before say()/flush_events lets a tick draw
             self.verts, self.faces, self.encoded, self.enc_key = verts, faces, encoded, key
+            self.ie, self.ideal_cache, self.kept = ie, {}, None
             self.face_mean = np.zeros((len(faces), len(verts)))  # face colour = mean of its corners
             for k, f in enumerate(faces):
                 self.face_mean[k, f] = 1 / len(f)
             self.vq, self.qmap, self.focus = vertex_qubits(encoded), qubit_map(encoded), None
-            self.raw = self.colours = None
+            self.raw = None
             if "Read edges" in self.w:  # a new mesh drops the old mesh's edges
                 self.set_edges(None)
             self.seq, self.idx = [verts], 0
         s = self.encoded.stats
-        self.show_morph_box(self.morphing, s["runs"] > 1 and p.backend in DEVICES)
+        self.show_morph_box(self.morphing)
+        self.morph_note.set_text("Interference: t turns the selectors from A (0) to B (1)" if self.interfering
+                                 else "Basis sweep: t turns the readout from Z (A) to X (B)")
         lines = [f"{shape} {name}: {len(self.verts)} verts", f"payload {p.payload}, {p.layout} layout",
                  s["graph"], *([f"data-qubit quality {s['quality']:.2f}"] if s["quality"] is not None else []),
                  f"{s['values']} values on {s['qubits']} qubits"
@@ -520,9 +570,9 @@ class App:
                  f"= {s['ratio']:.2f} values / qubit", f"(angle encoding: {s['values']} qubits)",
                  f"capacity used {s['values']}/{s['capacity']}",
                  f"depth {s['depth']}, 2q gates {s['twoq']}"]
-        if self.encoded.mode == "colour":
+        if self.encoded.pair:  # a second field in φ costs gates (see README Findings)
             lines.append(f"θ field alone: {s['twoq_single']} 2q")
-        elif self.encoded.mode == "split":
+        if self.encoded.mode == "split":
             lines.append(f"{int(self.encoded.fields.sum())} values in φ")
         elif self.morphing:
             m, e = self.match, self.encoded
@@ -536,8 +586,14 @@ class App:
                 lines.insert(at + 1, f"{s['runs']} runs: " + " + ".join(map(str, s["values_per_run"])) + " values")
             cov = f", covered {m['coverage']:.0%}" if m["method"] == "closest point" else ""
             lines += [f"B {Path(p.target).name}: {len(m['verts'])} verts", f"match: {m['method']}",
-                      f"|B − A| {m['distance']:.3f}{cov}",
-                      f"θ = A, φ = B, clamp {morph_clamp(p) / np.pi:.2f}π"]
+                      f"|B − A| {m['distance']:.3f}{cov}"]
+            if self.interfering:
+                c = interf.cost(self.ie)
+                lines[next(k for k, line in enumerate(lines) if line.startswith("capacity used"))] = (
+                    f"A/B pairs used {e.slots.size}/{c['capacity']}" + (" per run" if s["runs"] > 1 else ""))
+                lines += [f"{c['stars']} stars: selector 0 = A, 1 = B", f"clamp {morph_clamp(p) / np.pi:.2f}π"]
+            else:
+                lines.append(f"θ = A, φ = B, clamp {morph_clamp(p) / np.pi:.2f}π")
         self.info.set_text("\n".join(lines))
         if self.toggles()["auto"]:
             return self.run()
@@ -548,6 +604,8 @@ class App:
             est = f"  ≈{sec:.1f}s/frame, Run frames ≈{sec * n:.0f}s"
         elif s["runs"] > 1:
             est = f"  ({s['runs']} runs per frame: frame time × {s['runs']})"
+        if self.interfering and p.backend in DEVICES and not per_run:  # noisy star clusters
+            est += "  interference on a chip: a minute or more per frame"
         self.say(("frames stale: press Run / Run frames" if stale else "ready") + est)
         self.redraw()
 
@@ -574,9 +632,11 @@ class App:
         Args:
             n: Number of readouts (seeds seed, seed+1, ...).
 
-        Updates self.raw, self.colours, self.raw_ts, self.raw_key, timing estimates and
+        Updates self.raw, self.raw_ts, self.raw_key, timing estimates and
         self.idx, then redraws.
         """
+        if self.error:  # the last encode failed: keep its message, not a stale mesh
+            return self.say(self.error)
         if self.encoded is None or (MODE_LABELS[self.val("Mode")] == "morph" and not self.morphing):
             return self.say("Morph: upload a B mesh")
         p, t0 = self.params(), time.time()
@@ -584,13 +644,17 @@ class App:
         prog = lambda i, n: self.say(f"frame {i + 1} / {n}" + (f" ({runs} runs each)" if runs > 1 else "")  # noqa: E731
                                      + " …")
         ts = self.frame_ts(n) if self.morphing else None
-        self.raw, self.colours = anim.run_frames(self.encoded, p, n, progress=prog, ts=ts)
+        if self.interfering:  # each frame turns the selectors to its own t
+            self.raw, self.kept = interf.run_frames(self.ie, p, ts, progress=prog)
+        else:
+            self.raw, self.kept = anim.run_frames(self.encoded, p, n, progress=prog, ts=ts), None
         self.raw_ts = ts
         self.raw_key = self.decode_key(p, n)
         self.sec_per_frame = (time.time() - t0) / n
         self.sec_per_run[p.backend] = self.sec_per_frame / runs
         self.idx = 0
-        self.say(f"{n} frame(s) in {time.time() - t0:.1f}s ({self.sec_per_frame:.2f}s/frame)")
+        kept = f", decoded from {self.kept.mean():.0%} of shots (selector 0)" if self.kept is not None else ""
+        self.say(f"{n} frame(s) in {time.time() - t0:.1f}s ({self.sec_per_frame:.2f}s/frame){kept}")
         self.redraw()
 
     def run(self, *_):
@@ -633,6 +697,8 @@ class App:
             self.set_edges(None)
             self.say("edge overlay hidden")
             return self.redraw()
+        if self.error:  # the last encode failed: never act on the stale mesh
+            return self.say(self.error)
         self.playing, t0 = False, time.time()
         self.say("reading edge lengths from coherences …")
         E, measured, exact = read_edges(self.verts, self.faces, self.params())
@@ -649,8 +715,11 @@ class App:
         Args:
             *_: Ignored button callback arguments.
         """
+        if self.error:  # the last encode failed: never act on the stale mesh
+            return self.say(self.error)
         self.say("transpiling Tessa and four baselines onto ibm_phoenix …")
-        rows, shots = resources(self.encoded), self.params().shots
+        where = [np.concatenate([self.encoded.slots.ravel(), self.ie.b_slots.ravel()])] if self.interfering else None
+        rows, shots = resources(self.encoded, where), self.params().shots
         fig = plt.figure("Why Tessa", figsize=(11, 3.8), clear=True)
         ax = fig.add_axes([0.01, 0.2, 0.98, 0.68])
         ax.axis("off")
@@ -681,6 +750,8 @@ class App:
         Args:
             *_: Ignored button callback arguments.
         """
+        if self.error:  # the last encode failed: never act on the stale mesh
+            return self.say(self.error)
         if self.morphing:
             return self.say("Curves compare against one fixed mesh; not available in morph mode")
         prog = lambda k, n: self.say(f"curves: run {k} / {n} …")  # noqa: E731
@@ -718,9 +789,11 @@ class App:
         Returns:
             list[np.ndarray]: (N, 3) expected positions per t.
         """
-        o = self.morph_opts()
-        return [morph_expected(self.encoded, t, o["a_dirs"], "transition" if o["transition"] else "raw")
-                for t in ts]
+        a_dirs = self.morph_opts()["a_dirs"]
+        if self.interfering:  # exact noiseless frame (star statevectors), cached per t
+            ideal = [self.ideal_cache.setdefault(float(t), interf.ideal(self.ie, float(t))) for t in ts]
+            return [interf.frame(self.ie, x, t, "none", a_dirs) for x, t in zip(ideal, ts)]
+        return [morph_expected(self.encoded, t, a_dirs) for t in ts]
 
     def positions(self):
         """Playback positions. Every frame has its own reference (the original mesh, or
@@ -741,23 +814,25 @@ class App:
         e, drr, n = self.encoded, self.val("DRR"), len(self.raw)
         if self.morphing:
             a_dirs = self.morph_opts()["a_dirs"]
-            self.decoded = [morph_frame(e, r, t, drr, a_dirs) for r, t in zip(self.raw, self.raw_ts)]
+            if self.interfering:
+                self.decoded = [interf.frame(self.ie, r, t, drr, a_dirs) for r, t in zip(self.raw, self.raw_ts)]
+            else:
+                self.decoded = [morph_frame(e, r, t, drr, a_dirs) for r, t in zip(self.raw, self.raw_ts)]
             refs = self.morph_refs(self.raw_ts)
         else:
             self.decoded = [restore(e, r, drr) for r in self.raw]
             refs = [self.verts] * n
         self.refs = refs
         self.err = np.mean([mesh_error(ref, d) for ref, d in zip(refs, self.decoded)])
-        if self.fidelity:  # true decoded positions, nothing exaggerated or masked
+        if self.fidelity:  # true decoded positions, nothing exaggerated
             keys = self.decoded
         else:
-            mask = anim.random_mask(len(self.verts), self.val("Mask %") / 100, self.params().seed)
-            keys = [anim.blend(ref, d, self.val("Gain (material)"), mask) for ref, d in zip(refs, self.decoded)]
+            keys = [anim.blend(ref, d, self.val("Gain (material)")) for ref, d in zip(refs, self.decoded)]
         t = self.toggles()
         lead = [refs[0]] if t["orig"] else []
         glide = lambda k: k if len(k) == 1 else anim.timeline(k, int(self.val("In-between")), t["loop"])  # noqa: E731
         # error colour follows playback: each step's true decoded error (same timeline,
-        # no gain or mask) from its reference, on one scale fixed to the largest error in the run
+        # no gain) from its reference, on one scale fixed to the largest error in the run
         self.ref_seq = glide(lead + refs)
         self.err_seq = np.array([np.linalg.norm(v - r, axis=1)
                                  for v, r in zip(glide(lead + self.decoded), self.ref_seq)])
@@ -786,14 +861,7 @@ class App:
             top = d.max() or 1.0
             return (DELTA_CMAP(d / top), "morph Δ: |B − A| per vertex after alignment",
                     (DELTA_CMAP, 0, top, "|B − A| (mesh units)"))
-        if mode == "φ colour" and e.colour is not None:
-            if self.colours is None:
-                c, src = e.colour, "original colour field"
-            else:
-                c, src = self.colours.mean(0), f"colour decoded from φ (mean of {len(self.colours)} readouts)"
-            return hls_rgba(c, 0.55, 0.75), src, (HUE_CMAP, 0, 1, "colour value stored in φ")
-        why = {"error": " (run to see error)", "φ colour": " (Mode θ + colour φ only)",
-               "morph Δ": " (Mode morph only)"}.get(mode, "")
+        why = {"error": " (run to see error)", "morph Δ": " (Mode morph only)"}.get(mode, "")
         return np.tile(PLAIN, (len(self.verts), 1)), "plain" + why, None
 
     def legend(self, ax, spec):
@@ -865,8 +933,8 @@ class App:
             if self.raw is None:
                 head = f"Morph · noiseless preview at t = {self.val('Morph t'):.2f} (press Run)"
             else:
-                decode = "transition decode" if self.morph_opts()["transition"] else "raw"
-                head = f"Morph basis sweep ({decode}) · " + head
+                head = ("Morph interference (selectors) · " if self.interfering
+                        else "Morph basis sweep (transition decode) · ") + head
         self.ax.set_title(f"{head}{err}\nstep {self.idx + 1}/{len(self.seq)} · colour: "
                           f"{self.colour_label}{edge_txt}", fontsize=9)
         self.fig.canvas.draw_idle()
@@ -993,8 +1061,11 @@ class App:
             what the hovered data qubit holds, or a hint when nothing is focused.
         """
         f, m = self.focus, self.qmap
-        pair = {"phi": " (shape in φ, read in X)", "colour": " (θ: shape, φ: colour)",
-                "split": " (shape over θ and φ)", "morph": " (θ: A, φ: B)"}.get(self.encoded.mode, "")
+        pair = {"split": " (shape over θ and φ)", "morph": " (θ: A, φ: B)"}.get(self.encoded.mode, "")
+        if self.encoded.payload == "spherical":
+            pair = " (direction in θ and φ, radius in θ; read in Z, X, Y)"
+        if self.interfering:
+            pair = " (A at selector 0, B at selector 1)"
         if not f:
             return "Hover a vertex on the mesh, or a data qubit here."
         addrs = lambda g: m["groups"][g]["addresses"]  # noqa: E731
@@ -1004,11 +1075,15 @@ class App:
             return (f"data q{m['groups'][g]['data']} · address " + " ".join(f"q{q}" for q in addrs(g))
                     + f"\n{2 ** len(addrs(g))} slots, {held} values of this mesh{pair}"
                     + f"\n{len(f['mates'])} vertices on it (orange on the mesh)")
-        names = ["r"] if len(m["vertices"][0]) == 1 else ["x", "y", "z"]
         e, i = self.encoded, f["vertex"]
-        split, morph = e.mode == "split", e.mode == "morph"
-        both = lambda c: (f": A {e.prep.reference.reshape(e.slots.shape)[i, c]:+.3f} in θ, "  # noqa: E731
-                          f"B {e.prep_b.reference.reshape(e.slots.shape)[i, c]:+.3f} in φ") if morph else ""
+        names = (["polar", "azimuth", "r"] if e.payload == "spherical"
+                 else ["r"] if len(m["vertices"][0]) == 1 else ["x", "y", "z"])
+        split, morph = e.mode == "split" or e.payload == "spherical", e.mode == "morph"
+        where_b = (lambda c: f" in slot {self.ie.b_slots[i, c] - cells(e.graph)[m['vertices'][i][c][0], 0]}"  # noqa: E731
+                   if self.interfering else lambda c: " in φ")
+        both = lambda c: (f": A {e.prep.reference.reshape(e.slots.shape)[i, c]:+.3f}"  # noqa: E731
+                          + ("" if self.interfering else " in θ")
+                          + f", B {e.prep_b.reference.reshape(e.slots.shape)[i, c]:+.3f}{where_b(c)}") if morph else ""
         lines = [f"{names[c]} → data q{m['groups'][g]['data']}, slot {a} of {2 ** len(addrs(g))}"
                  + (f" in {'θφ'[fld]}" if split else "") + ", address "
                  + " ".join(f"q{q}={(a >> j) & 1}" for j, q in enumerate(addrs(g))) + both(c)

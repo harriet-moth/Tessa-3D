@@ -1,0 +1,5 @@
+mesh,backend,graph,interfere_twoq,interfere_depth,interfere_runs,interfere_capacity,stars,sweep_twoq,sweep_depth,sweep_runs,sweep_capacity,sweep_frame_circuits,interfere_frame_circuits
+apple,phoenix,ibm_phoenix (whole chip),504,34,1,396,15,496,66,1,792,2,1
+apple,fez,ibm_fez (whole chip),500,34,2,224,21,504,34,1,448,2,2
+suzanne,phoenix,ibm_phoenix (whole chip),1040,67,2,396,15,1036,66,1,792,2,2
+suzanne,fez,ibm_fez (whole chip),1024,51,3,224,30,1028,66,2,448,4,3

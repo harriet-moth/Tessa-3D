@@ -1,6 +1,6 @@
 import numpy as np
 
-from tessa_ripple.animate import blend, export_obj_sequence, interpolate, random_mask, run_frames, timeline
+from tessa_ripple.animate import blend, export_obj_sequence, interpolate, run_frames, timeline
 from tessa_ripple.bridge import Params, encode_mesh, restore
 from tessa_ripple.mesh import blob
 
@@ -9,7 +9,7 @@ V, F = blob(8, 6)
 
 def frames(n=3, **kw):
     p = Params(**kw)
-    return run_frames(encode_mesh(V, F, p), p, n)[0]
+    return run_frames(encode_mesh(V, F, p), p, n)
 
 
 def test_same_seed_same_frames_different_seeds_differ():
@@ -38,10 +38,7 @@ def test_spread_shrinks_with_shots():
     assert hi.std(axis=0).mean() < lo.std(axis=0).mean()
 
 
-def test_mask_and_export(tmp_path):
-    m = random_mask(len(V), 0.5, seed=1)
-    assert m.sum() == round(0.5 * len(V))
-    out = blend(V, V + 1, gain=1, mask=m)
-    assert np.array_equal(out[m == 0], V[m == 0])
+def test_blend_and_export(tmp_path):
+    assert np.allclose(blend(V, V + 1, gain=2), V + 2)
     paths = export_obj_sequence(tmp_path, [V, V + 1], F)
     assert [p.name for p in paths] == ["frame_000.obj", "frame_001.obj"]

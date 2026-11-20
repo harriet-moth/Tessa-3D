@@ -51,6 +51,13 @@ def test_shared_topology_with_mismatched_counts_is_a_clear_error(tmp_path):
         correspond(A, AF, path, shared_topology=True)
 
 
+def test_shared_topology_with_other_faces_is_a_clear_error():
+    """apple_bitten has apple_full's vertex count but its own vertex order and faces."""
+    v, f = load_obj("tessa_ripple/apple_full.obj")
+    with pytest.raises(ValueError, match="different faces"):
+        correspond(v, f, "tessa_ripple/apple_bitten.obj", shared_topology=True)
+
+
 def test_replay_decimation_reproduces_decimate():
     v, f = load_obj(SUZANNE)
     dv, df, log = decimate(v, f, return_log=True)
@@ -77,6 +84,15 @@ def test_closest_point_on_a_cube():
     assert np.allclose(q, want)
 
 
+def test_closest_point_survives_a_zero_area_triangle():
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], float)
+    pts = np.array([[0.2, 0.2, 0.5], [0.5, -0.5, 0.1]])
+    q, _ = closest_points(pts, v, [[0, 0, 1], [0, 1, 2]])  # face 0 repeats a corner
+    assert np.allclose(q, [[0.2, 0.2, 0], [0.5, 0, 0]])
+    q, _ = closest_points(pts, v, [[0, 0, 1]])  # only the degenerate face: its edge
+    assert np.allclose(q, [[0.2, 0, 0], [0.5, 0, 0]])
+
+
 def test_closest_point_correspondence_reports_coverage(tmp_path):
     path = write_obj(tmp_path / "s.obj", *blob(24, 12))
     m = correspond(A, AF, path)
@@ -85,11 +101,10 @@ def test_closest_point_correspondence_reports_coverage(tmp_path):
 
 # --- M2: encode + read the endpoints -----------------------------------------------
 def test_sweep_endpoints_noiseless(b_path):
-    e, p = morph(A, AF, b_path)  # transition decode by default
-    assert p.sweep_decode == "transition"
+    e, p = morph(A, AF, b_path)
     for t, want in ((0.0, A), (1.0, e.target)):
-        raw, second = decode_raw(e, Params(**{**p.__dict__, "morph_t": t}))
-        assert second is None and mesh_error(want, morph_frame(e, raw, t)) < 0.03
+        raw = decode_raw(e, Params(**{**p.__dict__, "morph_t": t}))
+        assert mesh_error(want, morph_frame(e, raw, t)) < 0.03
     assert not np.allclose(e.target, A, atol=0.05)  # B really differs
 
 
@@ -115,27 +130,11 @@ def test_keys():
 
 # --- M3: basis sweep ---------------------------------------------------------------
 def test_sweep_at_zero_matches_theta_mode(b_path):
-    e, p = morph(A, AF, b_path, sweep_decode="raw", shots=20_000)
+    e, p = morph(A, AF, b_path, shots=20_000)
     sweep = read_mesh(e, p)
     theta = Params(clamp=morph_clamp(p), shots=20_000)
     z = read_mesh(encode_mesh(A, AF, theta), theta)
     assert mesh_error(A, sweep) < 0.02 and mesh_error(z, sweep) < 0.02
-
-
-def test_sweep_at_one_matches_closed_form(b_path):
-    e, p = morph(A, AF, b_path, sweep_decode="raw", morph_t=1.0, shots=65_536)
-    got = decode_raw(e, p)[0].reshape(e.slots.shape)
-    want = sweep_values(e, np.pi / 2, "raw")
-    lo, hi = e.enc.ranges[0]
-    assert np.abs(got - want).mean() / (hi - lo) < 0.01
-    # the opposite rotation sign would read cos(-φ)... sin θ: compare against a flipped φ
-    from tessa.core.mode import get_mode
-    m = get_mode("pair")
-    x = lambda v: np.clip((v.ravel() - lo) / (hi - lo), 0, 1)  # noqa: E731
-    th, ph = m.angles(x(e.prep.reference), e.enc.clamps), m.phases(x(e.prep_b.reference), e.enc.clamps)
-    flipped = np.arccos(-np.sin(th) * np.cos(ph))
-    wrong = lo + (hi - lo) * m.values_from_angles(flipped, e.enc.clamps)
-    assert np.abs(got.ravel() - wrong).mean() / (hi - lo) > 0.1
 
 
 def test_a_equals_b(tmp_path):
@@ -143,15 +142,7 @@ def test_a_equals_b(tmp_path):
     path = write_obj(tmp_path / "a.obj", v, f)
     e, p = morph(v, f, str(path), payload="xyz", headroom=0.0, shots=65_536)
     ends = [read_mesh(e, Params(**{**p.__dict__, "morph_t": t})) for t in (0.0, 1.0)]
-    assert mesh_error(*ends) < 0.02  # transition: A = B reads the same at both ends
-    q = Params(**{**p.__dict__, "sweep_decode": "raw", "morph_t": 1.0})
-    lo, hi = e.enc.ranges[0]
-    x_in = (e.prep.reference - lo) / (hi - lo)
-    x_out = (decode_raw(e, q)[0] - lo) / (hi - lo)
-    assert x_in.min() < 0.01 and x_in.max() > 0.99  # the values span the whole range
-    assert x_out.min() == pytest.approx(0.222, abs=0.02) and x_out.max() == pytest.approx(0.778, abs=0.02)
-    # the fold: the outermost values come back inside the extremes of the readout
-    assert x_out[x_in.argmin()] > x_out.min() + 0.005 and x_out[x_in.argmax()] < x_out.max() - 0.005
+    assert mesh_error(*ends) < 0.02  # A = B reads the same at both ends
 
 
 def test_sweep_circuit_takes_one_angle_per_data_qubit(b_path):
@@ -164,7 +155,7 @@ def test_sweep_circuit_takes_one_angle_per_data_qubit(b_path):
         sweep_circuit(e, np.zeros(g + 1))
     # per-qubit alpha: the closed form follows each qubit's own angle
     alpha = np.where(np.arange(g) % 2, np.pi / 2, 0.0)
-    vals = sweep_values(e, alpha, "raw")
+    vals = sweep_values(e, alpha)
     cell = np.searchsorted(cells(e.graph)[:, 1], e.slots, side="right")
     at0 = alpha[cell] == 0
     assert np.allclose(vals[at0], e.prep.reference.reshape(e.slots.shape)[at0])
@@ -206,59 +197,51 @@ def test_batches_use_different_seeds(suzanne_batched, monkeypatch):
     assert seeds == [3, 3 + bridge.BATCH_SEED_STEP]
 
 
-def test_batch_placement_on_fez():
+def test_later_batches_start_on_the_next_best_qubits_on_fez():
     v, f = load_obj(SUZANNE)
-    first = {}
-    for placement in ("next-best", "same"):
-        e = encode_mesh(v, f, Params(mode="morph", payload="xyz", target=SUZANNE, shared_topology=True,
-                                     backend="fez", batch_placement=placement))
-        # each batch's first patch (it holds the batch's lowest vertex) goes on the top of its ranking
-        lead = [np.flatnonzero(e.batches == k)[0] for k in range(e.runs)]
-        cell = np.searchsorted(cells(e.graph)[:, 1], e.slots[lead, 0], side="right")
-        first[placement] = [e.graph.groups[c].data_qubit for c in cell]
-    best = int(np.argmax(e.quality))
-    assert first["same"] == [e.graph.groups[best].data_qubit] * 4
-    assert first["next-best"][0] == e.graph.groups[best].data_qubit
-    assert len(set(first["next-best"])) == 4  # every batch starts somewhere new
+    e = encode_mesh(v, f, Params(mode="morph", payload="xyz", target=SUZANNE, shared_topology=True,
+                                 backend="fez"))
+    # each batch's first patch (it holds the batch's lowest vertex) goes on the top of its ranking
+    lead = [np.flatnonzero(e.batches == k)[0] for k in range(e.runs)]
+    cell = np.searchsorted(cells(e.graph)[:, 1], e.slots[lead, 0], side="right")
+    first = [e.graph.groups[c].data_qubit for c in cell]
+    assert first[0] == e.graph.groups[int(np.argmax(e.quality))].data_qubit
+    assert len(set(first)) == 4  # every batch starts somewhere new
 
 
 def test_a_mesh_that_fits_is_one_run_as_before(b_path):
     e, p = morph(A, AF, b_path)
     assert e.runs == 1 and e.parts == () and e.batch is None
-    assert np.array_equal(e.slots, encode_mesh(A, AF, Params(mode="colour")).slots)
+    assert np.array_equal(e.slots, encode_mesh(A, AF, Params()).slots)
 
 
-@pytest.mark.parametrize("decode", ["raw", "transition"])
-def test_morph_frames_sweep_t(b_path, decode):
-    e, p = morph(A, AF, b_path, sweep_decode=decode)
-    vals, second = run_frames(e, p, 3, ts=[0.0, 0.5, 1.0])
-    assert vals.shape == (3, e.slots.size) and second is None
+def test_morph_frames_sweep_t(b_path):
+    e, p = morph(A, AF, b_path)
+    vals = run_frames(e, p, 3, ts=[0.0, 0.5, 1.0])
+    assert vals.shape == (3, e.slots.size)
     assert mesh_error(A, restore(e, vals[0])) < 0.02
     for t, raw in zip([0.0, 0.5, 1.0], vals):  # each frame read at its own angle
-        want = morph_expected(e, t, sweep_decode=decode)
+        want = morph_expected(e, t)
         assert mesh_error(want, morph_frame(e, raw, t)) < 0.03
-    assert mesh_error(morph_expected(e, 0, sweep_decode=decode), morph_expected(e, 1, sweep_decode=decode)) > 0.03
+    assert mesh_error(morph_expected(e, 0), morph_expected(e, 1)) > 0.03
 
 
-def test_radial_sweep_keeps_the_mesh_size(b_path):
+def test_radial_morph_range_is_centred_on_a_mean_radius(b_path):
     e, _ = morph(A, AF, b_path, payload="radial")
     lo, hi = e.enc.ranges[0]
     r = e.prep.reference
-    assert lo < r.min() and r.max() < hi and abs((lo + hi) / 2 - r.mean()) < 1e-9  # centred on A's mean radius
-    rms = lambda x: np.sqrt(((x - e.centre) ** 2).sum(1).mean())  # noqa: E731
-    size = [rms(morph_expected(e, t, True, "raw")) / rms(A) for t in np.linspace(0, 1, 9)]
-    assert max(abs(np.array(size) - 1)) < 0.03
+    assert lo < r.min() and r.max() < hi and abs((lo + hi) / 2 - r.mean()) < 1e-9
 
 
 # --- transition decode (Tessa's transition / tilted_readout.py) ----------------------
 def test_transition_closed_form_runs_exactly_from_a_to_b(b_path):
     e, _ = morph(A, AF, b_path)
     a, b = (r.reshape(e.slots.shape) for r in (e.prep.reference, e.prep_b.reference))
-    assert np.allclose(sweep_values(e, 0.0, "transition"), a)
-    assert np.allclose(sweep_values(e, np.pi / 2, "transition"), b)
+    assert np.allclose(sweep_values(e, 0.0), a)
+    assert np.allclose(sweep_values(e, np.pi / 2), b)
     same, _ = morph(A, AF, str(write_obj(Path(b_path).with_name("a.obj"), A, AF)))
     for alpha in np.linspace(0, np.pi / 2, 5):  # A = B: every frame is A
-        assert np.allclose(sweep_values(same, alpha, "transition"),
+        assert np.allclose(sweep_values(same, alpha),
                            same.prep.reference.reshape(same.slots.shape), atol=1e-9)
 
 
@@ -268,8 +251,8 @@ def test_transition_decode_matches_its_closed_form(b_path, payload):
     lo, hi = e.enc.ranges[0]
     for t in (0.5, 1.0):
         q = Params(**{**p.__dict__, "morph_t": t})
-        got = decode_raw(e, q)[0]
-        assert np.abs(got - sweep_values(e, t * np.pi / 2, "transition").ravel()).mean() / (hi - lo) < 0.02
+        got = decode_raw(e, q)
+        assert np.abs(got - sweep_values(e, t * np.pi / 2).ravel()).mean() / (hi - lo) < 0.02
     assert mesh_error(e.target, read_mesh(e, Params(**{**p.__dict__, "morph_t": 1.0}))) < 0.04
 
 
@@ -277,13 +260,23 @@ def test_transition_frames_share_one_z_reference(b_path, monkeypatch):
     e, p = morph(A, AF, b_path)
     seeds, real = [], bridge.sampler
     monkeypatch.setattr(bridge, "sampler", lambda g, q, s: seeds.append(s) or real(g, q, s))
-    vals, _ = run_frames(e, p, 3, ts=[0.0, 0.5, 1.0])
-    assert seeds == [0, 0, 1, 2]  # the reference, then one readout per frame
+    vals = run_frames(e, p, 3, ts=[0.0, 0.5, 1.0])
+    ref = bridge.reference_seed(0)
+    assert seeds == [ref, 0, 1, 2]  # the reference (its own run), then one readout per frame
     lo, hi = e.enc.ranges[0]
-    assert np.abs(vals[0] - e.prep.reference).mean() / (hi - lo) < 0.04  # t = 0: the reference, i.e. A
+    assert np.abs(vals[0] - e.prep.reference).mean() / (hi - lo) < 0.04  # t = 0: A
     seeds.clear()
     decode_raw(e, Params(**{**p.__dict__, "morph_t": 0.5}), seed=7)  # a lone readout reads its own
-    assert seeds == [7, 7]
+    assert seeds == [7, bridge.reference_seed(7)]
+
+
+def test_frames_at_t0_are_plain_z_readouts(b_path):
+    """At alpha = 0 a frame decodes from its own Z readout, never against the shared one."""
+    e, p = morph(A, AF, b_path, shots=256)
+    vals = run_frames(e, p, 3)
+    for i in range(3):
+        own = bridge.tilted_angles(e, p, p.seed + i, 0.0)
+        assert np.array_equal(vals[i], bridge.transition_values(e, own, own, 0.0))
 
 
 def test_transition_keeps_the_size_when_a_equals_b(tmp_path):
@@ -292,7 +285,6 @@ def test_transition_keeps_the_size_when_a_equals_b(tmp_path):
     rms = lambda x: np.sqrt(((x - e.centre) ** 2).sum(1).mean())  # noqa: E731
     for t in np.linspace(0, 1, 5):
         assert rms(morph_expected(e, t)) == pytest.approx(rms(A))
-    assert Params(mode="morph").readout_key != Params(mode="morph", sweep_decode="raw").readout_key
 
 
 def test_sweep_circuit_is_tessas_tilted_for_one_angle(b_path):
@@ -307,3 +299,150 @@ def test_sweep_circuit_is_tessas_tilted_for_one_angle(b_path):
     for grp, a in zip(e.graph.groups, mixed):
         want.ry(-a, grp.data_qubit)
     assert sweep_circuit(e, mixed)[0] == want
+
+
+# --- morph front: one alpha per (batch, data qubit) ----------------------------------
+from tessa_ripple.bridge import front_distances, front_reference, front_source, morph_alpha, qubit_distance  # noqa: E402
+from tessa_ripple.morph import front_alpha, geodesic  # noqa: E402
+
+
+def front(e, p, width=0.15, source=None):
+    """``p`` with the front on, and its ``(width, source)``."""
+    q = Params(**{**p.__dict__, "morph_front": True, "front_width": width, "front_source": source})
+    return q, q.front
+
+
+def test_front_alpha_ends_and_is_monotone_in_t():
+    d = np.linspace(0, 1, 11)
+    for w in (0.05, 0.15, 0.5):
+        assert np.all(front_alpha(d, 0.0, w) == 0)
+        assert np.all(front_alpha(d, 1.0, w) == np.pi / 2)
+        a = np.array([front_alpha(d, t, w) for t in np.linspace(0, 1, 41)])
+        assert np.all(np.diff(a, axis=0) >= 0)
+    with pytest.raises(ValueError):
+        front_alpha(d, 0.5, 0.0)
+
+
+@pytest.mark.parametrize("payload", ["xyz", "radial"])
+def test_front_endpoints_noiseless(b_path, payload):
+    e, p = morph(A, AF, b_path, payload=payload, shots=65_536)
+    q, fr = front(e, p)
+    for t, want in ((0.0, A), (1.0, e.target)):
+        qt = Params(**{**q.__dict__, "morph_t": t})
+        assert mesh_error(want, morph_frame(e, decode_raw(e, qt), t, front=fr)) < 0.03
+        assert mesh_error(want, morph_expected(e, t, front=fr)) < 1e-9
+
+
+def test_front_off_is_the_scalar_sweep(b_path):
+    e, p = morph(A, AF, b_path, shots=1024)
+    z = bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
+    for t in (0.0, 0.3, 0.7, 1.0):
+        q = Params(**{**p.__dict__, "morph_t": t})
+        alpha = t * np.pi / 2
+        assert q.front is None and morph_alpha(e, t) == alpha
+        want = bridge.transition_values(e, bridge.tilted_angles(e, q, q.seed, alpha), z, alpha)
+        assert np.array_equal(decode_raw(e, q), want)  # bit for bit the scalar path
+        dirs = bridge.morph_dirs(e, t)
+        assert np.array_equal(morph_expected(e, t), bridge.from_payload(e, sweep_values(e, alpha), dirs))
+
+
+def test_constant_distance_is_the_scalar_sweep(b_path, monkeypatch):
+    e, p = morph(A, AF, b_path)
+    g = len(e.graph.groups)
+    d = np.full((e.runs, g), 0.4)
+    monkeypatch.setattr(bridge, "front_distances", lambda e, s: (0, np.full(len(e.verts), 0.4), d))
+    for t in (0.3, 0.5, 0.8):
+        alpha = morph_alpha(e, t, (0.15, None))
+        a0 = float(alpha.flat[0])
+        assert np.all(alpha == a0)
+        assert sweep_circuit(e, alpha)[0] == sweep_circuit(e, a0)[0]
+        assert np.allclose(sweep_values(e, alpha), sweep_values(e, a0))
+
+
+def test_vertices_on_one_data_qubit_share_alpha(b_path):
+    e, p = morph(A, AF, b_path, payload="radial")
+    _, fr = front(e, p)
+    per = bridge._per_value(e, morph_alpha(e, 0.5, fr)).reshape(e.slots.shape)[:, 0]
+    for grp in np.unique(e.groups_of[:, 0]):
+        assert len(np.unique(per[e.groups_of[:, 0] == grp])) == 1
+    assert len(np.unique(per)) > 1  # the front is somewhere in the middle at t = 0.5
+
+
+@pytest.fixture(scope="module")
+def suzanne_fez():
+    v, f = load_obj(SUZANNE)
+    p = Params(mode="morph", payload="xyz", target=SUZANNE, shared_topology=True, backend="fez")
+    return encode_mesh(v, f, p), p
+
+
+def test_batched_alpha_is_per_batch_and_qubit(suzanne_fez):
+    e, p = suzanne_fez
+    g = len(e.graph.groups)
+    assert e.runs == 4
+    alpha = np.arange(4 * g, dtype=float).reshape(4, g) / (4 * g)
+    for k in range(4):  # each part's circuit uses its own row
+        assert sweep_circuit(e, alpha, k)[0] == sweep_circuit(e, alpha[k], k)[0]
+    per = bridge._per_value(e, alpha).reshape(e.slots.shape)
+    assert np.array_equal(per, alpha[e.batches[:, None], e.groups_of])
+    with pytest.raises(ValueError, match="per \\(batch, data qubit\\)"):
+        sweep_circuit(e, np.zeros((3, g)))
+    with pytest.raises(ValueError):
+        bridge._per_value(e, np.zeros((4, g + 1)))
+    # the front gives (K, G); a qubit holds different vertices per batch, so rows differ
+    d = front_distances(e)[2]
+    assert d.shape == (4, g) and not np.allclose(d[0], d[1])
+
+
+def test_geodesic_is_normalised():
+    d = geodesic(A, AF, 5)
+    assert d[5] == 0 and d.max() == 1 and np.isfinite(d).all()
+    v2 = np.vstack([A, A + 10])  # a second, disconnected copy is unreachable: 1
+    f2 = AF + [[i + len(A) for i in f] for f in AF]
+    d2 = geodesic(v2, f2, 5)
+    assert np.allclose(d2[:len(A)], d) and np.all(d2[len(A):] == 1)
+
+
+def test_qubit_distance_is_the_median_and_auto_source(b_path):
+    e, p = morph(A, AF, b_path)
+    d = np.random.default_rng(0).random(len(A))
+    dq = qubit_distance(e, d)
+    for grp in e.used_groups:
+        held = np.unique(np.nonzero(e.groups_of == grp)[0])
+        assert dq[0, grp] == np.median(d[held])
+    unused = np.setdiff1d(np.arange(len(e.graph.groups)), e.used_groups)
+    assert np.all(dq[0, unused] == 1)
+    assert front_source(e) == int(np.argmax(np.linalg.norm(e.target - A, axis=1)))
+
+
+def test_front_smooth_reference_ends_exact(b_path):
+    e, p = morph(A, AF, b_path, payload="radial")
+    _, fr = front(e, p)
+    assert mesh_error(A, front_reference(e, 0.0, fr)) < 1e-9
+    assert mesh_error(e.target, front_reference(e, 1.0, fr)) < 1e-9
+
+
+def test_front_keys():
+    base = Params(mode="morph", target="b.obj")
+    on = Params(mode="morph", target="b.obj", morph_front=True)
+    assert base.readout_key != on.readout_key
+    assert on.readout_key != Params(mode="morph", target="b.obj", morph_front=True, front_width=0.3).readout_key
+    assert on.readout_key != Params(mode="morph", target="b.obj", morph_front=True, front_source=3).readout_key
+    for q in (on, Params(mode="morph", target="b.obj", morph_front=True, front_width=0.3, front_source=3)):
+        assert q.encoder_key == base.encoder_key
+    assert base.front is None and on.front == (0.15, None)
+    assert Params(morph_front=True).front is None  # only morph has a front
+
+
+def test_front_values_not_yet_reached_are_their_own_z_readout(b_path):
+    e, p = morph(A, AF, b_path, payload="radial")
+    q, fr = front(e, p)
+    q = Params(**{**q.__dict__, "morph_t": 0.3})
+    z = bridge.tilted_angles(e, q, 0, 0.0)
+    got = decode_raw(e, q, seed=5, reference=z)
+    alpha = morph_alpha(e, 0.3, fr)
+    per = bridge._per_value(e, alpha)
+    assert (per == 0).any() and (per > 0).any()
+    own = bridge.tilted_angles(e, q, 5, alpha)  # unreached qubits were read in Z
+    a_read = bridge.transition_values(e, own, own, 0.0)  # that readout read as A
+    assert np.array_equal(got[per == 0], a_read[per == 0])
+    assert not np.allclose(got[per > 0], a_read[per > 0])

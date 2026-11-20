@@ -50,9 +50,8 @@ Suzanne opens at **Resolution** *high*, the file as exported; *mid* and *low*
 decimate her to 254 and 127 vertices (see **Resolution**). As exported she has
 507 vertices, measured at 4,096 shots:
 - **Radial on a 9×9 lattice:** 507 values on 81 qubits (6.3 per qubit), 0.5 % error.
-- **Mode *θ + colour φ*:** 1,014 values on the same 81 qubits, 0.8 % error.
-- **Whole `ibm_phoenix` chip with calibrated noise:** 0.95 % error, or 1.5 % with colour in φ,
-  with **Placement** *quality* (1.7 % and 2.2 % with Tessa's own order).
+- **Whole `ibm_phoenix` chip with calibrated noise:** 0.95 % error with **Placement**
+  *quality* (1.7 % with Tessa's own order).
 - **Read edges:** all 1,005 edges in about 6 s, with 3.1 % error noiseless.
 
 As xyz (1,521 values) she is too big for one value per slot, but fits with
@@ -93,8 +92,14 @@ Then open http://localhost:8000.
 
 1. **Mesh.** A blob, sphere, cube or OBJ (such as Suzanne) gives `N` vertices and faces.
 2. **Payload** (what is encoded):
-   - *radial*: one radius per vertex, measured from the centroid.
-   - *xyz*: three coordinates per vertex.
+   - *radial*: one radius per vertex, measured from the centroid. Only the radius
+     is quantum: each vertex's direction from the centre is stored classically.
+   - *xyz*: three coordinates per vertex, all read from the qubits.
+   - *spherical*: the direction on the Bloch sphere, the radius beside it. Each vertex
+     gets two slots in Tessa's `pair_full` mode: a direction slot holding the polar
+     angle in θ and the azimuth in φ (read in Z, X and Y, so φ covers the full
+     circle), and a radius slot holding the radius in θ. Only the centroid is
+     classical. Mode θ only.
 3. **Prepare.** `tessa.prepare_field` optionally quantises the values (Quant bits).
 4. **Pick a graph.**
    - On a simulator backend, the smallest near-square `tessa.Lattice` that holds
@@ -113,8 +118,8 @@ Then open http://localhost:8000.
    padded with their cell's mean so cells stay smooth.
 6. **Encode.** `tessa.encode` builds a measurement-free circuit of uniformly
    controlled rotations, **once** per mesh and encoder setting. With **Mode**
-   *θ + colour φ* the colour field goes into the phase φ of the same cells;
-   with *shape θ+φ* half the mesh's values do, and with *shape φ (X)* all of them.
+   *shape θ+φ* half the mesh's values go into the phase φ of the same cells; with
+   *morph A→B* mesh B does.
 7. **Decode.** `tessa.decode` measures the circuit on the chosen sampler. Each
    frame is one decode with its own seed.
 8. **Restore and show.** `tessa.restore_field` applies optional dynamic-range
@@ -132,7 +137,7 @@ add-on can reuse them.
 | Capacity is the sum of `2^degree`, more values than qubits | Info panel: "86 values on 19 qubits (of 20) = 4.53 values / qubit (angle encoding: 86 qubits)" |
 | Runs on the chip's own couplers: no SWAPs, shallow | **Why Tessa** table, transpiled onto the Phoenix snapshot |
 | One measurement setting reads every value (two when φ is used), with at most 16 outcomes per cell | **Why Tessa**: settings, outcomes per cell, shots per value |
-| A second field in the phase | **Mode** *θ + colour φ* (**Colour** *φ colour*), or *shape θ+φ*: twice the values per qubit |
+| A second field in the phase | **Mode** *shape θ+φ*: twice the values per qubit; *morph A→B*: a second mesh |
 | Smooth data compresses | **Curves**: error and depth against compression for both layouts |
 | Coherences carry differences | **Read edges**: edge lengths read from the state |
 | Real devices have good and bad qubits | **Backend** *phoenix* / *fez*, **Placement**, **Colour** *error* or *qubit* |
@@ -194,13 +199,16 @@ Measured while building this; the README states them as measured, not as claims.
   qubits but got no better. Two likely reasons, not yet tested: its xyz error
   may be dominated by the shared value range rather than by which qubit holds a
   vertex, and the probe's scores (about 32 test symbols per data qubit) are
-  coarse. So *quality* stays the default.
+  coarse. With no overall gain, *importance* placement was removed; *quality*
+  is the default.
 
 - **A second field in φ costs gates, not qubits.** Tessa's docstring says the
   second field comes "at no extra two-qubit gate cost". Tessa's own circuit
   builder (`core/encode.py`) appends a second RZ multiplexer with its own CX
-  ladder, so adding colour takes the count from 84 to 172 on the default blob.
-  The info panel shows both numbers. Two-qubit gates track the number of values
+  ladder, so adding a second field (here a hue per vertex, from a since-removed
+  colour mode) took the count from 84 to 172 on the default blob. For any
+  encoding with a field in φ, the info panel shows the θ field alone beside the
+  total. Two-qubit gates track the number of values
   encoded, wherever they sit. So *shape θ+φ*, which packs the same mesh two
   values per slot, needs about the same gates on roughly half the qubits:
 
@@ -215,6 +223,25 @@ Measured while building this; the README states them as measured, not as claims.
   qubits can mean better ones: radial Suzanne on Phoenix gives 0.87 % packed
   against 0.94 % one per slot. Each frame needs a second measurement setting
   (X), so it takes longer.
+- **Reading the shape in X instead of Z was never worse in simulation.** A
+  since-removed *shape φ (X)* mode fixed every θ at π/2 and put the value in φ,
+  read in the X basis of Tessa's paper pipeline (`tessa.hardware.pipeline`). In
+  the Z basis, decay towards |0⟩ biases values one way; on the equator, noise
+  mostly shrinks ⟨X⟩ towards 0, which pulls values to the middle of the range.
+  Measured (3 seeds, radial):
+
+  | Mesh | Backend | Z basis | X basis |
+  |---|---|---|---|
+  | blob | noiseless | 0.40 % | 0.40 % |
+  | blob | flat noise | 1.69 % | 1.29 % |
+  | blob | Phoenix | 0.79 % | 0.80 % |
+  | blob | Fez | 0.98 % | 0.93 % |
+  | Suzanne | flat noise | 1.36 % | 1.06 % |
+  | Suzanne | Phoenix | 0.95 % | 0.82 % |
+
+  That's a measurement on simulated noise models, not a general rule. The mode
+  was removed because it repeated the morph basis sweep's tilt in a second code
+  path; *morph A→B* still reads in X at t = 1.
 - **Layout and compression depend on the mesh's own vertex order** (noiseless, 3
   seeds):
 
@@ -258,8 +285,8 @@ loading stage, and the edge readout is the first step past loading.
 
 **Mode** *morph A→B* carries two meshes in one state. Mesh A (the selected
 **Shape**) sets every slot's θ and mesh B (an uploaded OBJ) sets its φ. It is
-Tessa's pair mode, as in *θ + colour φ*, with B's geometry in φ instead of a hue: no
-extra qubits or two-qubit gates. The morph itself is a **basis sweep**: at **Morph t**
+Tessa's pair mode, as in *shape θ+φ*, but with B's geometry in φ: no
+extra qubits. The morph itself is a **basis sweep**: at **Morph t**
 every data qubit gets RY(−α), α = t·π/2, before its Z measurement, so it reads
 cos α Z + sin α X. At t = 0 that is A's Z readout, at t = 1 B's X readout, and every
 t in between is a new readout of the same state in a turned basis. Nothing is mixed
@@ -285,43 +312,41 @@ How B is matched to A:
 - **Colour** *morph Δ* shows |B − A| per vertex, so you can see where the shapes
   disagree before running anything.
 
-Two ways turn a tilted readout into a frame:
+Two readouts, chosen by **Interference readout** in the Morph options box:
+- *Off* (the default): the **basis sweep** below. A sits in θ and B in φ of the same
+  slots, and t turns the measurement basis from Z to X.
+- *On*: the **interference morph** (see below). A and B sit in the two slots of a
+  selector qubit, and t turns the selectors. The info panel lists the stars, the
+  status line the share of shots each frame was decoded from (selector read 0), and
+  the error colour compares each frame with the exact noiseless interference frame
+  (`interfere.ideal`). Every star is simulated as its own cluster circuit: on the
+  apple (radial, 247 vertices), about 1.5 s per frame noiseless, 20 s with *flat
+  noise* and 55 s on *phoenix*. Bigger meshes and xyz take longer; on a chip the
+  status line warns before the first run.
 
-| Decode | At t = 1 |
-|---|---|
-| **Transition decode** (on by default) | exactly B |
-| raw (untick it) | "B seen through A": arccos(cos α cos θ + sin α sin θ cos φ) read back through A's angle map |
+Each tilted readout becomes a frame the way Tessa's transition does
+(`tessa.hardware.pipeline._transition_frames`, the same formula as InterwovenQPIXL's
+`tilted_readout.py`). An α = 0 (Z) readout gives sin θ, which is divided out of the X
+part of the tilted readout. Without noise each frame is then w cos θ + (1 − w) cos φ,
+with w = cos α / (cos α + sin α): exactly A at t = 0 and exactly B at t = 1, with no
+change of size. **Run frames** reads one Z readout and shares it across all frames, as
+Tessa does; a lone **Run** reads its own. Either way it is a separate run with its own
+seed (`bridge.reference_seed`), so its shot noise is independent of the frame's, as on a
+chip. A frame at t = 0 is a Z readout already and decodes from that alone. Each frame still gets
+its noise from its own tilted readout, but it combines two readouts and divides by
+sin θ. Measured on an apple → bitten apple (high, radial, clamp 0.2π, A's directions
+only): size 1.00 at t = 0.5 and 1, the rest of the apple moves 0.011, and the bite is
+4.0× the noise at 4,096 shots and 16.4× at 65,536. With *xyz* it keeps the size and
+reaches the whole bite depth, but at 4,096 shots its noise (0.15) is about as big as
+the bite (0.21). Use 65,536 shots there (5.5×).
 
-**Transition decode** (Morph options) turns each tilted readout into a frame the way
-Tessa's transition does (`tessa.hardware.pipeline._transition_frames`, the same
-formula as InterwovenQPIXL's `tilted_readout.py`). An α = 0 (Z) readout gives sin θ,
-which is divided out of the X part of the tilted readout. Without noise each frame
-is then w cos θ + (1 − w) cos φ, with w = cos α / (cos α + sin α): exactly A at t = 0
-and exactly B at t = 1, with no change of size. **Run frames** reads one Z readout at
-the run's seed and shares it across all frames, as Tessa does; a lone **Run** reads
-its own. Each frame still gets its noise from its own tilted readout, but it combines
-two readouts and divides by sin θ, so it is noisier than the raw decode. Measured on
-an apple → bitten apple (high, radial, clamp 0.2π, A's directions only):
-
-| Decode | Size at t = 0.5 / 1 | Rest of the apple moves | Bite ÷ noise, 4,096 / 65,536 shots |
-|---|---|---|---|
-| raw | 1.02 / 0.99 | 0.030 | 5.3× / 20.1× |
-| transition | 1.00 / 1.00 | 0.011 | 4.0× / 16.4× |
-
-With *xyz*, raw grows the apple to 1.36× and shrinks it to 0.84×; transition keeps
-1.00 and reaches the whole bite depth, but at 4,096 shots its noise (0.15) is about
-as big as the bite (0.21). Use 65,536 shots there (5.5×).
-
-The raw decode pulls every value toward the middle of its range. With *xyz* that middle
-is the mesh's centre, so the mesh changes size as t grows: an apple swells to about
-1.3× mid-sweep and ends at 0.72×. *Radial* morph therefore centres its range on A's
-mean radius, not (0, r_max). A's radii then sit near θ = π/2, where the sweep barely
-changes them, so the apple stays within 2 % of its size. The narrower range also
-lowers the noise: the apple's bite at 4,096 shots went from 4.9× to 6.6× its noise.
-
-With A = B on an *xyz* range the raw sweep still moves: values spanning the whole range come back
-between about 0.22 and 0.78 of it at t = 1. The outermost ~8 % at each end folds
-back inward (they decode at 0.24 and 0.76, inside the extremes).
+An earlier raw decode (arccos of the tilted readout, read back through A's angle map)
+was removed: it pulled every value toward the middle of its range, so an *xyz* apple
+swelled to about 1.3× mid-sweep and ended at 0.72×, and with A = B the outermost
+values folded back inward. *Radial* morph centres its range on A's mean radius rather
+than (0, r_max), which was introduced against that shrink; the narrower range also
+lowers the noise (the bite went from 4.9× to 6.6× its noise at 4,096 shots, measured
+with the raw decode).
 
 - **Hold t** on: **Run frames** keeps t fixed and varies only the seed. Off: t runs
   from 0 to 1 over the frames, one seed per frame, so the morph and the noise move
@@ -338,12 +363,9 @@ back inward (they decode at 0.24 and 0.76, inside the extremes).
 Fez. The mesh is cut into even, connected surface patches of whole vertices
 (254 + 253 vertices), so a seam is not a step in noise level. Every run shares one
 value range, uses its own seed (`seed + 1000·k`), and is stitched back by vertex.
-The mesh is then K separate quantum states, and the info panel says so. On a chip,
-**Batch placement** sets which qubits later runs use:
-- *next-best qubits* (default): each run's ranking starts after the best qubits the
-  earlier runs filled, so the best qubits are spread across the runs.
-- *same qubits*: every run starts on the best qubit, so the chip's noise pattern
-  repeats once per run.
+The mesh is then K separate quantum states, and the info panel says so. On a chip
+with **Placement** *quality*, each run's ranking starts after the best qubits the
+earlier runs filled, so the best qubits are spread across the runs.
 
 Measured (Suzanne at *high*, 4,096 shots, error as a fraction of the bounding box,
 each against its noiseless reference):
@@ -359,10 +381,34 @@ each against its noiseless reference):
 | | radial | noiseless | 1 | 0.8 % | 1.1 % |
 | | radial | phoenix | 1 | 1.6 % | 1.1 % |
 
-(Transition decode, each frame against its noiseless reference.)
+(Each frame against its noiseless reference.)
 
 A frame costs one readout per run, so batched morphs on the chips take a few
 seconds per frame. The status line gives an estimate before **Run frames**.
+
+**Front** (`Params.morph_front`, prototype, no UI yet). Instead of one α for every
+qubit, each (batch, data qubit) gets its own α_q(t) = (π/2)·clip((t(1 + w) − d_q)/w, 0, 1),
+where d_q is the median surface distance (Dijkstra over the edges, `morph.geodesic`)
+of its vertices from a source (default: the vertex with the largest |B − A|). B then
+spreads over A as a wave in patch-sized steps, at no extra gates. Values the front has
+not reached were read in Z, so they decode from that readout alone, as A. Endpoints stay exact. Measured
+by `dev_front.py` (summary at the top of `docs/morph-front-plan.md`): the patch steps
+are only 0.3–8 % of the motion away from a smooth per-vertex wave, and on the Phoenix
+and Fez snapshots the front's edge reads at most 1.6× the noise at 65,536 shots (3× is
+readable), so the UI was not built. Tessa's `mean_std` DRR halves the apple's chip
+noise.
+
+**Interference morph** (`tessa_ripple/interfere.py`; in the app, Morph options →
+**Interference readout**). A and B sit
+on the two values of a *selector* address qubit (one per star of data qubits, chosen by
+an integer program; half of Tessa's capacity), so each star holds a superposition of
+the A and B patches. A frame turns the selectors by RY(−tπ) and decodes the selector-0
+slots with Tessa. Endpoints are exact. In between, the frame comes from interference:
+noiseless it is up to 15 % of the motion away from the classical mixture (Tessa's
+cross-fade), though a re-timed cross-fade gets within 2 %. On the Phoenix and Fez noise
+models the coherence measurably survives: λ is 0.6–0.9 above a dephased-selector
+control, over 15σ. It is below per-vertex noise in a single frame. Numbers and method:
+`docs/interference-morph.md`, `dev_interfere.py`.
 
 ## The controls
 
@@ -372,7 +418,7 @@ Controls fall into three tiers by how much work a change costs:
 |---|---|---|
 | Encoder | Shape, Resolution, Payload, Mode, Layout, Clamp θ, Clamp φ, Compression, Quant bits, Headroom (and Backend, when it switches to or from a chip graph) | Rebuilds the circuit (milliseconds). Old frames are cleared. |
 | Readout | Backend, Shots, Noise ×, Seed | Needs a new decode: press **Run** or **Run frames**, or tick **Auto-run**. The status line says "frames stale" until you do. |
-| Post / view / animation | View, Colour, DRR, Gain, Mask %, Frames, In-between, Speed, Loop, Start from original | Applied to cached frames instantly. No quantum work (except **Frames**, which takes effect on the next **Run frames**). |
+| Post / view / animation | View, Colour, DRR, Gain, Frames, In-between, Speed, Loop, Start from original | Applied to cached frames instantly. No quantum work (except **Frames**, which takes effect on the next **Run frames**). |
 
 The **info panel** shows:
 - the mesh, payload and layout;
@@ -384,7 +430,7 @@ The **info panel** shows:
   same count is Tessa's row in **Why Tessa**, whose random test data also goes
   only in the mesh's own slots;
 - capacity used;
-- circuit depth and two-qubit gates (with colour in φ, also the θ field alone;
+- circuit depth and two-qubit gates (with a field in φ, also the θ field alone;
   with *shape θ+φ*, how many values sit in φ).
 
 The **title** shows the view, the gain, the **mean err** (average coordinate
@@ -434,44 +480,13 @@ it opens exactly as exported.
   *xyz* encodes `3N` values on one symmetric range `(-m, m)` shared by all axes, so
   the mesh isn't stretched per axis.
 
-**Mode** (shape θ (Z) / shape φ (X) / θ + colour φ / shape θ+φ / morph A→B)
+**Mode** (shape θ (Z) / shape θ+φ / morph A→B)
 
 What each slot's qubit holds, and which basis reads it. Each slot is a qubit
 state `cos(θ/2)|0⟩ + e^{iφ} sin(θ/2)|1⟩`: θ is read in the Z basis, φ in the X
 basis.
 - *Shape θ (Z)* (Tessa's `single` mode, the default): one value per slot, in θ,
   read in Z.
-- *Shape φ (X)*: one value per slot, in φ, read in X. This is the `x` basis of
-  Tessa's paper pipeline (`tessa.hardware.pipeline`).
-  - Every θ is fixed at π/2, so the qubit sits on the equator, and the value is
-    the phase.
-  - A −π/2 rotation about Y on each data qubit turns the X measurement into a Z
-    one, so ⟨Z⟩ = cos φ and the circuit decodes as a single field. One
-    measurement setting, as in the Z basis.
-  - The constant θ costs no two-qubit gates, so the gate count matches the Z
-    basis exactly.
-  - Use **Clamp φ** here; **Clamp θ** does nothing, since θ is fixed.
-  - The noise hits differently: in the Z basis, decay towards |0⟩ biases values
-    one way; on the equator, noise mostly shrinks ⟨X⟩ towards 0, which pulls
-    values to the middle of the range. Measured (3 seeds, radial):
-
-    | Mesh | Backend | Z basis | X basis |
-    |---|---|---|---|
-    | blob | noiseless | 0.40 % | 0.40 % |
-    | blob | flat noise | 1.69 % | 1.29 % |
-    | blob | Phoenix | 0.79 % | 0.80 % |
-    | blob | Fez | 0.98 % | 0.93 % |
-    | Suzanne | flat noise | 1.36 % | 1.06 % |
-    | Suzanne | Phoenix | 0.95 % | 0.82 % |
-
-    X is never worse here and sometimes clearly better. That's a measurement
-    on simulated noise models, not a general rule; the explanation above is
-    the likely reason, not yet tested separately.
-- *θ + colour φ* (Tessa's `pair` mode): the shape in θ, plus a vertex
-  colour (a hue around the vertical axis) in φ at the same slots. Show it with
-  **Colour** *φ colour*: the original colours before a run, the colours decoded
-  from the phase after one. The colour is made up from the shape, so this mainly
-  shows the mechanism. It doubles the two-qubit gates (see Findings).
 - *Shape θ+φ* (Tessa's `pair` mode): the mesh itself is packed two values
   per slot, so twice as many vertices fit on the same qubits.
   - With the mesh layout, each data qubit holding C values per field takes
@@ -483,8 +498,9 @@ basis.
     10×12 lattice or Phoenix). It also halves the qubits for meshes that already
     fit, at a little more error (see Findings).
   - The qubit map says which field each coordinate is in.
-- In the API the modes are `theta`, `phi`, `colour` and `split`; the old names
-  `single` and `pair` still work (as `theta` and `colour`).
+- *Morph A→B* (Tessa's `pair` mode): mesh A in θ, mesh B in φ; see
+  [Morph](#morph-desktop-only).
+- In the API the modes are `theta`, `split` and `morph`.
 
 **Layout** (mesh / naive)
 - *In practice:*
@@ -518,8 +534,8 @@ basis.
   θ = 0 or π carries no phase.
 
 **Clamp φ** (only when φ is used; 0–0.45 π, 0 means Tessa's default of 0)
-- *In practice:* the same idea for the field held in the phase (colour, or the
-  second half of the mesh).
+- *In practice:* the same idea for the field held in the phase (the second half
+  of the mesh in *shape θ+φ*).
 - *In Tessa:* `encode(clamp_b=...)`, φ in `[c, π − c]`.
 
 **Compression %** (0–100)
@@ -563,16 +579,13 @@ basis.
     (`build_local_noise_model`). The noise model is built once per chip and reused
     across seeds.
 
-**Placement** (best qubits first / importance / Tessa's order; chip backends only)
+**Placement** (best qubits first / Tessa's order; chip backends only)
 - *In practice:* where on the chip the mesh goes. *Best qubits first* (the
   default) puts it only on data qubits that read back well, so far fewer
   vertices misbehave. *Tessa's order* fills the chip from qubit 0 onward,
   whatever their quality. The info panel shows the mean quality of the data
   qubits used (1.00 = every test symbol read back right). Turn on
-  **Qubit map** to see where the mesh lands. *Importance* uses the same data
-  qubits but puts the most curved vertices (tips, ridges, creases, where noise
-  shows most) on the best of them. It only changes anything when the mesh is
-  big enough to need some mediocre qubits, such as Suzanne on Phoenix.
+  **Qubit map** to see where the mesh lands.
 - *In Tessa:* `probe_qubits(graph, sampler)` encodes random test symbols over the
   whole chip, decodes them on the calibrated simulator, and scores each data
   qubit by the fraction read back right. That folds in its address qubits'
@@ -585,14 +598,6 @@ basis.
   app probes on first use instead. Simulator backends have identical qubits,
   so the setting does nothing there.
 
-  *Importance*: `mesh.importance` scores each vertex by its distance from the
-  mean of its neighbours over its mean edge length (zero on a flat face,
-  highest at corners and tips). With the naive layout, vertices fill the
-  ranked slots most important first. With the mesh layout, the neighbourhood
-  patches are cut as usual. Then, among data qubits that hold the same number
-  of values, the patches with the highest mean importance swap onto the best
-  qubits, so every patch stays whole on one data qubit.
-
 **Shots** (2^8–2^16; default 4,096)
 - *In practice:* the main jitter control. Error falls as `1/√shots` (see **Curves**).
 - *In Tessa:* `decode(shots=...)`, measurements per cell circuit and basis.
@@ -604,18 +609,17 @@ basis.
 
 **Seed** (0–999)
 - *In practice:* the same seed gives the same noise sample; frame *i* of
-  **Run frames** uses `seed + i`. It also seeds **Mask %**.
+  **Run frames** uses `seed + i`.
 - *In Tessa:* seeds the Aer sampler.
 
 ### View and colour (instant)
 
 **View** (fidelity / material)
-- *Fidelity*: gain fixed at 1 and no mask, so what you see is the true decoded
-  mesh.
-- *Material*: **Gain** and **Mask %** apply, and the title says
+- *Fidelity*: gain fixed at 1, so what you see is the true decoded mesh.
+- *Material*: **Gain** applies, and the title says
   "gain 3.0× (noise exaggerated)".
 
-**Colour** (error / qubit / φ colour / plain)
+**Colour** (error / qubit / morph Δ / plain)
 - *Error*: each vertex's distance from its original position at the current
   step, in mesh units, so the colours change as the mesh plays. They start
   light on the original mesh, grow darker as a readout's error glides in, and
@@ -623,20 +627,18 @@ basis.
   fixed for the whole run, light (no error) to dark (the largest error at any
   step), so a frame that looks darker really is worse; the legend shows the
   values. It is always the true decoded error, even in the material view, where
-  gain and mask only change the positions shown. On a chip backend it shows the
+  gain only changes the positions shown. On a chip backend it shows the
   bad qubits.
 - *Qubit*: which data qubit holds each vertex, one distinct colour per qubit in
   use (hues spread by the golden ratio). With the mesh layout, cells show up as
   patches, so the mesh becomes a picture of the chip. With the naive layout on
   xyz, a vertex's x, y and z sit on different qubits, so the colour shows the
   qubit holding x (the title says so). Hover a vertex for its qubit number.
-- *φ colour*: the colour field of **Mode** *θ + colour φ* as a hue (0 to 1 around the colour wheel):
-  the original field before a run, and the field decoded from φ, averaged over
-  the readouts, after one.
+- *Morph Δ* (desktop, morph only): |B − A| per vertex; see Morph.
 - *Plain*: a single colour.
 
 Both apps use the same colour scales and show a legend for every scale (error,
-φ colour, and edge length when edges are shown). The edge scale spans the true
+morph Δ, and edge length when edges are shown). The edge scale spans the true
 edge lengths, so a measured length outside that range shows as the end colour.
 Faces get one flat colour each, the mean of their corner vertices, so no value is
 blended across a face. In the web view each vertex also has a dot in its own exact
@@ -654,11 +656,7 @@ on the far side.
 
 **Gain (material)** (0–10×; default 3)
 - *In practice:* how visible the noise is, in the material view only.
-- *In Tessa:* nothing. It is applied as `out = orig + gain · mask · (decoded − orig)`.
-
-**Mask %** (0–100; material view only)
-- *In practice:* only this percentage of vertices, chosen at random, move.
-- *In Tessa:* nothing. It is the `mask` term in the blend above.
+- *In Tessa:* nothing. It is applied as `out = orig + gain · (decoded − orig)`.
 
 **Frames** (2–60)
 - *In practice:* how many readouts **Run frames** collects.
@@ -751,23 +749,22 @@ and marks its vertices on the mesh.
 
 Slot k of a data qubit is the address state where address qubit j reads bit j
 of k. That is the bit order Tessa's decoder uses (`_table_expectation`). With
-colour in φ, the same slot also carries the vertex colour; with *shape θ+φ*,
-each coordinate's line says whether it is in θ or φ. In the desktop window the
+*shape θ+φ* or the spherical payload, each coordinate's line says whether it is in
+θ or φ; in morph, the same slot holds A in θ and B in φ. In the desktop window the
 orange discs on the back of the mesh show through, because matplotlib has no
 depth test. The server builds the
 map with `bridge.qubit_map(e)`.
 
 ## Not done yet
 
-- **View-dependent importance.** *Importance* placement uses curvature only.
-  Silhouette edges for a chosen camera, or a user-painted weight, could feed the
-  same `weight` argument of `bridge.place`.
 - **Full-lattice coherences.** Hadamards on the address qubits of the whole
   encoded mesh, instead of isolated pairs.
 - **Morph in the web version.** Morph is desktop only.
-- **Collision morph.** `bridge.sweep_circuit` already takes one α per data qubit.
-  Driving it from contact distance would spread the morph patch by patch from the
-  contact point.
+- **Collision morph.** The front is in place: `bridge.sweep_circuit` takes one α per
+  (batch, data qubit), `morph.geodesic` and `bridge.qubit_distance` turn a source vertex
+  into per-qubit distances, and `morph_alpha` drives the sweep from them. A collision
+  morph needs the contact point as the source (and a UI), and, by the front's numbers,
+  a lower-noise backend to read on a chip.
 - **Batching for the other modes.** It is built generic in `encode_mesh` but only
   switched on for morph (`can_batch`).
 - **Real hardware.** Tessa would run whole circuits there with
@@ -779,13 +776,17 @@ map with `bridge.qubit_map(e)`.
 tessa_ripple/
   mesh.py      blob, cube, uv_sphere, edges, bfs_order, decimate (+ replay_decimation),
                load_obj, write_obj
-  morph.py     morph geometry: align, closest_points, correspond, coverage, slerp
+  morph.py     morph geometry: align, closest_points, correspond, coverage, slerp,
+               geodesic, front_alpha
   bridge.py    all Tessa calls: Params, payloads, placement, fit_lattice, encode_mesh
                (incl. morph and batches), samplers (incl. chip snapshots), decode_raw,
                restore, sweep_circuit, morph_frame / morph_expected, fidelity_curves,
                resources (Why Tessa), read_edges (coherence readout)
-  animate.py   run_frames, random_mask, blend, interpolate, timeline, export_obj_sequence
+  interfere.py interference morph: choose_selectors, encode_interfere, run_frames,
+               read (with a dephased control), ideal / pure / incoherent, coherence
+  animate.py   run_frames, blend, interpolate, timeline, export_obj_sequence
   app.py       matplotlib window: views, colours, controls, playback, export
-tests/         meshes, placement, round trips, pair colour, chip backend, resources,
-               edge readout, seeding, interpolation, export, morph (test_morph.py)
+tests/         meshes, placement, round trips, split mode, chip backend, resources,
+               edge readout, seeding, interpolation, export, morph (test_morph.py),
+               interference morph (test_interfere.py), headless app (test_app.py)
 ```

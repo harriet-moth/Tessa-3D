@@ -33,34 +33,29 @@ from tessa.hardware import devices
 from tessa.hardware.pipeline import _angle_readout, _tilted, _transition_frames, ideal_frames
 from tessa.symbols import _slot_ranges
 
-from .mesh import bfs_order, edge_lengths, edges, grow_patches, importance
-from .morph import correspond, slerp
+from .mesh import bfs_order, edge_lengths, edges, grow_patches
+from .morph import correspond, front_alpha, geodesic, slerp
 
 MAX_ROWS, MAX_COLS = 10, 12  # largest lattice: the whole ibm_phoenix chip, turned on its side
 PHOENIX_ROWS, PHOENIX_COLS = 12, 10  # ibm_phoenix: 12 rows of 10 qubits, row-major
 DEVICES = ("phoenix", "fez")  # Tessa's offline calibration snapshots
 BACKENDS = ("noiseless", "flat noise", *DEVICES)
-# chip backends: Tessa's group order | best data qubits first | best first, most curved vertices
-# on the very best (see place)
-PLACEMENTS = ("graph", "quality", "importance")
+# chip backends: Tessa's group order | best data qubits first (Tessa's slot_order)
+PLACEMENTS = ("graph", "quality")
 QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores per chip snapshot
-# What each slot's qubit holds. One value per slot, read in one basis: in theta (read
-# in Z, Tessa's "single" mode) or in phi with theta fixed at pi/2 (read in X, the
-# paper pipeline's "x" basis). Two values per slot (Tessa's "pair" mode): a colour
-# field in phi, or more geometry (twice the vertices fit). Morph: mesh A in theta, a
-# second mesh B (one matched point per A vertex) in phi, in the same slots.
-MODES = ("theta", "phi", "colour", "split", "morph")
-# morph meshes too big for one run are read in batches; on a chip, later batches start
-# on the next-best data qubits (spreading the best ones) or reuse the same ones
-BATCH_PLACEMENTS = ("next-best", "same")
+# What each slot's qubit holds. One value per slot in theta, read in Z (Tessa's "single"
+# mode). Two values per slot (Tessa's "pair" mode): more geometry (twice the vertices
+# fit). Morph: mesh A in theta, a second mesh B (one matched point per A vertex) in phi,
+# in the same slots, read by a basis sweep: at t the data qubits are measured along
+# cos(alpha) Z + sin(alpha) X, alpha = t * pi/2, and Tessa's transition decode divides
+# out sin(theta) with an alpha = 0 (Z) readout (exactly A at t = 0, exactly B at t = 1).
+MODES = ("theta", "split", "morph")
+# morph meshes too big for one run are read in batches; on a chip each later batch starts
+# on the next-best data qubits, so the best ones are spread across the runs
 BATCH_SEED_STEP = 1000  # batch k of a readout with seed s uses seed s + 1000 k
-# Morph is read by a basis sweep: at t the data qubits are measured along
-# cos(alpha) Z + sin(alpha) X, alpha = t * pi/2. How that readout becomes values:
-# "transition" (default) divides out sin(theta) with an alpha = 0 (Z) readout, as Tessa's
-# transition and InterwovenQPIXL's tilted_readout.py do (exactly A at t = 0, exactly B at
-# t = 1); "raw" maps arccos(E) through A's map ("B seen through A" at t = 1)
-SWEEP_DECODES = ("transition", "raw")
-MODE_ALIASES = {"single": "theta", "pair": "colour"}  # the names before the split mode
+# morph's alpha = 0 (Z) reference is a separate run on the chip, so it gets its own noise
+# draw: seed s + 2**20, clear of every frame seed (s + i) and batch seed (s + 1000 k)
+REFERENCE_SEED_OFFSET = 1 << 20
 DRR_METHODS = DYNAMIC_RANGE_METHODS  # Tessa's dynamic range recovery methods
 
 
@@ -84,11 +79,11 @@ class Params:
     Encoder settings (changing any re-encodes):
 
     Attributes:
-        payload: "radial" (one radius per vertex from the centroid) or "xyz" (three
-            coordinates per vertex).
+        payload: "radial" (one radius per vertex from the centroid; directions kept
+            classically), "xyz" (three coordinates per vertex) or "spherical" (direction
+            as θ, φ of one slot read in Z, X and Y, radius in a second slot; Mode θ only).
         layout: "mesh" (BFS neighbourhood patches per cell) or "naive" (axis-major).
-        mode: One of MODES (or a MODE_ALIASES name): θ (Z), φ (X), θ + colour φ,
-            shape over θ and φ, or morph A→B.
+        mode: One of MODES: θ (Z), shape over θ and φ, or morph A→B.
         clamp: θ clamp in radians; None for Tessa's default.
         clamp_b: φ clamp in radians (pair modes); None for Tessa's default.
         compression: Percent (0-100) of multiplexer coefficients dropped.
@@ -97,7 +92,6 @@ class Params:
         placement: Chips only: one of PLACEMENTS.
         target: Morph: mesh B's OBJ path.
         shared_topology: Morph: pair B with A by vertex index (else closest point).
-        batch_placement: Chips with several runs only: one of BATCH_PLACEMENTS.
 
     Readout settings (changing these re-decodes; a chip backend also changes the graph):
 
@@ -107,7 +101,11 @@ class Params:
         noise_strength: Scales the "flat noise" rates only.
         seed: Sampler seed of the first readout.
         morph_t: Morph: the basis sweep reads at alpha = t * pi/2 (0 = A, 1 = B).
-        sweep_decode: Morph: one of SWEEP_DECODES.
+        morph_front: Morph: give each (batch, data qubit) its own alpha, a front
+            spreading from ``front_source`` over the surface (:func:`morph_alpha`).
+        front_width: Morph front: softness w of the ramp, in normalised distance.
+        front_source: Morph front: source vertex index; None = auto
+            (:func:`front_source`, the largest |B - A|).
     """
     # encoder (changing any of these re-encodes)
     payload: str = "radial"
@@ -121,23 +119,15 @@ class Params:
     placement: str = "quality"
     target: str | None = None
     shared_topology: bool = False
-    batch_placement: str = "next-best"
     # readout (changing these re-decodes; a chip backend also changes the graph)
     backend: str = "noiseless"
     shots: int = 4096
     noise_strength: float = 1.0
     seed: int = 0
     morph_t: float = 0.0
-    sweep_decode: str = "transition"
-
-    @property
-    def canonical_mode(self) -> str:
-        """``mode`` with old names (MODE_ALIASES) mapped to their MODES name.
-
-        Returns:
-            str: One of MODES (or an unknown name unchanged).
-        """
-        return MODE_ALIASES.get(self.mode, self.mode)
+    morph_front: bool = False
+    front_width: float = 0.15
+    front_source: int | None = None
 
     @property
     def encoder_key(self):
@@ -150,25 +140,36 @@ class Params:
             tuple: Hashable key; equal keys give the same ``encode_mesh`` result.
         """
         graph = self.backend if self.backend in DEVICES else "lattice"
-        morph = self.canonical_mode == "morph"
+        morph = self.mode == "morph"
         return (self.payload, self.layout, self.mode, self.clamp, self.clamp_b,
                 self.compression, self.quant_bits, self.headroom, graph,
                 self.placement if graph != "lattice" else "graph",
-                *((self.target, self.shared_topology) if morph else ()),
-                *((self.batch_placement,) if morph and graph != "lattice" else ()))
+                *((self.target, self.shared_topology) if morph else ()))
 
     @property
     def readout_key(self):
         """Cache key of everything that changes a readout of one encoding.
 
-        Morph keys on ``morph_t`` and ``sweep_decode``: the sweep reads in a basis set by t.
+        Morph keys on ``morph_t``: the sweep reads in a basis set by t. The front's
+        width and source join only while the front is on.
 
         Returns:
             tuple: Hashable key; equal keys give the same decoded values.
         """
-        morph = self.canonical_mode == "morph"
+        morph = self.mode == "morph"
+        front = (self.morph_front, *((self.front_width, self.front_source) if self.morph_front else ()))
         return (self.shots, self.backend, self.noise_strength, self.seed,
-                *((self.morph_t, self.sweep_decode) if morph else ()))
+                *((self.morph_t, *front) if morph else ()))
+
+    @property
+    def front(self):
+        """The morph front's settings, or None for the uniform sweep.
+
+        Returns:
+            tuple | None: ``(width, source)`` when ``mode`` is morph and
+            ``morph_front`` is on, else None.
+        """
+        return (self.front_width, self.front_source) if self.mode == "morph" and self.morph_front else None
 
 
 @dataclass(frozen=True)
@@ -184,13 +185,14 @@ class Encoded:
         enc: The (first run's) Tessa ``Encoding``.
         prep: Tessa ``FieldPrep`` of the main field (quantisation, DRR reference).
         slots: (N, comps) capacity slot of every encoded value.
-        payload: "radial" or "xyz".
-        centre: (3,) centre radial values (and morph xyz) are measured from, or None.
+        payload: "radial", "xyz" or "spherical".
+        centre: (3,) centre radial and spherical values (and morph xyz) are measured
+            from, or None.
         dirs: (N, 3) unit directions from ``centre`` (radial), or None.
-        colour: (N,) original colour field in [0, 1] (colour mode), or None.
         single_twoq: Two-qubit gates of the θ-only circuit.
         quality: Chip only: ``probe_qubits`` score per data qubit, else None.
-        field: (N, comps) 0 = value in θ, 1 = in φ (split mode), else None.
+        field: (N, comps) 0 = value in θ, 1 = in φ (split mode, spherical payload),
+            else None.
         mode: One of MODES.
         parts: Several runs: one (circuit, enc) per batch, parts[0] being
             (circuit, enc); empty for one run.
@@ -199,7 +201,10 @@ class Encoded:
         dirs_b: Radial morph: (N, 3) unit directions of ``target`` from ``centre``.
         prep_b: Morph: Tessa ``FieldPrep`` of B's field.
         match: Morph: the :func:`morph.correspond` dict (method, coverage, B mesh).
+        scales: Spherical: (3,) units of one encoded fraction (π polar, 2π azimuth,
+            the radius range), else None.
         _sweeps: Cache of :func:`sweep_circuit` results per (part, alpha).
+        _fronts: Cache of :func:`front_distances` per source vertex.
     """
     verts: np.ndarray
     faces: list
@@ -212,7 +217,6 @@ class Encoded:
     payload: str
     centre: np.ndarray | None
     dirs: np.ndarray | None
-    colour: np.ndarray | None
     single_twoq: int
     quality: np.ndarray | None = None
     field: np.ndarray | None = None
@@ -223,11 +227,13 @@ class Encoded:
     dirs_b: np.ndarray | None = None
     prep_b: object = None
     match: dict | None = None
+    scales: np.ndarray | None = None
     _sweeps: dict = dc_field(default_factory=dict, compare=False, repr=False)
+    _fronts: dict = dc_field(default_factory=dict, compare=False, repr=False)
 
     @property
     def fields(self) -> np.ndarray:
-        """Field of every value, all 0 (θ) outside split mode.
+        """Field of every value, all 0 (θ) outside split mode and the spherical payload.
 
         Returns:
             np.ndarray: (N, comps) int, 0 = θ, 1 = φ.
@@ -263,12 +269,13 @@ class Encoded:
 
     @property
     def pair(self) -> bool:
-        """Whether the encoding uses Tessa's pair mode (a second field in φ).
+        """Whether the encoding uses a Tessa pair mode (a second field in φ).
 
         Returns:
-            bool: True for colour, split and morph.
+            bool: True for split, morph (``pair``) and the spherical payload
+            (``pair_full``).
         """
-        return self.enc.mode == "pair"
+        return get_mode(self.enc.mode).is_pair
 
     @property
     def device(self) -> str | None:
@@ -323,9 +330,7 @@ class Encoded:
     def stats(self) -> dict:
         """Resource summary for the info panel and the web API.
 
-        Colour mode counts its N distinct hues as extra values (one per vertex,
-        repeated in every slot of that vertex); morph counts one B value in φ beside
-        every A value in θ.
+        Morph counts one B value in φ beside every A value in θ.
 
         Returns:
             dict: ``graph`` (name), ``quality`` (mean score of used data qubits or
@@ -333,9 +338,7 @@ class Encoded:
             ``ratio`` (values per used qubit), ``depth``, ``twoq``, ``twoq_single``
             (θ field alone), ``runs`` and ``values_per_run`` (list).
         """
-        # colour mode repeats one hue per vertex in all its slots: N distinct extra values;
-        # morph holds one B value in φ beside every A value in θ
-        n = self.slots.size * (2 if self.mode == "morph" else 1) + (len(self.slots) if self.mode == "colour" else 0)
+        n = self.slots.size * (2 if self.mode == "morph" else 1)  # morph: B in φ beside A in θ
         q = None if self.quality is None else float(self.quality[self.used_groups].mean())
         used = len(self.used_qubits)
         per_run = np.bincount(self.batches, minlength=self.runs) * (n // len(self.slots))
@@ -379,20 +382,27 @@ def to_payload(verts, payload):
     """The values to encode for a mesh.
 
     Radial: one radius per vertex from the centroid, so noise moves vertices along
-    their direction from the centre.
+    their direction from the centre; the directions stay classical. Spherical: the
+    same radius plus the direction as polar angle (from +z) and azimuth, all three
+    encoded, so only the centroid stays classical.
 
     Args:
         verts: (N, 3) vertex positions.
-        payload: "radial" or "xyz".
+        payload: "radial", "xyz" or "spherical".
 
     Returns:
-        tuple: ``(values, centre, dirs)``: values (N, comps) (comps 1 radial, 3 xyz),
-        the centroid (3,) and unit directions (N, 3); centre and dirs are None for xyz.
+        tuple: ``(values, centre, dirs)``: values (N, comps) (comps 1 radial, 3 xyz,
+        3 spherical: polar, azimuth in [0, 2π), radius), the centroid (3,) and unit
+        directions (N, 3); centre is None for xyz, dirs None for xyz and spherical.
     """
     if payload == "xyz":
         return verts.copy(), None, None
     centre = verts.mean(0)
     r, dirs = radial(verts, centre)
+    if payload == "spherical":  # the angles tessa.symbols uses for a point on the Bloch sphere
+        polar = np.arccos(np.clip(dirs[:, 2], -1.0, 1.0))
+        azimuth = np.mod(np.arctan2(dirs[:, 1], dirs[:, 0]), 2 * np.pi)
+        return np.column_stack([polar, azimuth, r[:, 0]]), centre, None
     return r, centre, dirs
 
 
@@ -403,27 +413,19 @@ def from_payload(e: Encoded, vals, dirs=None) -> np.ndarray:
         e: The encoding (payload, centre, A's directions).
         vals: (N, comps) values in payload units.
         dirs: (N, 3) unit directions for radial values; None uses ``e.dirs``.
+            Ignored for spherical, whose directions are decoded.
 
     Returns:
         np.ndarray: (N, 3) positions. Xyz is offset by ``e.centre`` when set (morph
         centres xyz on A's centroid; the other modes do not).
     """
+    if e.payload == "spherical":  # fractions of (π, 2π, radius range)
+        polar, azimuth, r = (vals * e.scales).T
+        s = np.sin(polar)
+        return e.centre + r[:, None] * np.column_stack([s * np.cos(azimuth), s * np.sin(azimuth), np.cos(polar)])
     if e.payload == "xyz":  # morph centres xyz on A's centroid; the other modes do not
         return vals if e.centre is None else e.centre + vals
     return e.centre + vals[:, :1] * (e.dirs if dirs is None else dirs)
-
-
-def hue(verts) -> np.ndarray:
-    """Vertex colour field for colour mode: hue from the angle around the vertical axis.
-
-    Args:
-        verts: (N, 3) vertex positions.
-
-    Returns:
-        np.ndarray: (N,) hues in [0, 1).
-    """
-    c = verts - verts.mean(0)
-    return (np.arctan2(c[:, 1], c[:, 0]) / (2 * np.pi)) % 1.0
 
 
 # --- where it goes on the chip ---------------------------------------------------
@@ -453,7 +455,7 @@ def slot_groups(graph, slots) -> np.ndarray:
     return np.searchsorted(cells(graph)[:, 1], slots, side="right")
 
 
-def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1, grow=None):
+def place(graph, n, comps, order=None, quality=None, per_slot=1, grow=None):
     """Capacity slot and field (0 = θ, 1 = φ) of every value.
 
     ``order=None`` is the naive axis-major layout (all x, then all y, then all z).
@@ -464,12 +466,6 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1, gr
     Cells are filled in graph order, or, given ``quality``, in Tessa's
     ``slot_order``: best data qubit first, so a mesh smaller than the chip lands
     only on its best qubits.
-
-    ``weight`` also matches the most important vertices to the best of those
-    qubits. Naive layout: vertices fill the ranked slots most important first. Mesh
-    layout: the neighbourhood patches are cut as usual, then within each patch size
-    the patches with the highest mean importance swap onto the best data qubits, so
-    every patch stays whole.
 
     ``per_slot=2`` (split mode) gives every slot two positions, θ then φ: a data
     qubit with C slots takes 2C values, its θ field filled first and its φ field
@@ -482,7 +478,6 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1, gr
         order: (n,) vertex order for the mesh layout (e.g. :func:`mesh.bfs_order`),
             or None for the naive layout.
         quality: One score per data qubit (higher is better), or None for graph order.
-        weight: (n,) importance score per vertex, or None.
         per_slot: Positions per slot: 1, or 2 for split mode.
         grow: Optional ``grow(sizes) -> (patches, leftover vertices)`` that cuts the
             mesh-layout patches (e.g. compact :func:`mesh.grow_patches`); None takes
@@ -501,9 +496,7 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1, gr
     if order is None:
         if n * comps > per_slot * cap:
             raise ValueError(f"{n * comps} values exceed capacity {per_slot * cap}")
-        pos = np.empty((n, comps), int)  # position t: slot ranked[t % cap], field t // cap
-        first = np.arange(n) if weight is None else np.argsort(-weight, kind="stable")
-        pos[first] = np.arange(comps) * n + np.arange(n)[:, None]
+        pos = np.arange(comps) * n + np.arange(n)[:, None]  # position t: slot ranked[t % cap], field t // cap
         return ranked[pos % cap], pos // cap
     bounds = cells(graph)
     cell_of = slot_groups(graph, ranked)
@@ -525,12 +518,6 @@ def place(graph, n, comps, order=None, quality=None, weight=None, per_slot=1, gr
         rest = order[k:]
     else:  # grow(sizes) -> (patches, leftover vertices), e.g. compact mesh patches
         patches, rest = grow([m for _, m in plan])
-    if weight is not None:  # same-size patches: most important onto the best cells
-        for m in {m for _, m in plan}:
-            idx = [i for i, (_, mm) in enumerate(plan) if mm == m]  # best cell first
-            mine = sorted((patches[i] for i in idx), key=lambda p: -weight[p].mean())
-            for i, p in zip(idx, mine):
-                patches[i] = p
     slots, field = np.empty((n, comps), int), np.empty((n, comps), int)
     for (c, m), p in zip(plan, patches):
         lo, size = bounds[c, 0], bounds[c, 1] - bounds[c, 0]
@@ -625,8 +612,7 @@ def qubit_map(e: Encoded) -> dict:
         data qubit with its address qubits. ``vertices[i][c] = [group, address,
         field]``: value ``c`` of vertex ``i`` is in that group's slot whose address
         qubit ``groups[g].addresses[j]`` reads bit ``j`` of ``address`` (the bit order
-        Tessa's decoder uses), in ``field`` 0 (θ) or 1 (φ, split mode only). In colour
-        mode the same slot also holds the vertex colour in φ.
+        Tessa's decoder uses), in ``field`` 0 (θ) or 1 (φ: split mode, spherical payload).
     """
     g = e.graph
     if e.device is None:
@@ -655,6 +641,31 @@ def morph_clamp(p: Params) -> float:
         float: Clamp in radians.
     """
     return p.clamp or DEFAULT_CLAMP
+
+
+def morph_range(flat, flat_b, payload: str, headroom: float) -> tuple[float, float]:
+    """The value range A and B share in a morph (θ and φ use the same scale).
+
+    Xyz: symmetric about 0, out to the largest |coordinate| of either mesh. Radial:
+    centred on A's mean radius, a narrower range than (0, r_max), so the same readout
+    noise is a smaller share of each radius.
+
+    Args:
+        flat: A's prepared values (``prepare_field`` output), flat.
+        flat_b: B's prepared values, same length.
+        payload: "radial" or "xyz".
+        headroom: Fractional padding on the range.
+
+    Returns:
+        tuple: ``(lo, hi)`` for ``tessa.encode``'s ``value_range`` and ``value_range_b``.
+    """
+    if payload == "xyz":
+        top = max(float(np.abs(flat).max() or 1.0), float(np.abs(flat_b).max())) * (1 + headroom)
+        return (-top, top)
+    mid = float(flat.mean())
+    half = max(float(np.abs(flat - mid).max()), float(np.abs(flat_b - mid).max())) or mid or 1.0
+    half *= 1 + headroom
+    return (mid - half, mid + half)
 
 
 def split_batches(verts, faces, n_batches: int) -> list[np.ndarray]:
@@ -734,7 +745,7 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
     """Encode a mesh with Tessa: pick the graph, place the values, build the circuit(s).
 
     Morph meshes too large for one run are split into connected batches, one circuit
-    each (see BATCH_PLACEMENTS).
+    each; on a chip each later batch starts on the next-best data qubits.
 
     Args:
         verts: (N, 3) vertex positions.
@@ -749,9 +760,12 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
     Raises:
         ValueError: For an unknown mode, a morph without B, or a mesh that does not fit.
     """
-    mode = p.canonical_mode
+    mode = p.mode
     if mode not in MODES:
         raise ValueError(f"unknown mode {p.mode!r}; use one of {MODES}")
+    spherical = p.payload == "spherical"
+    if spherical and mode != "theta":
+        raise ValueError("The spherical payload fills θ and φ itself; use Mode θ (Z)")
     per = 2 if mode == "split" else 1
     verts = np.asarray(verts, dtype=float)
     vals, centre, dirs = to_payload(verts, p.payload)
@@ -770,22 +784,19 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         else:
             vals_b, dirs_b = radial(tgt, centre)
         clamp = clamp_b = morph_clamp(p)
+    scales = None
+    if spherical:  # encode fractions: polar of π, azimuth of 2π, radius of its padded max
+        scales = np.array([np.pi, 2 * np.pi, (vals[:, 2].max() or 1.0) * (1 + p.headroom)])
+        vals = vals / scales
     n, comps = vals.shape
+    slot_comps = 2 if spherical else comps  # spherical: a direction slot and a radius slot
     flat, prep = prepare_field(vals.ravel(), quant_bits=p.quant_bits)
-    top = float(np.abs(flat).max() or 1.0)
     if vals_b is not None:
         flat_b, prep_b = prepare_field(vals_b.ravel(), quant_bits=p.quant_bits)
-        top = max(top, float(np.abs(flat_b).max()))
-    top *= 1 + p.headroom
-    rng = (-top, top) if p.payload == "xyz" else (0.0, top)
-    if mode == "morph" and p.payload == "radial":
-        # Centred on A's mean radius: the sweep pulls every value toward mid-range, so
-        # with (0, r_max) the mesh shrinks as t grows. Here A's radii sit near θ = π/2,
-        # where the sweep leaves them almost unchanged and reads B's nearly as they are.
-        mid = float(flat.mean())
-        half = max(float(np.abs(flat - mid).max()), float(np.abs(flat_b - mid).max())) or mid or 1.0
-        half *= 1 + p.headroom
-        rng = (mid - half, mid + half)
+        rng = morph_range(flat, flat_b, p.payload, p.headroom)
+    else:
+        top = float(np.abs(flat).max() or 1.0) * (1 + p.headroom)
+        rng = (-top, top) if p.payload == "xyz" else (0.0, top)
     mesh_layout = p.layout == "mesh"
     can_batch = mode == "morph"  # generic below; only morph switches it on for now
     quality = None
@@ -794,21 +805,18 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         quality = chip_quality(p.backend)
     else:
         try:
-            graph = fit_lattice(n, comps, mesh_layout, per)
+            graph = fit_lattice(n, slot_comps, mesh_layout, per)
         except ValueError:
             if not can_batch:
                 raise
             graph = Lattice(MAX_ROWS, MAX_COLS)
         name = f"{graph.rows}x{graph.cols} lattice"
     k_runs = batches_needed(n, comps, per * graph.capacity) if can_batch else 1
-    ranked = p.placement in ("quality", "importance")
-    weight = importance(verts, faces) if p.placement == "importance" and quality is not None else None
     groups = split_batches(verts, faces, k_runs) if k_runs > 1 else [np.arange(n)]
     slots, field = np.empty((n, comps), int), np.empty((n, comps), int)
     batch = np.zeros(n, int)
     vals = flat.reshape(n, comps)
     vals_b = None if vals_b is None else flat_b.reshape(n, comps)
-    colour = hue(verts) if mode == "colour" else None
     parts, skip = [], 0
     for k, idx in enumerate(groups):
         if k_runs == 1:
@@ -818,43 +826,72 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         order = bfs_order(len(idx), f_k) if mesh_layout else None
         grow = (lambda sizes, v=v_k, f=f_k, o=order: grow_patches(v, f, sizes, o)) if mesh_layout else None
         q_k = None
-        if ranked and quality is not None:
-            q_k = rotated_quality(quality, skip) if p.batch_placement == "next-best" and skip else quality
-        s_k, fld_k = place(graph, len(idx), comps, order, q_k, None if weight is None else weight[idx],
-                           per, grow)
+        if p.placement == "quality" and quality is not None:  # later batches: next-best qubits
+            q_k = rotated_quality(quality, skip) if skip else quality
+        s_k, fld_k = place(graph, len(idx), slot_comps, order, q_k, per, grow)
+        if spherical:  # polar in θ and azimuth in φ of the direction slot, radius in θ of its own
+            s_k, fld_k = s_k[:, [0, 0, 1]], np.broadcast_to([0, 1, 0], (len(idx), 3)).copy()
         slots[idx], field[idx], batch[idx] = s_k, fld_k, k
         if q_k is not None:  # the best data qubits whose capacity this batch takes first
             sizes = np.diff(cells(graph), axis=1)[np.argsort(-q_k, kind="stable"), 0] * per
-            skip += int(np.searchsorted(np.cumsum(sizes), len(idx) * comps)) + 1
+            skip += int(np.searchsorted(np.cumsum(sizes), len(idx) * slot_comps)) + 1
+        if spherical:
+            parts.append(_spherical_circuit(graph, p, s_k, fld_k, vals[idx]))
+            continue
         parts.append(_circuit(graph, mode, p, s_k, fld_k, vals[idx],
-                              None if vals_b is None else vals_b[idx], None if colour is None else colour[idx],
-                              rng, clamp, clamp_b))
+                              None if vals_b is None else vals_b[idx], rng, clamp, clamp_b))
     circuit, enc, single_twoq = parts[0]
     return Encoded(verts, faces, graph, name, circuit, enc, prep, slots, p.payload, centre,
-                   dirs, colour, single_twoq, quality,
-                   field if mode == "split" else None, mode,
+                   dirs, single_twoq, quality,
+                   field if mode == "split" or spherical else None, mode,
                    parts=tuple((c, e) for c, e, _ in parts) if k_runs > 1 else (),
                    batch=batch if k_runs > 1 else None,
                    target=None if match is None else tgt,
-                   dirs_b=dirs_b, prep_b=prep_b, match=match)
+                   dirs_b=dirs_b, prep_b=prep_b, match=match, scales=scales)
 
 
-def _circuit(graph, mode, p: Params, slots, field, vals, vals_b, colour, rng, clamp, clamp_b):
+def _spherical_circuit(graph, p: Params, slots, field, vals):
+    """One run's spherical-payload circuit via ``tessa.encode`` in ``pair_full`` mode.
+
+    Each vertex's direction slot holds the polar angle in θ and the azimuth in φ, so
+    its Bloch vector points along the vertex's own direction (squeezed into the θ
+    clamp); its radius slot holds the radius in θ. Tessa reads ``pair_full`` in Z, X
+    and Y, so φ covers the whole circle. φ has no clamp: azimuth 0 and 2π are the
+    same direction, so the seam needs no gap.
+
+    Args:
+        graph: Tessa ``Lattice`` or ``TessaGraph``.
+        p: Settings (θ clamp, compression).
+        slots: (n, 3) capacity slots of polar, azimuth and radius.
+        field: (n, 3) 0 = θ, 1 = φ (``[0, 1, 0]`` per vertex).
+        vals: (n, 3) prepared fractions in [0, 1].
+
+    Returns:
+        tuple: ``(circuit, enc, single_twoq)``: the circuit, its Tessa ``Encoding``,
+        and the two-qubit gates of the θ field alone.
+    """
+    a = fill(graph, slots[field == 0], vals[field == 0])
+    b = fill(graph, slots[field == 1], vals[field == 1])
+    kw = dict(value_range=(0.0, 1.0), compression=p.compression)
+    single, _ = encode(graph, a, **kw)
+    circuit, enc = encode(graph, a, b, mode="pair_full", clamp=p.clamp, clamp_b=0.0,
+                          value_range_b=(0.0, 1.0), **kw)
+    return circuit, enc, two_qubit(single)
+
+
+def _circuit(graph, mode, p: Params, slots, field, vals, vals_b, rng, clamp, clamp_b):
     """One run's circuit via ``tessa.encode``.
 
-    Phi mode fixes θ = π/2 and tilts the circuit with Tessa's ``_tilted`` so Z reads
-    X (<X> = cos φ), then decodes it as one field. Colour, split and morph use Tessa's
-    pair mode, a second field in φ.
+    Split and morph use Tessa's pair mode, a second field in φ.
 
     Args:
         graph: Tessa ``Lattice`` or ``TessaGraph``.
         mode: One of MODES.
-        p: Settings (compression, φ clamp in phi mode).
+        p: Settings (compression).
         slots: (n, comps) capacity slots of this run's values.
         field: (n, comps) 0 = θ, 1 = φ.
         vals: (n, comps) prepared values.
         vals_b: Morph: (n, comps) B's prepared values, else None.
-        colour: Colour mode: (n,) hues in [0, 1], else None.
         rng: ``(lo, hi)`` value range shared by the geometry fields.
         clamp: θ clamp (ignored for morph's θ-only reference circuit).
         clamp_b: φ clamp.
@@ -869,22 +906,12 @@ def _circuit(graph, mode, p: Params, slots, field, vals, vals_b, colour, rng, cl
     single_twoq = two_qubit(single)
     if mode == "theta":
         return single, enc, single_twoq
-    if mode == "phi":  # θ = π/2 everywhere (0.5 is mid-range at any clamp), value in φ
-        c_b = p.clamp_b or 0.0
-        circuit, enc = encode(graph, np.full(graph.capacity, 0.5), a, clamp_b=c_b,
-                              value_range=(0.0, 1.0), value_range_b=rng,
-                              compression=p.compression)
-        circuit = _tilted(circuit, enc, np.pi / 2)  # Z now reads X (Tessa's pipeline "x" basis)
-        # <X> = cos φ, so the tilted circuit decodes as one field: φ = arccos(<Z>)
-        return circuit, replace(enc, mode="single", clamps=(c_b,), ranges=(rng,)), single_twoq
-    # Tessa pair mode: a second field in φ, read in the X basis
-    if mode == "colour":
-        b, range_b = fill(graph, slots, np.repeat(colour[:, None], vals.shape[1], 1)), (0.0, 1.0)
-    elif mode == "morph":  # B's matching value in the same slot, on the same scale
-        b, range_b = fill(graph, slots, vals_b), rng
-    else:
-        b, range_b = fill(graph, slots[field == 1], vals[field == 1]), rng
-    circuit, enc = encode(graph, a, b, clamp=clamp, clamp_b=clamp_b, value_range_b=range_b, **kw)
+    # Tessa pair mode: a second field in φ on the same scale, read in the X basis
+    if mode == "morph":  # B's matching value in the same slot
+        b = fill(graph, slots, vals_b)
+    else:  # split: the values placed in φ
+        b = fill(graph, slots[field == 1], vals[field == 1])
+    circuit, enc = encode(graph, a, b, clamp=clamp, clamp_b=clamp_b, value_range_b=rng, **kw)
     return circuit, enc, single_twoq
 
 
@@ -998,6 +1025,22 @@ def batch_seed(seed: int, k: int) -> int:
     return seed + BATCH_SEED_STEP * k
 
 
+def reference_seed(seed: int) -> int:
+    """Seed of the morph's alpha = 0 (Z) reference readout for a readout seeded ``seed``.
+
+    The reference and the tilted readout are two runs on the chip. Read with one
+    seed, Aer would draw the same random numbers for both, so at small alpha their
+    shot noise would largely cancel in the transition decode: quieter than a chip.
+
+    Args:
+        seed: The readout's (or first frame's) seed.
+
+    Returns:
+        int: ``seed + REFERENCE_SEED_OFFSET``.
+    """
+    return seed + REFERENCE_SEED_OFFSET
+
+
 def sweep_circuit(e: Encoded, alpha, part: int = 0):
     """Morph's basis sweep: ``part``'s pair circuit with RY(-alpha) on every data qubit.
 
@@ -1005,21 +1048,27 @@ def sweep_circuit(e: Encoded, alpha, part: int = 0):
     every cell. One angle for every qubit is Tessa's own
     ``tessa.hardware.pipeline._tilted``; Tessa has no per-qubit form, so differing
     angles are applied here. The result decodes as one field with A's clamp and
-    range (the phi mode's trick at alpha = pi/2). Cached per (part, alpha) on ``e``.
+    range. Cached per (part, alpha) on ``e``.
+
+    A batched mesh puts different vertices on the same data qubit in each run, so
+    ``alpha`` may also be (runs, groups): run ``part`` uses row ``part``.
 
     Args:
         e: A morph encoding.
-        alpha: Scalar angle, or one per data qubit (graph.groups order).
+        alpha: Scalar angle, one per data qubit (graph.groups order), or
+            (e.runs, groups) one per (batch, data qubit).
         part: Run (batch) index.
 
     Returns:
         tuple: ``(circuit, enc)``: the tilted circuit and its single-field Encoding.
 
     Raises:
-        ValueError: If ``alpha`` is neither a scalar nor one angle per data qubit.
+        ValueError: If ``alpha`` has none of those shapes.
     """
     groups = e.graph.groups
-    alpha = np.asarray(alpha, float)
+    alpha = _alpha_grid(e, alpha)
+    if alpha.ndim == 2:
+        alpha = alpha[part]
     if alpha.ndim == 0:
         alpha = np.full(len(groups), float(alpha))
     if alpha.shape != (len(groups),):
@@ -1033,7 +1082,7 @@ def sweep_circuit(e: Encoded, alpha, part: int = 0):
             qc = circuit.copy()
             for g, a in zip(groups, alpha):
                 qc.ry(-a, g.data_qubit)
-        # decoded as one field with A's clamp and range (the phi mode's trick at alpha = pi/2)
+        # decoded as one field with A's clamp and range
         e._sweeps[key] = (qc, replace(enc, mode="single", clamps=enc.clamps[:1], ranges=enc.ranges[:1]))
     return e._sweeps[key]
 
@@ -1065,19 +1114,47 @@ def _read(e: Encoded, p: Params, seed: int, runs):
     return a, b
 
 
+def _alpha_grid(e: Encoded, alpha) -> np.ndarray:
+    """Check a sweep angle's shape.
+
+    Args:
+        e: The encoding (runs, graph).
+        alpha: Scalar, (groups,) one per data qubit, or (e.runs, groups) one per
+            (batch, data qubit).
+
+    Returns:
+        np.ndarray: ``alpha`` as a float array, shape unchanged.
+
+    Raises:
+        ValueError: For any other shape.
+    """
+    alpha = np.asarray(alpha, float)
+    g = len(e.graph.groups)
+    if alpha.ndim == 0 or alpha.shape in ((g,), (e.runs, g)):
+        return alpha
+    raise ValueError(f"alpha needs one angle per data qubit ({g}) or per (batch, data qubit) "
+                     f"({e.runs}, {g}), got shape {alpha.shape}")
+
+
 def _per_value(e: Encoded, alpha) -> np.ndarray:
     """A sweep angle as one angle per encoded value.
 
+    ``e.groups_of`` is per batch (each batch's slots index the same graph), so a
+    (runs, groups) angle is looked up by each vertex's batch and data qubit.
+
     Args:
         e: The encoding.
-        alpha: Scalar, or one angle per data qubit (graph.groups order).
+        alpha: Scalar, (groups,) one per data qubit (graph.groups order), or
+            (e.runs, groups) one per (batch, data qubit).
 
     Returns:
         np.ndarray: (N*comps,) angles.
     """
-    alpha = np.asarray(alpha, float)
+    alpha = _alpha_grid(e, alpha)
     if not alpha.ndim:
         return np.full(e.slots.size, float(alpha))
+    if alpha.ndim == 2:
+        return alpha[e.batches[:, None], e.groups_of].ravel()
     return alpha[e.groups_of].ravel()
 
 
@@ -1091,7 +1168,7 @@ def tilted_angles(e: Encoded, p: Params, seed: int, alpha) -> np.ndarray:
         e: A morph encoding.
         p: Readout settings.
         seed: The readout's seed.
-        alpha: Scalar, or one angle per data qubit.
+        alpha: Scalar, one angle per data qubit, or (runs, groups).
 
     Returns:
         np.ndarray: (N*comps,) angles in radians.
@@ -1124,16 +1201,23 @@ def transition_values(e: Encoded, angle_alpha, angle_z, alpha) -> np.ndarray:
     The Z readout's sin(theta) is divided out of the X part of E(alpha). Noiseless,
     the frame is exactly A at alpha = 0 and exactly B at pi/2.
 
+    A value read at alpha = 0 (a frame at t = 0, or the part of the mesh a front has
+    not reached) is already a Z readout, so it is decoded from that readout alone.
+    Against a separate Z reference the transition would subtract two independent Z
+    readouts and divide by sin(theta), making A noisier than A.
+
     Args:
         e: A morph encoding.
         angle_alpha: (N*comps,) :func:`tilted_angles` at ``alpha``.
         angle_z: (N*comps,) :func:`tilted_angles` at alpha = 0.
-        alpha: Scalar, or one angle per data qubit.
+        alpha: Scalar, one angle per data qubit, or (runs, groups).
 
     Returns:
         np.ndarray: (N*comps,) values in A's units.
     """
-    frame = _transition_frames(_transition_plan(e, [0.0, _per_value(e, alpha)]), [angle_z, angle_alpha])[1]
+    per = _per_value(e, alpha)
+    angle_z = np.where(per == 0, angle_alpha, angle_z)  # alpha = 0: its own Z readout
+    frame = _transition_frames(_transition_plan(e, [0.0, per]), [angle_z, angle_alpha])[1]
     lo, hi = e.enc.ranges[0]
     return lo + (hi - lo) * frame
 
@@ -1141,37 +1225,32 @@ def transition_values(e: Encoded, angle_alpha, angle_z, alpha) -> np.ndarray:
 def decode_raw(e: Encoded, p: Params, seed: int | None = None, reference=None):
     """One readout of the encoding, before DRR.
 
-    Morph is a basis sweep: it reads one field at alpha = p.morph_t * pi/2; with
-    ``p.sweep_decode == "transition"`` it is turned into values with an alpha = 0
-    readout (:func:`tilted_angles`).
+    Morph is a basis sweep: it reads one field at :func:`morph_alpha` (alpha =
+    p.morph_t * pi/2, or the front's angle per (batch, data qubit)) and turns it into
+    values with Tessa's transition decode and an alpha = 0 readout
+    (:func:`tilted_angles`).
 
     Args:
         e: The encoding.
         p: Readout settings.
         seed: Sampler seed; None uses ``p.seed``.
-        reference: Transition sweep only: (N*comps,) alpha = 0 angles to reuse
-            (run_frames shares one per run); None reads it now with the same seed.
+        reference: Morph only: (N*comps,) alpha = 0 angles to reuse (run_frames
+            shares one per run); None reads it now, seeded by :func:`reference_seed`.
 
     Returns:
-        tuple: ``(values, second)``: values (N*comps,), and the colour (N,) in colour
-        mode, else None.
+        np.ndarray: (N*comps,) decoded values.
     """
     seed = p.seed if seed is None else seed
-    runs = e.parts or ((e.circuit, e.enc),)
     if e.mode == "morph":
-        alpha = p.morph_t * np.pi / 2
-        if p.sweep_decode == "transition":
-            angle = tilted_angles(e, p, seed, alpha)
-            if reference is None:
-                reference = angle if alpha == 0 else tilted_angles(e, p, seed, 0.0)
-            return transition_values(e, angle, reference, alpha), None
-        runs = [sweep_circuit(e, alpha, k) for k in range(len(runs))]
-    a, b = _read(e, p, seed, runs)
-    if e.mode == "split":  # each value from its own field
-        return np.where(e.fields == 1, b, a).ravel(), None
-    if e.mode == "morph":  # the sweep circuits read one field
-        return a.ravel(), None
-    return a.ravel(), (None if b is None else b.mean(1))
+        alpha = morph_alpha(e, p.morph_t, p.front)
+        angle = tilted_angles(e, p, seed, alpha)
+        if reference is None:
+            reference = angle if np.all(alpha == 0) else tilted_angles(e, p, reference_seed(seed), 0.0)
+        return transition_values(e, angle, reference, alpha)
+    a, b = _read(e, p, seed, e.parts or ((e.circuit, e.enc),))
+    if e.field is not None:  # split mode, spherical payload: each value from its own field
+        return np.where(e.fields == 1, b, a).ravel()
+    return a.ravel()
 
 
 def _values(e: Encoded, raw, prep, drr: str) -> np.ndarray:
@@ -1204,26 +1283,145 @@ def restore(e: Encoded, raw, drr: str = "none", dirs=None) -> np.ndarray:
     return from_payload(e, _values(e, raw, e.prep, drr), dirs)
 
 
-def morph_dirs(e: Encoded, t: float, a_dirs_only: bool = False):
+# --- morph front: one alpha per (batch, data qubit), spreading over the surface -----
+def front_source(e: Encoded) -> int:
+    """The front's automatic source: the A vertex that moves most (largest |B - A|).
+
+    The maximum of the *morph Δ* colour; for apple -> bitten apple it lands in the bite.
+
+    Args:
+        e: A morph encoding.
+
+    Returns:
+        int: Vertex index.
+    """
+    return int(np.argmax(np.linalg.norm(e.target - e.verts, axis=1)))
+
+
+def qubit_distance(e: Encoded, d_vertex) -> np.ndarray:
+    """Distance of each (batch, data qubit): the median over the vertices it holds.
+
+    In xyz a vertex's components may sit on different data qubits; each qubit counts
+    the vertex once. A (batch, data qubit) holding no values gets 1, so it turns last.
+
+    Args:
+        e: The encoding (batches, ``groups_of``).
+        d_vertex: (N,) per-vertex distances in [0, 1].
+
+    Returns:
+        np.ndarray: (e.runs, groups) distances.
+    """
+    d_vertex = np.asarray(d_vertex, float)
+    g = len(e.graph.groups)
+    out = np.ones((e.runs, g))
+    n, comps = e.groups_of.shape
+    cell = e.batches[:, None] * g + e.groups_of  # flat (batch, data qubit) of every value
+    pairs = np.unique(np.column_stack([cell.ravel(), np.repeat(np.arange(n), comps)]), axis=0)
+    order = np.argsort(pairs[:, 0], kind="stable")
+    pairs = pairs[order]
+    keys, starts = np.unique(pairs[:, 0], return_index=True)
+    for key, vs in zip(keys, np.split(d_vertex[pairs[:, 1]], starts[1:])):
+        out.flat[key] = np.median(vs)
+    return out
+
+
+def front_distances(e: Encoded, source: int | None = None):
+    """Per-vertex and per-(batch, data qubit) surface distances from the front's source.
+
+    Cached on ``e`` per source.
+
+    Args:
+        e: A morph encoding.
+        source: Source vertex; None = :func:`front_source`.
+
+    Returns:
+        tuple: ``(source, d_vertex, d_qubit)``: the source used, (N,) distances
+        (:func:`morph.geodesic`) and (e.runs, groups) medians (:func:`qubit_distance`).
+    """
+    source = front_source(e) if source is None else int(source)
+    if source not in e._fronts:
+        d = geodesic(e.verts, e.faces, source)
+        e._fronts[source] = (source, d, qubit_distance(e, d))
+    return e._fronts[source]
+
+
+def morph_alpha(e: Encoded, t: float, front=None):
+    """The sweep angle of a morph frame at t.
+
+    Args:
+        e: A morph encoding.
+        t: Morph parameter in [0, 1].
+        front: None for the uniform sweep, or ``(width, source)`` (``Params.front``).
+
+    Returns:
+        float | np.ndarray: ``t * pi/2``, or the front's (e.runs, groups) angles
+        (:func:`morph.front_alpha` of :func:`front_distances`).
+    """
+    if front is None:
+        return t * np.pi / 2
+    width, source = front
+    return front_alpha(front_distances(e, source)[2], t, width)
+
+
+def front_smooth_alpha(e: Encoded, t: float, front) -> np.ndarray:
+    """The smooth reference: the front with each vertex's own distance, per value.
+
+    No circuit can do this (it needs a different angle per slot); it shows what the
+    chip's patch quantisation adds.
+
+    Args:
+        e: A morph encoding.
+        t: Morph parameter in [0, 1].
+        front: ``(width, source)``.
+
+    Returns:
+        np.ndarray: (N*comps,) angles, one per encoded value.
+    """
+    width, source = front
+    d = front_distances(e, source)[1]
+    return np.repeat(front_alpha(d, t, width), e.slots.shape[1])
+
+
+def morph_dirs(e: Encoded, t: float, a_dirs_only: bool = False, alpha=None):
     """Radial morph: each vertex's direction at t.
 
     The turning from A's to B's directions (slerp) is classical; only the radius is
-    read from the state.
+    read from the state. With a front (``alpha`` per value), each vertex turns by its
+    own weight alpha / (pi/2), so the direction moves with the front, not ahead of it.
 
     Args:
         e: A morph encoding.
         t: Morph parameter in [0, 1].
         a_dirs_only: Keep A's directions throughout.
+        alpha: None for the uniform sweep, or (N*comps,) angles per value.
 
     Returns:
         np.ndarray | None: (N, 3) unit directions, or None for xyz.
     """
     if e.payload == "xyz":
         return None
-    return e.dirs if a_dirs_only else slerp(e.dirs, e.dirs_b, t)
+    if a_dirs_only:
+        return e.dirs
+    if alpha is not None:
+        t = np.asarray(alpha, float).reshape(e.slots.shape)[:, :1] / (np.pi / 2)
+    return slerp(e.dirs, e.dirs_b, t)
 
 
-def morph_frame(e: Encoded, raw, t: float, drr: str = "none", a_dirs_only: bool = False):
+def _front_value_alpha(e: Encoded, t: float, front):
+    """Per-value angles of a front frame, for :func:`morph_dirs`.
+
+    Args:
+        e: A morph encoding.
+        t: Morph parameter.
+        front: None or ``(width, source)``.
+
+    Returns:
+        np.ndarray | None: (N*comps,) angles, or None without a front.
+    """
+    return None if front is None else _per_value(e, morph_alpha(e, t, front))
+
+
+def morph_frame(e: Encoded, raw, t: float, drr: str = "none", a_dirs_only: bool = False, front=None):
     """One decoded morph frame at t.
 
     The basis-sweep readout already holds the morph; it only needs its direction at
@@ -1235,54 +1433,67 @@ def morph_frame(e: Encoded, raw, t: float, drr: str = "none", a_dirs_only: bool 
         t: Morph parameter in [0, 1].
         drr: One of DRR_METHODS.
         a_dirs_only: Radial: keep A's directions.
+        front: None, or ``(width, source)`` the frame was read with.
 
     Returns:
         np.ndarray: (N, 3) positions.
     """
-    return restore(e, raw, drr, morph_dirs(e, t, a_dirs_only))
+    return restore(e, raw, drr, morph_dirs(e, t, a_dirs_only, _front_value_alpha(e, t, front)))
 
 
-def sweep_values(e: Encoded, alpha, decode: str = "transition") -> np.ndarray:
-    """Noiseless sweep readout in value units.
+def sweep_values(e: Encoded, alpha, per_value: bool = False) -> np.ndarray:
+    """Noiseless sweep readout in value units: Tessa's ``tessa.hardware.pipeline.ideal_frames``.
 
-    Raw: angle = arccos(cos a cos θ + sin a sin θ cos φ), mapped back through A's
-    angle -> value map (Tessa's pair ``Mode``). Transition: Tessa's
-    ``tessa.hardware.pipeline.ideal_frames``. Inputs are normalised with Tessa's
-    ``codec._normalise``, as ``encode`` does.
+    Inputs are normalised with Tessa's ``codec._normalise``, as ``encode`` does.
 
     Args:
         e: A morph encoding.
-        alpha: Scalar, or one angle per data qubit.
-        decode: One of SWEEP_DECODES.
+        alpha: Scalar, one angle per data qubit, (runs, groups), or with
+            ``per_value`` (N*comps,) one angle per value.
+        per_value: ``alpha`` is already one angle per value (e.g. the smooth
+            reference, which no circuit can produce).
 
     Returns:
         np.ndarray: (N, comps) values.
     """
-    m = get_mode("pair")
     lo, hi = e.enc.ranges[0]
     a01, b01 = (_normalise(prep.reference, (lo, hi))[0] for prep in (e.prep, e.prep_b))  # as encode
-    th, ph = m.angles(a01, e.enc.clamps), m.phases(b01, e.enc.clamps)
-    alpha = _per_value(e, alpha)
-    if decode == "transition":  # Tessa's noiseless transition frame
-        frame = ideal_frames(_transition_plan(e, [alpha], (a01, b01)))[0]
-        return (lo + (hi - lo) * frame).reshape(e.slots.shape)
-    ang = np.arccos(np.clip(np.cos(alpha) * np.cos(th) + np.sin(alpha) * np.sin(th) * np.cos(ph), -1, 1))
-    return (lo + (hi - lo) * m.values_from_angles(ang, e.enc.clamps)).reshape(e.slots.shape)
+    alpha = np.asarray(alpha, float) if per_value else _per_value(e, alpha)
+    frame = ideal_frames(_transition_plan(e, [alpha], (a01, b01)))[0]
+    return (lo + (hi - lo) * frame).reshape(e.slots.shape)
 
 
-def morph_expected(e: Encoded, t: float, a_dirs_only: bool = False, sweep_decode: str = "transition"):
+def morph_expected(e: Encoded, t: float, a_dirs_only: bool = False, front=None):
     """Noiseless reference positions of a morph frame at t, for error colouring.
 
     Args:
         e: A morph encoding.
         t: Morph parameter in [0, 1].
         a_dirs_only: Radial: keep A's directions.
-        sweep_decode: One of SWEEP_DECODES.
+        front: None, or ``(width, source)``: the front's per-qubit angles.
 
     Returns:
         np.ndarray: (N, 3) positions.
     """
-    return from_payload(e, sweep_values(e, t * np.pi / 2, sweep_decode), morph_dirs(e, t, a_dirs_only))
+    alpha = morph_alpha(e, t, front)
+    return from_payload(e, sweep_values(e, alpha),
+                        morph_dirs(e, t, a_dirs_only, _front_value_alpha(e, t, front)))
+
+
+def front_reference(e: Encoded, t: float, front, a_dirs_only: bool = False):
+    """Noiseless positions of the smooth front (per-vertex distance, no chip).
+
+    Args:
+        e: A morph encoding.
+        t: Morph parameter in [0, 1].
+        front: ``(width, source)``.
+        a_dirs_only: Radial: keep A's directions.
+
+    Returns:
+        np.ndarray: (N, 3) positions.
+    """
+    alpha = front_smooth_alpha(e, t, front)
+    return from_payload(e, sweep_values(e, alpha, per_value=True), morph_dirs(e, t, a_dirs_only, alpha))
 
 
 def read_mesh(e: Encoded, p: Params, seed: int | None = None, drr: str = "none") -> np.ndarray:
@@ -1290,16 +1501,16 @@ def read_mesh(e: Encoded, p: Params, seed: int | None = None, drr: str = "none")
 
     Args:
         e: The encoding.
-        p: Readout settings (morph: ``p.morph_t`` picks the frame).
+        p: Readout settings (morph: ``p.morph_t`` picks the frame, ``p.front`` the front).
         seed: Sampler seed; None uses ``p.seed``.
         drr: One of DRR_METHODS.
 
     Returns:
         np.ndarray: (N, 3) decoded positions.
     """
-    raw, _ = decode_raw(e, p, seed)
+    raw = decode_raw(e, p, seed)
     if e.mode == "morph":
-        return morph_frame(e, raw, p.morph_t, drr)
+        return morph_frame(e, raw, p.morph_t, drr, front=p.front)
     return restore(e, raw, drr)
 
 
@@ -1369,7 +1580,7 @@ def phoenix_layout(lat: Lattice) -> list[int]:
     return [layout[turned.qubit_index(c, r)] for r, c in map(lat.site_of_qubit, range(lat.n_qubits))]
 
 
-def resources(e: Encoded) -> list[dict]:
+def resources(e: Encoded, where=None) -> list[dict]:
     """Cost of ``e``'s values under Tessa and four baselines, transpiled onto a chip.
 
     Every row encodes generic random data (so no encoding gets credit for this
@@ -1379,6 +1590,9 @@ def resources(e: Encoded) -> list[dict]:
 
     Args:
         e: The encoding.
+        where: Optional list of capacity-slot arrays, one per Tessa field, holding
+            the mesh's values; None derives it from ``e`` (the interference morph
+            passes ``[A's and B's slots]``: one field, A and B in separate slots).
 
     Returns:
         list[dict]: One row per encoding (Tessa, angle, QCrank, FRQI, amplitude) with
@@ -1398,7 +1612,9 @@ def resources(e: Encoded) -> list[dict]:
 
     # generic random data for every row, so no encoding gets credit for this mesh; Tessa's
     # goes in the mesh's own slots, the rest of the graph padded as in encode_mesh
-    if e.mode in ("colour", "morph"):
+    if where is not None:
+        pass
+    elif e.mode == "morph":
         where = [e.slots, e.slots]
     else:
         where = [e.slots[e.fields == f] for f in ((0, 1) if e.pair else (0,))]
@@ -1423,7 +1639,8 @@ def resources(e: Encoded) -> list[dict]:
         qcrank.append(UCRYGate(list(rng.random(2 ** a))), [a + d, *range(a)])
     max_deg = max(g.degree for g in e.graph.groups)
     rows = [
-        dict(name="Tessa", qubits=len(e.used_qubits), settings=2 if e.pair else 1, configs=2 ** max_deg, **tessa),
+        dict(name="Tessa", qubits=len(e.used_qubits), settings=len(get_mode(e.enc.mode).bases),
+             configs=2 ** max_deg, **tessa),
         dict(name="Angle (1 value/qubit)", qubits=n, settings=1, configs=1, twoq=0, depth=1, swaps=0),
         dict(name="QCrank (parallel QPIXL)", qubits=a + m, settings=1, configs=2 ** a, **routed(qcrank)),
         dict(name="FRQI", qubits=k + 1, settings=1, configs=2 ** k, **routed(frqi)),

@@ -121,10 +121,10 @@ def edges(faces) -> np.ndarray:
         faces: list of polygons, each a list of vertex indices.
 
     Returns:
-        (E, 2) int array of (low, high) vertex pairs, sorted.
+        (E, 2) int array of (low, high) vertex pairs, sorted ((0, 2) with no faces).
     """
     pairs = {tuple(sorted((f[i], f[(i + 1) % len(f)]))) for f in faces for i in range(len(f))}
-    return np.array(sorted(pairs))
+    return np.array(sorted(pairs), int).reshape(-1, 2)
 
 
 def edge_lengths(verts, E) -> np.ndarray:
@@ -209,32 +209,6 @@ def grow_patches(verts, faces, sizes, order=None):
             path.append(left.pop(j))
         patches.append(np.array(path, int))
     return patches, order[free[order]]
-
-
-def importance(verts, faces) -> np.ndarray:
-    """Per-vertex curvature, scale-free.
-
-    How far a vertex sits from the mean of its neighbours, over its mean edge length.
-    Flat and gently curved regions score low; tips, ridges and creases (where noise
-    shows most) score high.
-
-    Args:
-        verts: (N, 3) vertex positions.
-        faces: list of polygons, each a list of vertex indices.
-
-    Returns:
-        (N,) float array of scores >= 0 (0 for isolated vertices).
-    """
-    verts, E = np.asarray(verts, float), edges(faces)
-    n = len(verts)
-    deg = np.bincount(E.ravel(), minlength=n).astype(float)
-    nsum, elen = np.zeros_like(verts), np.zeros(n)
-    length = edge_lengths(verts, E)
-    for a, b in ((E[:, 0], E[:, 1]), (E[:, 1], E[:, 0])):
-        np.add.at(nsum, a, verts[b])
-        np.add.at(elen, a, length)
-    deg = np.maximum(deg, 1)
-    return np.linalg.norm(verts - nsum / deg[:, None], axis=1) / np.maximum(elen / deg, 1e-12)
 
 
 def bfs_order(n_verts: int, faces) -> np.ndarray:
@@ -473,6 +447,8 @@ def load_obj(path):
     Centred on the bounding-box centre and scaled so the largest coordinate is 1.
     OBJ is Y-up and the app Z-up, so (x, y, z) becomes (x, -z, y). Texture and
     normal indices are ignored; negative (relative) face indices are resolved.
+    Any text encoding is accepted (only numbers are read: UTF-8, else Latin-1),
+    as are ``\\`` line continuations. Faces with fewer than three corners are skipped.
 
     Args:
         path: OBJ file path.
@@ -480,18 +456,42 @@ def load_obj(path):
     Returns:
         (verts, faces): verts (N, 3) float array; faces a list of polygons with
         0-based vertex indices.
+
+    Raises:
+        ValueError: The file has no vertices, an unreadable number, or a face corner
+            that names a missing vertex (the message names the file and line).
     """
+    raw = Path(path).read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:  # e.g. a Latin-1 comment or object name; numbers are ASCII anyway
+        text = raw.decode("latin-1")
+    text = text.replace("\\\r\n", " ").replace("\\\n", " ")  # line continuations
+    name = Path(path).name
     verts, faces = [], []
-    for line in Path(path).read_text().splitlines():
+    for n, line in enumerate(text.splitlines(), 1):
         parts = line.split()
-        if parts and parts[0] == "v":
-            verts.append([float(x) for x in parts[1:4]])
-        elif parts and parts[0] == "f":
-            idx = [int(p.split("/")[0]) for p in parts[1:]]
-            faces.append([i - 1 if i > 0 else len(verts) + i for i in idx])
+        try:
+            if parts and parts[0] == "v":
+                if len(parts) < 4:
+                    raise ValueError("a vertex needs x, y and z")
+                verts.append([float(x) for x in parts[1:4]])
+            elif parts and parts[0] == "f" and len(parts) >= 4:
+                idx = [int(p.split("/")[0]) for p in parts[1:]]
+                face = [i - 1 if i > 0 else len(verts) + i for i in idx]
+                if min(face) < 0 or 0 in idx:
+                    raise ValueError("a face corner names a vertex before the first")
+                faces.append(face)
+        except ValueError as err:
+            raise ValueError(f"{name}, line {n}: {err} ({line.strip()[:40]!r})") from None
+    if not verts:
+        raise ValueError(f"{name} has no vertices ('v' lines)")
+    if faces and max(max(f) for f in faces) >= len(verts):
+        raise ValueError(f"{name}: a face names vertex {max(max(f) for f in faces) + 1}, "
+                         f"but the file has only {len(verts)}")
     v = np.array(verts)[:, [0, 2, 1]] * [1, -1, 1]
     v -= (v.min(0) + v.max(0)) / 2
-    return v / np.abs(v).max(), faces
+    return v / (np.abs(v).max() or 1.0), faces
 
 
 def write_obj(path, verts, faces) -> Path:

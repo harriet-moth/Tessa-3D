@@ -1,0 +1,426 @@
+{
+ "seconds": 318,
+ "rows": 300,
+ "chips": [
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.25,
+   "share_differs": 0.032388663967611336
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.5,
+   "share_differs": 0.04048582995951417
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.75,
+   "share_differs": 0.04048582995951417
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.25,
+   "share_differs": 0.06477732793522267
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.5,
+   "share_differs": 0.04048582995951417
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.75,
+   "share_differs": 0.04048582995951417
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.25,
+   "share_differs": 0.016194331983805668
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.5,
+   "share_differs": 0.048582995951417005
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.75,
+   "share_differs": 0.09716599190283401
+  },
+  {
+   "mesh": "apple",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.25,
+   "share_differs": 0.032388663967611336
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.5,
+   "share_differs": 0.03643724696356275
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.75,
+   "share_differs": 0.1659919028340081
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.25,
+   "share_differs": 0.04048582995951417
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.5,
+   "share_differs": 0.044534412955465584
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.75,
+   "share_differs": 0.19433198380566802
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.25,
+   "share_differs": 0.048582995951417005
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.5,
+   "share_differs": 0.11336032388663968
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.75,
+   "share_differs": 0.23481781376518218
+  },
+  {
+   "mesh": "apple",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.25,
+   "share_differs": 0.06903353057199212
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.5,
+   "share_differs": 0.126232741617357
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 0.75,
+   "share_differs": 0.2406311637080868
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.1,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.25,
+   "share_differs": 0.07889546351084813
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.5,
+   "share_differs": 0.15976331360946747
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 0.75,
+   "share_differs": 0.3175542406311637
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.15,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.25,
+   "share_differs": 0.07495069033530571
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.5,
+   "share_differs": 0.22485207100591717
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 0.75,
+   "share_differs": 0.3431952662721893
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "radial",
+   "width": 0.3,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.25,
+   "share_differs": 0.07297830374753451
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.5,
+   "share_differs": 0.1301775147928994
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 0.75,
+   "share_differs": 0.3037475345167653
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.1,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.25,
+   "share_differs": 0.07692307692307693
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.5,
+   "share_differs": 0.16173570019723865
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 0.75,
+   "share_differs": 0.3530571992110454
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.15,
+   "t": 1.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.0,
+   "share_differs": 0.0
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.25,
+   "share_differs": 0.07692307692307693
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.5,
+   "share_differs": 0.20512820512820512
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 0.75,
+   "share_differs": 0.3865877712031558
+  },
+  {
+   "mesh": "suzanne",
+   "payload": "xyz",
+   "width": 0.3,
+   "t": 1.0,
+   "share_differs": 0.0
+  }
+ ]
+}

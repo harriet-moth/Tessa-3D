@@ -74,7 +74,6 @@ const ERROR = stops(ERROR_HEX), EDGE = stops(EDGE_HEX);
 const GOLDEN = 0.618034;
 // HSL is given in sRGB (what the eye sees), not three.js's linear working space.
 const hsl = (h, s, l) => new THREE.Color().setHSL(((h % 1) + 1) % 1, s, l, THREE.SRGBColorSpace);
-const hueCss = (h) => `hsl(${(h * 360).toFixed(0)} 75% 55%)`;
 function ramp(cs, t) { // blends in sRGB, like CSS gradients and matplotlib, so mesh and legend agree
   t = Math.min(1, Math.max(0, t));
   const x = t * (cs.length - 1), i = Math.min(Math.floor(x), cs.length - 2), f = x - i;
@@ -139,21 +138,6 @@ function buildMesh(d) {
   mates.material.size = 2 * dots.material.size;
 }
 
-function mulberry32(a) {
-  return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function randomMask(n, frac, seed) {
-  const r = mulberry32(seed + 1);
-  const order = [...Array(n).keys()].map((i) => [r(), i]).sort((a, b) => a[0] - b[0]);
-  const m = new Float32Array(n);
-  for (let j = 0; j < Math.round(frac * n); j++) m[order[j][1]] = 1;
-  return m;
-}
 function timeline(keys, steps, loop) {
   const k = loop && keys.length > 1 ? [...keys, keys[0]] : keys;
   const out = [];
@@ -169,18 +153,18 @@ function timeline(keys, steps, loop) {
   return out;
 }
 
-// Classical layer: gain, mask, interpolation and colour, applied to cached frames.
+// Classical layer: gain, interpolation and colour, applied to cached frames.
 function rebuild() {
   if (!S.data) return;
   const n = S.data.verts.length, orig = S.orig;
   let keys = S.frames;
   if (val('view') === 'material') {
-    const g = num('gain'), m = randomMask(n, num('mask') / 100, num('seed'));
+    const g = num('gain');
     keys = S.frames.map((f) => {
       const o = new Float32Array(f.length);
       for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) {
         const j = 3 * i + c;
-        o[j] = orig[j] + g * m[i] * (f[j] - orig[j]);
+        o[j] = orig[j] + g * (f[j] - orig[j]);
       }
       return o;
     });
@@ -190,7 +174,7 @@ function rebuild() {
   S.seq = glide(lead.concat(keys));
   S.step = Math.min(S.step, S.seq.length - 1);
   // Error colour follows the playback: each step's true decoded error (the same timeline
-  // without gain or mask), on one scale fixed to the largest error anywhere in the run.
+  // without gain), on one scale fixed to the largest error anywhere in the run.
   S.err = glide(lead.concat(S.frames)).map((v) => {
     const e = new Float32Array(n);
     for (let i = 0; i < n; i++) e[i] = Math.hypot(v[3 * i] - orig[3 * i], v[3 * i + 1] - orig[3 * i + 1], v[3 * i + 2] - orig[3 * i + 2]);
@@ -215,14 +199,9 @@ function colourise(stepOnly = false) {
     S.colourLabel = `${d.split ? "data qubit holding each vertex's x (naive layout splits x, y, z)" : 'data qubit holding each vertex'}, ${used.length} qubits`;
     $('faceLegend').hidden = false;
     $('faceLegend').innerHTML = `<div class="swatches">${used.map((q, r) => `<i title="qubit ${q}" style="background:hsl(${((r * GOLDEN) % 1 * 360).toFixed(0)} 60% 55%)"></i>`).join('')}</div>one colour per data qubit (${used.length}); hover a vertex for its qubit`;
-  } else if (mode === 'phi' && d.colour) {
-    const hue = d.colours ? d.colour.map((_, i) => d.colours.reduce((s, c) => s + c[i], 0) / d.colours.length) : d.colour;
-    for (let i = 0; i < n; i++) set(i, hsl(hue[i], 0.75, 0.55));
-    S.colourLabel = d.colours ? `colour decoded from φ (mean of ${d.colours.length} readouts)` : 'original colour field';
-    legend('faceLegend', [0, 0.2, 0.4, 0.6, 0.8, 1].map(hueCss), '0', '1', 'colour value stored in φ');
   } else {
     for (let i = 0; i < n; i++) set(i, PLAIN);
-    S.colourLabel = mode === 'phi' ? 'plain (φ colour needs Mode θ + colour φ)' : 'plain';
+    S.colourLabel = 'plain';
     $('faceLegend').hidden = true;
   }
   // Faces: one flat colour each, the mean of their vertices' colours in sRGB (as in the desktop app).
@@ -292,7 +271,7 @@ function showInfo(d, p) {
     `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`,
     `(angle encoding would need ${s.values} qubits)`,
     `capacity used ${s.values}/${s.capacity}`,
-    `depth ${s.depth} · 2q gates ${s.twoq}` + (p.mode === 'colour' ? ` (θ alone ${s.twoq_single})` : ''),
+    `depth ${s.depth} · 2q gates ${s.twoq}` + (s.twoq_single !== s.twoq ? ` (θ alone ${s.twoq_single})` : ''),
   ].join('\n');
 }
 
@@ -442,7 +421,8 @@ function downloadObj() {
 // reads bit j of address (Tessa's decoder bit order).
 const HOT = 'rgb(230, 150, 0)';
 const mapOn = () => $('qmapOn').checked && !!S.data;
-const comps = () => (S.data.map.vertices[0].length === 1 ? ['r'] : ['x', 'y', 'z']);
+const comps = () => (S.run && JSON.parse(S.run).payload === 'spherical' ? ['polar', 'azimuth', 'r']
+  : S.data.map.vertices[0].length === 1 ? ['r'] : ['x', 'y', 'z']);
 
 function mapGeometry() {
   const m = S.data.map, xs = m.coords.map((c) => c[0]), ys = m.coords.map((c) => c[1]);
@@ -492,8 +472,8 @@ function drawMap() {
 
 function focusText() {
   const f = S.focus, m = S.data.map, split = !!S.run && JSON.parse(S.run).mode === 'split';
-  const ran = S.run ? JSON.parse(S.run).mode : '';
-  const pair = S.data.colour ? ' (θ: shape, φ: colour)' : split ? ' (shape over θ and φ)' : ran === 'phi' ? ' (shape in φ, read in X)' : '';
+  const spherical = !!S.run && JSON.parse(S.run).payload === 'spherical';
+  const pair = spherical ? ' (direction in θ and φ, radius in θ; read in Z, X, Y)' : split ? ' (shape over θ and φ)' : '';
   if (!f) return 'Hover a vertex on the mesh, or a data qubit here.';
   const qs = (g) => m.groups[g].addresses.map((q) => `q${q}`).join(' ');
   if (f.vertex === null) {
@@ -502,7 +482,7 @@ function focusText() {
   }
   const lines = m.vertices[f.vertex].map(([g, a, fld], c) => {
     const bits = m.groups[g].addresses.map((q, j) => `q${q}=${(a >> j) & 1}`).join(' ');
-    return `${comps()[c]} → data q${m.groups[g].data}, slot ${a} of ${2 ** m.groups[g].addresses.length}${split ? ` in ${'θφ'[fld]}` : ''}\n    address ${bits}`;
+    return `${comps()[c]} → data q${m.groups[g].data}, slot ${a} of ${2 ** m.groups[g].addresses.length}${split || spherical ? ` in ${'θφ'[fld]}` : ''}\n    address ${bits}`;
   });
   return `vertex ${f.vertex}${pair}\n${lines.join('\n')}\n${f.mates.length} vertices share ${f.groups.length > 1 ? 'these data qubits' : 'this data qubit'} (orange)`;
 }
@@ -574,10 +554,10 @@ document.querySelectorAll('input[type=range]').forEach((el) => {
   el.addEventListener('input', show);
   show();
 });
-for (const id of ['shape', 'resolution', 'payload', 'mode', 'layout', 'clamp', 'clamp_b', 'compression', 'quant_bits', 'headroom', 'backend', 'placement', 'shots', 'noise_strength', 'drr']) {
+for (const id of ['shape', 'resolution', 'payload', 'mode', 'layout', 'clamp', 'clamp_b', 'compression', 'quant_bits', 'headroom', 'backend', 'placement', 'shots', 'noise_strength', 'seed', 'drr']) {
   $(id).addEventListener('input', draw);
 }
-for (const id of ['view', 'colour', 'gain', 'mask', 'between', 'loop', 'orig', 'seed']) $(id).addEventListener('input', rebuild);
+for (const id of ['view', 'colour', 'gain', 'between', 'loop', 'orig']) $(id).addEventListener('input', rebuild);
 $('shade').addEventListener('input', draw);
 $('dots').addEventListener('input', draw);
 $('qmapOn').addEventListener('input', () => setFocus(null));

@@ -1,0 +1,22 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="564.985" height="192.993" viewBox="0 0 564.985 192.993" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="Subtract" filter="url(#filter0_i_0_4)">
+<use xlink:href="#stroke0_0_4" fill="#D9D9D9" fill-opacity="0.43"/>
+<mask id="stroke1_0_4" fill="white">
+<use xlink:href="#stroke0_0_4"/>
+</mask>
+<path d="M283.075 0C451.246 1.69707e-05 531.729 99.8928 561.354 149.565C570.032 164.115 562.393 181.759 546.508 187.649C530.687 193.514 512.702 185.452 503.722 171.167C478.512 131.067 415.407 60.6635 283.075 60.6635C149.271 60.6635 86.4644 133.534 61.9454 173.879C53.4077 187.927 36.4289 196.357 20.6608 191.708C3.29606 186.588 -5.5542 167.889 3.77052 152.372C34.8198 100.702 116.677 -1.67917e-05 283.075 0Z" stroke-width="4" stroke="#CECECE" stroke-opacity="0.37" mask="url(#stroke1_0_4)"/>
+</g>
+<defs>
+<filter id="filter0_i_0_4" x="0" y="0" width="566.985" height="199.593" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dx="2" dy="8"/>
+<feGaussianBlur stdDeviation="3.3"/>
+<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.25 0"/>
+<feBlend mode="normal" in2="shape" result="effect1_innerShadow_0_4"/>
+</filter>
+<path id="stroke0_0_4" d="M561.354 149.565C531.729 99.8928 451.246 1.69707e-05 283.075 0C116.677 -1.67917e-05 34.8198 100.702 3.77052 152.372C-5.5542 167.889 3.29606 186.588 20.6608 191.708C36.4289 196.357 53.4077 187.927 61.9454 173.879C86.4644 133.534 149.271 60.6635 283.075 60.6635C415.407 60.6635 478.512 131.067 503.722 171.167C512.702 185.452 530.687 193.514 546.508 187.649C562.393 181.759 570.032 164.115 561.354 149.565Z"/>
+</defs>
+</svg>

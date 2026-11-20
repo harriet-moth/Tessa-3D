@@ -1,9 +1,11 @@
 """Morph: a second mesh B carried in the phase of the qubits that hold mesh A.
 
 Classical geometry only (no Tessa calls): align B to A, find one B point per A
-vertex, and measure how much of B those points cover. bridge.encode_mesh does the
-encoding, with ``mode="morph"``.
+vertex, measure how much of B those points cover, and the surface distances that
+drive the morph front. bridge.encode_mesh does the encoding, with ``mode="morph"``.
 """
+
+from pathlib import Path
 
 import numpy as np
 
@@ -79,7 +81,29 @@ def closest_on_triangles(p, a, b, c) -> np.ndarray:
     ]
     for mask, q in regions:
         out = np.where(mask[..., None], q, out)
+    bad = ~np.isfinite(out).all(-1)  # zero-area triangle: the closest point on its edges
+    if bad.any():
+        p, a, b, c = np.broadcast_arrays(p, a, b, c)
+        sides = np.stack([_closest_on_segments(p, u, v) for u, v in ((a, b), (b, c), (c, a))])
+        best = np.linalg.norm(sides - p, axis=-1).argmin(0)
+        out = np.where(bad[..., None], np.take_along_axis(sides, best[None, ..., None], 0)[0], out)
     return out
+
+
+def _closest_on_segments(p, a, b) -> np.ndarray:
+    """Closest point on segment ab to p, vectorised (a point if a == b).
+
+    Args:
+        p: (..., 3) query points.
+        a, b: (..., 3) segment ends, same shape as ``p``.
+
+    Returns:
+        (..., 3) closest points on the segments.
+    """
+    ab = b - a
+    den = (ab * ab).sum(-1)
+    t = np.clip(((p - a) * ab).sum(-1) / np.where(den > 0, den, 1.0), 0.0, 1.0)
+    return a + t[..., None] * ab
 
 
 def closest_points(points, verts, faces, k: int = 16):
@@ -174,7 +198,7 @@ def correspond(a_verts, a_faces, b_path, shared_topology: bool = False, a_logs=(
         point; 1.0 for shared topology), and B's own aligned ``verts``/``faces``.
 
     Raises:
-        ValueError: shared topology with differing vertex counts.
+        ValueError: shared topology with differing vertex counts or faces.
     """
     a_verts = np.asarray(a_verts, float)
     b_verts, b_faces, _ = load_decimated(b_path)
@@ -185,9 +209,18 @@ def correspond(a_verts, a_faces, b_path, shared_topology: bool = False, a_logs=(
                              "Untick Shared topology to sample by closest point.")
         for log in a_logs:
             b_verts, b_faces = replay_decimation(b_verts, b_faces, log)
+        if [list(f) for f in b_faces] != [list(f) for f in a_faces]:
+            # same count, other faces: vertex i of B is not vertex i of A (e.g. two exports
+            # with their own vertex order), so pairing by index would scramble the shape
+            raise ValueError(f"Shared topology: {Path(b_path).name} has A's vertex count but "
+                             "different faces, so its vertices are not A's. Untick Shared "
+                             "topology to sample by closest point.")
         b_verts = target = align(b_verts, a_verts)
         method, cov = "by index" + (f", replayed ×{len(a_logs)}" if a_logs else ""), 1.0
     else:
+        if not len(triangles(b_faces)):
+            raise ValueError(f"{Path(b_path).name} has no faces: closest-point matching needs B's "
+                             "surface. Tick Shared topology if B has A's vertex count.")
         b_verts = align(b_verts, a_verts)
         target, _ = closest_points(a_verts, b_verts, b_faces)
         method = "closest point"
@@ -197,7 +230,63 @@ def correspond(a_verts, a_faces, b_path, shared_topology: bool = False, a_logs=(
             "verts": b_verts, "faces": b_faces}
 
 
-def slerp(d0, d1, t: float) -> np.ndarray:
+def geodesic(verts, faces, source: int) -> np.ndarray:
+    """Surface distance of every vertex from ``source``, normalised to [0, 1].
+
+    Dijkstra (``scipy.sparse.csgraph.dijkstra``) over the mesh edges, weighted by
+    their lengths. Divided by the largest finite distance; vertices in another
+    connected part (unreachable) get 1.
+
+    Args:
+        verts: (N, 3) vertex positions.
+        faces: list of polygons, each a list of vertex indices.
+        source: index of the source vertex.
+
+    Returns:
+        (N,) distances: 0 at ``source``, 1 at the farthest reachable vertex.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import dijkstra
+
+    verts = np.asarray(verts, float)
+    E = edges(faces)
+    n = len(verts)
+    w = edge_lengths(verts, E)
+    graph = coo_matrix((w, (E[:, 0], E[:, 1])), shape=(n, n)).tocsr()
+    d = dijkstra(graph, directed=False, indices=int(source))
+    finite = np.isfinite(d)
+    top = d[finite].max() if finite.any() else 0.0
+    return np.where(finite, d / (top or 1.0), 1.0)
+
+
+def front_alpha(d, t: float, width: float = 0.15):
+    """Sweep angle of a morph front at t, per entry of ``d``.
+
+    α = (π/2) · clip((t·(1 + w) − d) / w, 0, 1): a ramp of width ``w`` (in
+    normalised distance) that leaves the source at t = 0 and passes the farthest
+    point (d = 1) at t = 1. So α = 0 everywhere at t = 0 (exactly A) and π/2
+    everywhere at t = 1 (exactly B), whatever ``d`` holds.
+
+    Args:
+        d: Distances in [0, 1], any shape (per vertex, or per (batch, data qubit)).
+        t: Morph parameter in [0, 1].
+        width: Softness w > 0 of the front, as a share of the normalised distance.
+
+    Returns:
+        np.ndarray: Angles in [0, π/2], same shape as ``d``.
+
+    Raises:
+        ValueError: If ``width`` is not positive.
+    """
+    if width <= 0:
+        raise ValueError(f"front width must be positive, got {width}")
+    d = np.asarray(d, float)
+    ramp = np.clip((t * (1 + width) - d) / width, 0.0, 1.0)
+    # (1 + w - 1) / w can round just below 1: pin t = 1 so B's end is exactly pi/2
+    return (np.pi / 2) * (np.ones_like(d) if t >= 1 else ramp)
+
+
+def slerp(d0, d1, t) -> np.ndarray:
     """Per-row spherical interpolation between unit vectors.
 
     (Anti)parallel rows fall back to a renormalised lerp.
@@ -205,7 +294,7 @@ def slerp(d0, d1, t: float) -> np.ndarray:
     Args:
         d0: (N, 3) unit vectors at t = 0.
         d1: (N, 3) unit vectors at t = 1.
-        t: interpolation weight in [0, 1].
+        t: interpolation weight in [0, 1]: a scalar, or (N, 1) one per row.
 
     Returns:
         (N, 3) unit vectors.

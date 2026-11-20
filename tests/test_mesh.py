@@ -42,15 +42,6 @@ def test_load_obj_round_trip(tmp_path):
     assert np.allclose(lv, v) and lf == [list(x) for x in f]
 
 
-def test_importance_is_high_at_cube_corners_and_zero_on_flat_faces():
-    from tessa_ripple.mesh import importance
-    v, f = cube(4)
-    w = importance(v, f)
-    corner = np.all(np.isclose(np.abs(v), np.abs(v).max()), axis=1)
-    flat = np.sum(np.isclose(np.abs(v), np.abs(v).max()), axis=1) == 1
-    assert w[corner].min() > w[~corner].max() * 0.99 and np.allclose(w[flat], 0, atol=1e-9)
-
-
 def _edge_use(faces):
     from collections import Counter
     return Counter(tuple(sorted((f[i], f[i - 1]))) for f in faces for i in range(len(f)))
@@ -95,3 +86,33 @@ def test_cube_faces_wind_outward(n):
     for q in f:
         p = v[q]
         assert _normal(p) @ p.mean(0) > 0
+
+
+# --- custom OBJ files -----------------------------------------------------------------
+def test_load_obj_reads_latin1_and_line_continuations(tmp_path):
+    from tessa_ripple.mesh import load_obj
+
+    body = "# caf\xe9\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 \\\n 3\nf 1/1/1 2/2/2 4/4/4\n"
+    (tmp_path / "m.obj").write_bytes(body.encode("latin-1"))
+    v, f = load_obj(tmp_path / "m.obj")
+    assert v.shape == (4, 3) and f == [[0, 1, 2], [0, 1, 3]]
+
+
+@pytest.mark.parametrize("body, msg", [("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 9\n", "names vertex 9"),
+                                       ("v 0 0 zero\n", "line 1"), ("# empty\n", "no vertices")])
+def test_load_obj_reports_unusable_files_clearly(tmp_path, body, msg):
+    from tessa_ripple.mesh import load_obj
+
+    (tmp_path / "bad.obj").write_text(body)
+    with pytest.raises(ValueError, match=msg):
+        load_obj(tmp_path / "bad.obj")
+
+
+def test_a_large_uploaded_obj_is_decimated_to_fit(tmp_path):
+    from tessa_ripple.app import FIT_VERTICES, fit_passes, obj_presets
+    from tessa_ripple.mesh import uv_sphere, write_obj
+
+    big = write_obj(tmp_path / "big.obj", *uv_sphere(80, 60))  # 4,722 vertices
+    assert fit_passes(str(big)) > 0
+    assert len(obj_presets(str(big))["high"]()[0]) <= FIT_VERTICES
+    assert fit_passes("tessa_ripple/suzanne.obj") == 0  # fits as it is: unchanged

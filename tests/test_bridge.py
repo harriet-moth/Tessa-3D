@@ -3,7 +3,7 @@ import pytest
 
 from tessa_ripple.animate import blend
 from tessa_ripple.bridge import (Params, cells, encode_mesh, fit_lattice, mesh_error, qubit_map, read_edges,
-                                 read_mesh, resources, decode_raw)
+                                 read_mesh, resources)
 from tessa_ripple.mesh import blob, cube, uv_sphere
 
 V, F = blob(12, 8)
@@ -21,7 +21,7 @@ def test_capacity_error_is_clear():
         fit_lattice(10_000)
 
 
-@pytest.mark.parametrize("payload", ["radial", "xyz"])
+@pytest.mark.parametrize("payload", ["radial", "xyz", "spherical"])
 @pytest.mark.parametrize("layout", ["mesh", "naive"])
 def test_noiseless_round_trip_within_2_percent(payload, layout):
     p = Params(payload=payload, layout=layout, shots=20_000)
@@ -36,15 +36,6 @@ def test_mesh_layout_keeps_vertex_components_in_one_cell():
     cell = np.searchsorted(stops, e.slots, side="right")
     assert (cell == cell[:, :1]).all()
     assert len(np.unique(e.slots)) == e.slots.size
-
-
-def test_pair_mode_carries_colour_in_phi():
-    p = Params(mode="pair", shots=20_000)
-    e = encode_mesh(V, F, p)
-    assert e.enc.mode == "pair" and e.colour is not None
-    shape, colour = decode_raw(e, p)
-    assert np.abs(colour - e.colour).mean() < 0.05
-    assert e.stats["values"] == 2 * len(V)
 
 
 def test_gain_zero_returns_original_exactly():
@@ -116,22 +107,6 @@ def test_qubit_count_is_only_what_the_mesh_uses():
     assert data == {e.graph.groups[g].data_qubit for g, _, _ in np.reshape(qubit_map(e)["vertices"], (-1, 3))}
 
 
-@pytest.mark.parametrize("layout", ["mesh", "naive"])
-def test_importance_placement_puts_curved_vertices_on_better_qubits(layout):
-    from tessa_ripple.mesh import importance, load_obj
-    v, f = load_obj("tessa_ripple/suzanne.obj")
-    w = importance(v, f)
-    top = w >= np.quantile(w, 0.75)
-    got = {}
-    for pl in ("quality", "importance"):
-        e = encode_mesh(v, f, Params(backend="phoenix", layout=layout, placement=pl))
-        cell = np.searchsorted(cells(e.graph)[:, 1], e.slots[:, 0], side="right")
-        got[pl] = (e.quality[cell][top].mean(), sorted(set(cell)))
-        assert sorted(e.slots.ravel()) == sorted(set(e.slots.ravel()))  # every value has its own slot
-    assert got["importance"][0] > got["quality"][0]
-    assert got["importance"][1] == got["quality"][1]  # same data qubits, only reassigned
-
-
 def test_split_mode_fits_suzanne_xyz_and_reads_back():
     from tessa_ripple.mesh import load_obj
     v, f = load_obj("tessa_ripple/suzanne.obj")
@@ -150,20 +125,24 @@ def test_split_mode_halves_the_qubits_for_the_same_values():
     assert two["values"] == one["values"] and two["qubits"] < 0.6 * one["qubits"]
 
 
-def test_old_mode_names_still_work():
-    v, f = blob(12, 8)
-    assert encode_mesh(v, f, Params(mode="single")).mode == "theta"
-    assert encode_mesh(v, f, Params(mode="pair")).mode == "colour"
+def test_spherical_payload_reads_direction_from_the_qubits():
+    """Spherical: direction in θ/φ of one pair_full slot, radius in its own slot, no classical dirs."""
+    p = Params(payload="spherical", shots=20_000)
+    e = encode_mesh(V, F, p)
+    assert e.enc.mode == "pair_full" and e.dirs is None
+    assert (e.slots[:, 0] == e.slots[:, 1]).all() and (e.slots[:, 0] != e.slots[:, 2]).all()
+    assert (e.fields == [0, 1, 0]).all()
+    assert e.stats["values"] == 3 * len(V) and e.stats["capacity"] == 2 * e.graph.capacity
+    assert {r["name"]: r for r in resources(e)}["Tessa"]["settings"] == 3  # Z, X and Y
+    assert mesh_error(V, read_mesh(e, p)) < 0.02
 
 
-def test_x_basis_mode_reads_the_value_from_phi_with_one_setting():
-    v, f = blob(12, 8)
-    z, x = (encode_mesh(v, f, Params(mode=m)) for m in ("theta", "phi"))
-    assert x.enc.mode == "single" and x.stats["twoq"] == z.stats["twoq"]  # one setting, same gates
-    assert mesh_error(v, read_mesh(x, Params(mode="phi"))) < 0.02
+def test_spherical_payload_needs_theta_mode():
+    with pytest.raises(ValueError, match="spherical"):
+        encode_mesh(V, F, Params(payload="spherical", mode="split"))
 
 
-def test_colour_mode_counts_each_hue_once_with_xyz_payload():
-    v, f = blob(8, 6)
-    e = encode_mesh(v, f, Params(mode="colour", payload="xyz"))
-    assert e.stats["values"] == 3 * len(v) + len(v)
+@pytest.mark.parametrize("mode", ["phi", "colour", "single", "pair"])
+def test_removed_modes_are_rejected(mode):
+    with pytest.raises(ValueError, match="unknown mode"):
+        encode_mesh(V, F, Params(mode=mode))

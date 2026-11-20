@@ -1,0 +1,204 @@
+{
+  "noiseless": {
+    "apple/radial": {
+      "max_coherent_vs_mixed": 0.14112414389802352,
+      "max_retimed_residual": 0.013225026587299566,
+      "max_star_term": 0.005536081308328459
+    },
+    "apple/xyz": {
+      "max_coherent_vs_mixed": 0.1407654711884418,
+      "max_retimed_residual": 0.015939051670691463,
+      "max_star_term": 0.0037158650765436387
+    },
+    "suzanne/radial": {
+      "max_coherent_vs_mixed": 0.14895551939122098,
+      "max_retimed_residual": 0.00791940817794789,
+      "max_star_term": 0.0027814697549821033
+    },
+    "suzanne/xyz": {
+      "max_coherent_vs_mixed": 0.1495028731299931,
+      "max_retimed_residual": 0.008364728937815494,
+      "max_star_term": 0.0004319751756170665
+    }
+  },
+  "chips": {
+    "apple/phoenix/t=0.25": {
+      "lambda": [
+        1.0796801090860966,
+        0.01964868208736714
+      ],
+      "lambda_control": [
+        0.22283188779733995,
+        0.03080896312648407
+      ],
+      "error_over_disp": 0.10956227951364343,
+      "signature_over_disp": 0.13929900223523087,
+      "kept": 0.7976833767361112,
+      "seconds_per_frame": 169.2677923043569
+    },
+    "apple/phoenix/t=0.75": {
+      "lambda": [
+        1.1705577142560704,
+        0.006366733515624333
+      ],
+      "lambda_control": [
+        0.47859746332760317,
+        0.02292994453154834
+      ],
+      "error_over_disp": 0.10899672796428528,
+      "signature_over_disp": 0.13331879580741018,
+      "kept": 0.7951551649305556,
+      "seconds_per_frame": 153.60201660792032
+    },
+    "apple/fez/t=0.25": {
+      "lambda": [
+        1.1533680840101195,
+        0.005886206374697886
+      ],
+      "lambda_control": [
+        0.3339275819149626,
+        0.04183427542977122
+      ],
+      "error_over_disp": 0.12781667850713582,
+      "signature_over_disp": 0.14168549895713659,
+      "kept": 0.7928438408430232,
+      "seconds_per_frame": 7.694621721903483
+    },
+    "apple/fez/t=0.75": {
+      "lambda": [
+        1.1578007786250624,
+        0.009876845818485538
+      ],
+      "lambda_control": [
+        0.35079588507784326,
+        0.033715917247142194
+      ],
+      "error_over_disp": 0.1266709231841055,
+      "signature_over_disp": 0.13558758255054984,
+      "kept": 0.7908850381540699,
+      "seconds_per_frame": 5.9348320960998535
+    },
+    "suzanne/phoenix/t=0.25": {
+      "lambda": [
+        1.6698697585083309,
+        0.013075516238028285
+      ],
+      "lambda_control": [
+        1.068742312409319,
+        0.02921426406425575
+      ],
+      "error_over_disp": 0.17361376762560118,
+      "signature_over_disp": 0.13648797862572445,
+      "kept": 0.7956936743951614,
+      "seconds_per_frame": 301.01311922073364
+    },
+    "suzanne/phoenix/t=0.75": {
+      "lambda": [
+        0.7889855229386405,
+        0.007060953574824603
+      ],
+      "lambda_control": [
+        -0.10329307536529414,
+        0.020358071274988593
+      ],
+      "error_over_disp": 0.14327161226850674,
+      "signature_over_disp": 0.14771049578573017,
+      "kept": 0.7911626344086021,
+      "seconds_per_frame": 315.6469480196635
+    },
+    "suzanne/fez/t=0.25": {
+      "lambda": [
+        2.0442979278777376,
+        0.020149288620214076
+      ],
+      "lambda_control": [
+        1.376549134984862,
+        0.029445383396162143
+      ],
+      "error_over_disp": 0.17273072000980885,
+      "signature_over_disp": 0.1374410947865078,
+      "kept": 0.7996987039728682,
+      "seconds_per_frame": 10.739235719045004
+    },
+    "suzanne/fez/t=0.75": {
+      "lambda": [
+        0.5376824433720956,
+        0.025011270300632642
+      ],
+      "lambda_control": [
+        -0.24413168568722884,
+        0.01489049702589542
+      ],
+      "error_over_disp": 0.12884645546666737,
+      "signature_over_disp": 0.1487029215471475,
+      "kept": 0.797538343326066,
+      "seconds_per_frame": 9.08232601483663
+    }
+  },
+  "costs": [
+    {
+      "mesh": "apple",
+      "backend": "phoenix",
+      "graph": "ibm_phoenix (whole chip)",
+      "interfere_twoq": 504,
+      "interfere_depth": 34,
+      "interfere_runs": 1,
+      "interfere_capacity": 396,
+      "stars": 15,
+      "sweep_twoq": 496,
+      "sweep_depth": 66,
+      "sweep_runs": 1,
+      "sweep_capacity": 792,
+      "sweep_frame_circuits": 2,
+      "interfere_frame_circuits": 1
+    },
+    {
+      "mesh": "apple",
+      "backend": "fez",
+      "graph": "ibm_fez (whole chip)",
+      "interfere_twoq": 500,
+      "interfere_depth": 34,
+      "interfere_runs": 2,
+      "interfere_capacity": 224,
+      "stars": 21,
+      "sweep_twoq": 504,
+      "sweep_depth": 34,
+      "sweep_runs": 1,
+      "sweep_capacity": 448,
+      "sweep_frame_circuits": 2,
+      "interfere_frame_circuits": 2
+    },
+    {
+      "mesh": "suzanne",
+      "backend": "phoenix",
+      "graph": "ibm_phoenix (whole chip)",
+      "interfere_twoq": 1040,
+      "interfere_depth": 67,
+      "interfere_runs": 2,
+      "interfere_capacity": 396,
+      "stars": 15,
+      "sweep_twoq": 1036,
+      "sweep_depth": 66,
+      "sweep_runs": 1,
+      "sweep_capacity": 792,
+      "sweep_frame_circuits": 2,
+      "interfere_frame_circuits": 2
+    },
+    {
+      "mesh": "suzanne",
+      "backend": "fez",
+      "graph": "ibm_fez (whole chip)",
+      "interfere_twoq": 1024,
+      "interfere_depth": 51,
+      "interfere_runs": 3,
+      "interfere_capacity": 224,
+      "stars": 30,
+      "sweep_twoq": 1028,
+      "sweep_depth": 66,
+      "sweep_runs": 2,
+      "sweep_capacity": 448,
+      "sweep_frame_circuits": 4,
+      "interfere_frame_circuits": 3
+    }
+  ]
+}

@@ -1,14 +1,17 @@
 """Vercel Python function: every Tessa computation the web app needs, at POST /api/tessa.
 
-The request body is JSON with an ``action`` (run / edges / resources / curves) plus
-the mesh and Params settings. All quantum work goes through tessa_ripple.bridge,
-the same code the desktop app uses.
+The request body is JSON with an ``action`` (mesh / run / edges / resources / curves) plus
+the mesh and Params settings. The mesh is a named shape or an uploaded OBJ (``obj``);
+a morph names its B mesh the same way (``shape_b`` or ``obj_b``). All quantum work
+goes through tessa_ripple.bridge, the same code the desktop app uses.
 """
 
+import hashlib
 import json
 import sys
+import tempfile
 import time
-from dataclasses import fields
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -18,35 +21,132 @@ sys.path.insert(0, str(ROOT))
 import numpy as np  # noqa: E402
 
 from tessa_ripple import bridge  # noqa: E402
-from tessa_ripple.mesh import PRESETS, load_obj  # noqa: E402
+from tessa_ripple.mesh import PRESETS, load_decimated, write_obj  # noqa: E402
+from tessa_ripple.morph import correspond  # noqa: E402
 
-SHAPES = {**PRESETS, "suzanne": {"(OBJ)": lambda: load_obj(ROOT / "tessa_ripple" / "suzanne.obj")}}
+# OBJ shapes that ship with the app, by name.
+OBJ_FILES = {"suzanne": ROOT / "tessa_ripple" / "suzanne.obj",
+             "apple": ROOT / "tessa_ripple" / "apple_bitten.obj"}
+# The Params fields the web app sets, with their allowed values (None: any number).
+# Morph's ``target`` (a file path) is never taken from a request: B comes from
+# ``shape_b`` / ``obj_b`` (:func:`mesh_path`).
+CHOICES = {"payload": ("radial", "xyz", "spherical"), "layout": ("mesh", "naive"),
+           "mode": ("theta", "split", "morph"), "backend": bridge.BACKENDS, "placement": bridge.PLACEMENTS,
+           "clamp": None, "clamp_b": None, "compression": None, "quant_bits": None,
+           "headroom": None, "shots": None, "noise_strength": None, "seed": None}
 MAX_FRAMES = 30
 TIME_BUDGET = 45.0  # seconds of decoding per request, under the 60 s function limit
+MAX_OBJ = 3_000_000  # characters of uploaded OBJ text (Vercel caps request bodies at 4.5 MB)
+UPLOADS = Path(tempfile.gettempdir()) / "tessa_ripple_obj"  # Vercel's writable /tmp
 
 
-def mesh_of(req):
-    """The mesh a request names.
+def resolution_of(req) -> int:
+    """The request's ``resolution`` (0 low, 1 mid, 2 high; default 0), clamped.
 
     Args:
-        req: request dict; reads ``shape`` (a SHAPES key, default "blob") and
-            ``resolution`` (index into that shape's presets, clamped; default 0).
+        req: request dict.
 
     Returns:
-        (verts (N, 3), faces).
+        int in [0, 2].
+    """
+    return int(np.clip(int(req.get("resolution", 0)), 0, 2))
+
+
+def mesh_path(req, suffix: str = "") -> Path:
+    """An OBJ file for the mesh a request names, so OBJ readers can take a path.
+
+    ``obj<suffix>`` (uploaded OBJ text) wins over ``shape<suffix>``. Uploads are
+    saved under their content hash, so the same text reuses one file and
+    load_decimated's cache; generated presets are written once per resolution.
+
+    Args:
+        req: request dict.
+        suffix: "" for mesh A, "_b" for a morph's B.
+
+    Returns:
+        Path of an OBJ file.
 
     Raises:
         KeyError: unknown shape.
+        ValueError: uploaded text over MAX_OBJ characters.
     """
-    presets = list(SHAPES[req.get("shape", "blob")].values())
-    return presets[min(int(req.get("resolution", 0)), len(presets) - 1)]()
+    text = req.get("obj" + suffix)
+    if text:
+        if len(text) > MAX_OBJ:
+            raise ValueError(f"OBJ too large ({len(text):,} characters; the limit is {MAX_OBJ:,})")
+        path = UPLOADS / f"{hashlib.sha1(text.encode()).hexdigest()}.obj"
+        if not path.exists():
+            UPLOADS.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return path
+    name = req.get("shape" + suffix, "blob")
+    if name in OBJ_FILES:
+        return OBJ_FILES[name]
+    presets = list(PRESETS[name].values())
+    k = min(resolution_of(req) if not suffix else len(presets) - 1, len(presets) - 1)
+    path = UPLOADS / f"{name}-{k}.obj"
+    if not path.exists():
+        write_obj(path, *presets[k]())
+    return path
+
+
+def mesh_of(req):
+    """The mesh a request names, with its decimation logs.
+
+    Presets: ``resolution`` picks one of the shape's presets. OBJ meshes (shipped
+    or uploaded ``obj``): resolution 2 is the file as loaded, 1 and 0 decimate it
+    once and twice (each pass keeps about half the vertices).
+
+    Args:
+        req: request dict; reads ``obj`` or ``shape`` (default "blob") and
+            ``resolution`` (0..2, default 0).
+
+    Returns:
+        (verts (N, 3), faces, logs, full_count): logs are the decimation passes and
+        full_count the vertex count before them, for :func:`morph.correspond`.
+
+    Raises:
+        KeyError: unknown shape.
+        ValueError: an unreadable OBJ.
+    """
+    name = req.get("shape", "blob")
+    if not req.get("obj") and name in PRESETS:
+        presets = list(PRESETS[name].values())
+        v, f = presets[min(resolution_of(req), len(presets) - 1)]()
+        return v, f, (), len(v)
+    path = mesh_path(req)
+    v, f, logs = load_decimated(path, 2 - resolution_of(req))
+    return np.array(v), f, logs, len(load_decimated(path, 0)[0])
+
+
+def encode_of(req, verts, faces, logs, full, p):
+    """Encode the request's mesh; a morph first matches B to it (closest point).
+
+    Args:
+        req: request dict (reads ``shape_b`` / ``obj_b`` for a morph).
+        verts, faces, logs, full: from :func:`mesh_of`.
+        p: bridge.Params.
+
+    Returns:
+        (Encoded, match): match is the :func:`morph.correspond` dict, or None.
+
+    Raises:
+        ValueError: a morph without B, or a mesh that does not fit.
+    """
+    match = None
+    if p.mode == "morph":
+        if not (req.get("obj_b") or req.get("shape_b")):
+            raise ValueError("Morph: drop a second mesh (B) first")
+        match = correspond(verts, faces, mesh_path(req, "_b"), False, logs, full)
+    return bridge.encode_mesh(verts, faces, p, target=match), match
 
 
 def params_of(req) -> bridge.Params:
     """The bridge.Params a request sets.
 
-    Every non-null request key named like a Params field is passed through; shots
-    is clamped to [256, 65536].
+    Only the non-null CHOICES keys are read (never morph's file path); named
+    choices are checked, and numbers clamped: shots to [256, 65536], compression to
+    [0, 100], quant_bits to [1, 16], headroom and noise strength to [0, 10].
 
     Args:
         req: request dict.
@@ -55,13 +155,22 @@ def params_of(req) -> bridge.Params:
         bridge.Params.
 
     Raises:
-        ValueError: unknown backend.
+        ValueError: a value outside its choices, or a number that does not parse.
         TypeError: a key of the wrong type for Params.
     """
-    kw = {f.name: req[f.name] for f in fields(bridge.Params) if req.get(f.name) is not None}
-    if kw.get("backend", "noiseless") not in bridge.BACKENDS:
-        raise ValueError(f"unknown backend {kw['backend']!r}")
-    kw["shots"] = int(np.clip(kw.get("shots", 4096), 256, 65536))
+    kw = {k: req[k] for k in CHOICES if req.get(k) is not None}
+    for k, allowed in CHOICES.items():
+        if allowed is None and k in kw:
+            kw[k] = float(kw[k])
+        elif allowed is not None and kw.get(k, allowed[0]) not in allowed:
+            raise ValueError(f"unknown {k} {kw[k]!r}; use one of {list(allowed)}")
+    for k, lo, hi in (("shots", 256, 65536), ("compression", 0, 100), ("quant_bits", 1, 16),
+                      ("headroom", 0, 10), ("noise_strength", 0, 10)):
+        if k in kw or k == "shots":
+            kw[k] = float(np.clip(kw.get(k, 4096), lo, hi))
+    for k in ("shots", "quant_bits", "seed"):
+        if k in kw:
+            kw[k] = int(kw[k])
     return bridge.Params(**kw)
 
 
@@ -78,41 +187,115 @@ def rounded(a, digits=5):
     return np.round(np.asarray(a, dtype=float), digits).tolist()
 
 
+def mesh(req):
+    """The request's mesh as loaded (no encoding), so the page can show it before a run.
+
+    Args:
+        req: request dict; reads the mesh keys (:func:`mesh_of`), or with ``b`` true
+            the morph B keys (``shape_b`` / ``obj_b``, B as its file loads).
+
+    Returns:
+        Dict: ``verts`` (N, 3) and ``faces``.
+    """
+    if req.get("b"):
+        v, f = load_decimated(mesh_path(req, "_b"), 0)[:2]
+    else:
+        v, f = mesh_of(req)[:2]
+    return {"verts": rounded(v), "faces": [list(map(int, x)) for x in f]}
+
+
+def morph_frames(e, p, want: int, drr: str, t_one: float, t0: float):
+    """Read a morph A -> B: frame k at t = k / (n - 1), sharing one alpha = 0 readout
+    (as animate.run_frames does).
+
+    The first frame (t = 0) times the readout; n is then cut so the rest fits in
+    TIME_BUDGET, and the remaining t still span 0 -> 1.
+
+    Args:
+        e: A morph encoding.
+        p: Readout settings.
+        want: Frames asked for; 1 reads once at ``t_one``.
+        drr: DRR method.
+        t_one: The t of a single readout.
+        t0: Request start time (time.time()).
+
+    Returns:
+        (frames, refs, ts): decoded (N, 3) positions, the noiseless morph at each t
+        (bridge.morph_expected), and each frame's t.
+    """
+    start = time.time()
+    reference = bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
+    ts, frames = ([t_one] if want == 1 else [0.0]), []
+    while len(frames) < len(ts):
+        k = len(frames)
+        q = replace(p, morph_t=float(ts[k]))
+        frames.append(bridge.morph_frame(e, bridge.decode_raw(e, q, p.seed + k, reference), ts[k], drr))
+        if want > 1 and k == 0:
+            per = max(time.time() - start, 1e-3) / 2  # the reference cost about one readout
+            n = int(np.clip(1 + (TIME_BUDGET - (time.time() - t0)) // per, 2, want))
+            ts = list(np.linspace(0.0, 1.0, n))
+    return frames, [bridge.morph_expected(e, t) for t in ts], [float(t) for t in ts]
+
+
 def run(req):
     """Encode once, decode up to ``frames`` readouts (seeds seed, seed + 1, ...).
 
     Decoding stops early after TIME_BUDGET seconds (at least one frame always runs).
+    A morph (``mode`` "morph") reads its frames along t = 0 -> 1 instead
+    (:func:`morph_frames`), each compared with the noiseless morph at its t.
 
     Args:
         req: request dict; reads the mesh keys (:func:`mesh_of`), Params keys
-            (:func:`params_of`), ``frames`` (1..MAX_FRAMES, default 1) and ``drr``
-            (a DRR method, default "none").
+            (:func:`params_of`), ``frames`` (1..MAX_FRAMES, default 1), ``drr``
+            (a DRR method, default "none") and, for a morph, ``shape_b`` / ``obj_b``
+            and ``morph_t`` (the t of a single readout, default 0.5).
 
     Returns:
         Dict: ``verts``, ``faces`` (the original mesh); ``frames`` (decoded
-        positions per frame); ``requested`` (frames asked for); ``colours`` (decoded
-        colour per frame, colour mode only, else None); ``colour`` (original colour
-        field or None); ``qubits`` (data qubit per vertex); ``map``
+        positions per frame); ``requested`` (frames asked for); ``qubits`` (data
+        qubit per vertex); ``map``
         (bridge.qubit_map); ``stats`` (Encoded.stats); ``split`` (some vertex spans
-        several data qubits); ``error`` (mean bridge.mesh_error over frames);
-        ``seconds``.
+        several data qubits); ``error`` (mean bridge.mesh_error over frames, against
+        each frame's reference); ``seconds``. A morph adds ``refs`` (noiseless
+        positions per frame), ``ts`` (t per frame) and ``match`` (B's matching:
+        method, coverage, mean distance).
     """
-    verts, faces = mesh_of(req)
+    verts, faces, logs, full = mesh_of(req)
     p, t0 = params_of(req), time.time()
-    e = bridge.encode_mesh(verts, faces, p)
-    want, frames, colours = int(np.clip(req.get("frames", 1), 1, MAX_FRAMES)), [], []
-    while len(frames) < want and (not frames or time.time() - t0 < TIME_BUDGET):
-        raw, colour = bridge.decode_raw(e, p, p.seed + len(frames))
-        frames.append(bridge.restore(e, raw, req.get("drr", "none")))
-        colours.append(colour)
+    e, match = encode_of(req, verts, faces, logs, full, p)
+    want, frames, drr = int(np.clip(req.get("frames", 1), 1, MAX_FRAMES)), [], req.get("drr", "none")
+    extra = {}
+    if match is not None:
+        t_one = float(np.clip(float(req.get("morph_t", 0.5)), 0.0, 1.0))
+        frames, refs, ts = morph_frames(e, p, want, drr, t_one, t0)
+        extra = {"refs": [rounded(r) for r in refs], "ts": ts,
+                 "match": {k: match[k] for k in ("method", "coverage", "distance")}}
+    else:
+        refs = [verts]
+        while len(frames) < want and (not frames or time.time() - t0 < TIME_BUDGET):
+            raw = bridge.decode_raw(e, p, p.seed + len(frames))
+            frames.append(bridge.restore(e, raw, drr))
+        refs = refs * len(frames)
     return {"verts": rounded(verts), "faces": [list(map(int, f)) for f in faces],
             "frames": [rounded(f) for f in frames], "requested": want,
-            "colours": None if colours[0] is None else rounded(colours, 4),
-            "colour": None if e.colour is None else rounded(e.colour, 4),
             "qubits": bridge.vertex_qubits(e).tolist(), "map": bridge.qubit_map(e), "stats": e.stats,
             "split": e.straddles,
-            "error": float(np.mean([bridge.mesh_error(verts, f) for f in frames])),
-            "seconds": time.time() - t0}
+            "error": float(np.mean([bridge.mesh_error(r, f) for r, f in zip(refs, frames)])),
+            "seconds": time.time() - t0, **extra}
+
+
+def not_morph(req, what: str):
+    """Refuse an action that compares against one fixed mesh in morph mode.
+
+    Args:
+        req: request dict.
+        what: The action's name, for the message.
+
+    Raises:
+        ValueError: ``mode`` is "morph".
+    """
+    if req.get("mode") == "morph":
+        raise ValueError(f"{what} compare against one fixed mesh; not available in morph mode")
 
 
 def edges(req):
@@ -125,7 +308,8 @@ def edges(req):
         Dict: ``edges`` (E, 2) vertex pairs, ``measured`` and ``exact`` lengths (E,),
         ``seconds``.
     """
-    verts, faces = mesh_of(req)
+    not_morph(req, "Edge readouts")
+    verts, faces = mesh_of(req)[:2]
     t0 = time.time()
     E, measured, exact = bridge.read_edges(verts, faces, params_of(req))
     return {"edges": E.tolist(), "measured": rounded(measured), "exact": rounded(exact),
@@ -142,8 +326,8 @@ def resources(req):
         Dict: ``rows`` (bridge.resources), ``stats`` (Encoded.stats), ``payload``,
         ``mode``.
     """
-    verts, faces = mesh_of(req)
-    e = bridge.encode_mesh(verts, faces, params_of(req))
+    verts, faces, logs, full = mesh_of(req)
+    e = encode_of(req, verts, faces, logs, full, params_of(req))[0]
     return {"rows": bridge.resources(e), "stats": e.stats, "payload": e.payload, "mode": e.mode}
 
 
@@ -157,11 +341,12 @@ def curves(req):
         Dict: ``shots`` [(shots, error)], ``mesh`` and ``naive`` [(compression %,
         depth, error)], ``same`` (both layouts place values identically).
     """
-    verts, faces = mesh_of(req)
+    not_morph(req, "Curves")
+    verts, faces = mesh_of(req)[:2]
     return bridge.fidelity_curves(verts, faces, params_of(req))
 
 
-ACTIONS = {"run": run, "edges": edges, "resources": resources, "curves": curves}
+ACTIONS = {"mesh": mesh, "run": run, "edges": edges, "resources": resources, "curves": curves}
 
 
 def _json_default(x):
@@ -195,9 +380,10 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Run the action the JSON body names and send its result.
 
-        Body: ``{"action": "run" | "edges" | "resources" | "curves", ...}`` plus the
-        action's keys. Sends 200 with the action's dict, or 400 with ``{"error": ...}``
-        for an unknown action or a ValueError, KeyError or TypeError from it.
+        Body: ``{"action": "mesh" | "run" | "edges" | "resources" | "curves", ...}`` plus the
+        action's keys. Sends 200 with the action's dict, 400 with ``{"error": ...}``
+        for an unknown action or a ValueError, KeyError or TypeError from it, and 500
+        with ``{"error": ...}`` for anything else.
         """
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -207,8 +393,10 @@ class handler(BaseHTTPRequestHandler):
             self._send(200, action(req))
         except (ValueError, KeyError, TypeError) as err:
             self._send(400, {"error": str(err)})
+        except Exception as err:  # still JSON, so the page shows the cause
+            self._send(500, {"error": f"{type(err).__name__}: {err}"})
 
     def do_GET(self):
         """Health check: sends ``ok``, the ``actions``, ``shapes``, ``backends`` and ``drr`` methods."""
-        self._send(200, {"ok": True, "actions": sorted(ACTIONS), "shapes": sorted(SHAPES),
+        self._send(200, {"ok": True, "actions": sorted(ACTIONS), "shapes": sorted({*PRESETS, *OBJ_FILES}),
                          "backends": list(bridge.BACKENDS), "drr": list(bridge.DRR_METHODS)})

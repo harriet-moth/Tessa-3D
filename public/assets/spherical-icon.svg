@@ -1,0 +1,17 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Group 1">
+<circle id="Ellipse 1" cx="28" cy="28" r="27.5" fill="url(#paint0_radial_0_15)" stroke="url(#paint1_radial_0_15)"/>
+<path id="Vector 3" d="M27.3293 31.8839C27.3269 32.2291 27.6048 32.5108 27.95 32.5132C28.2952 32.5156 28.5769 32.2376 28.5793 31.8925L27.9543 31.8882L27.3293 31.8839ZM27.9543 31.8882L28.5793 31.8925L28.762 5.1163L28.137 5.11203L27.512 5.10777L27.3293 31.8839L27.9543 31.8882ZM25.6723 7.3562C26.9117 8.71743 29.0199 8.81617 30.3812 7.57675C31.7424 6.33733 31.8411 4.22909 30.6017 2.86787C29.3623 1.50664 27.254 1.4079 25.8928 2.64732C24.5316 3.88674 24.4329 5.99498 25.6723 7.3562Z" fill="#DDFF35"/>
+<path id="Vector 2" d="M28.464 31.6174C28.0564 31.5433 27.666 31.8136 27.5919 32.2212C27.5178 32.6287 27.7881 33.0191 28.1956 33.0932L28.3298 32.3553L28.464 31.6174ZM28.3298 32.3553L28.1956 33.0932L44.8444 36.1202L44.9786 35.3823L45.1128 34.6444L28.464 31.6174L28.3298 32.3553ZM42.2751 32.4342C40.647 33.9273 40.5374 36.4576 42.0305 38.0858C43.5236 39.714 46.0539 39.8235 47.6821 38.3304C49.3102 36.8374 49.4198 34.3071 47.9267 32.6789C46.4336 31.0507 43.9033 30.9412 42.2751 32.4342Z" fill="#35DAFF"/>
+</g>
+<defs>
+<radialGradient id="paint0_radial_0_15" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(33.2973 28.7568) rotate(-141.115) scale(30.1375)">
+<stop stop-color="white"/>
+<stop offset="1" stop-color="#3A3A3A"/>
+</radialGradient>
+<radialGradient id="paint1_radial_0_15" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(16.6487 9.08108) rotate(56.5467) scale(50.793)">
+<stop stop-color="#020202"/>
+<stop offset="1" stop-color="#686868"/>
+</radialGradient>
+</defs>
+</svg>
