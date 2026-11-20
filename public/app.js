@@ -772,7 +772,9 @@ const PILL = { R: 335, h: 24, span: 20 }; // layer 1
 const BACK = 60; // back button diameter (a little more than the band's 56)
 // a point at angle a (degrees from straight up) on a circle of radius r round the
 // object: the encode side above it, the decode side mirrored below
-const onRing = (side, r, a) => [CX + r * Math.sin(rad(a)), side === 'decode' ? CY + r * Math.cos(rad(a)) : CY - r * Math.cos(rad(a))];
+// The decode side's circle sits DEC_DROP lower, so the lower menus clear the object's base.
+const DEC_DROP = 40;
+const onRing = (side, r, a) => [CX + r * Math.sin(rad(a)), side === 'decode' ? CY + DEC_DROP + r * Math.cos(rad(a)) : CY - r * Math.cos(rad(a))];
 // The outline of a band from angle a0 to a1: outer arc, round cap, inner arc, round cap.
 // With a0 = a1 it is a circle of diameter 2h: the arc collapsed into an ellipse.
 function bandPath(side, R, h, a0, a1) {
@@ -810,6 +812,12 @@ function drawMenuShapes() {
       Object.assign(b.style, { left: `${lx}px`, top: `${ly}px` });
       b.style.setProperty('--r', `${side === 'decode' ? -a : a}deg`);
       b.dataset.a = a;
+      // the word's own patch of band, which flips light while the word is hovered
+      const half = deg(widths[i]) / 2 + deg(12);
+      const band = document.createElementNS(svgNS, 'path');
+      band.setAttribute('class', 'word-band');
+      band.setAttribute('d', bandPath(side, ARC.R, ARC.h - 4, a - half, a + half));
+      group.appendChild(band);
       const text = document.createElementNS(svgNS, 'text'), path = document.createElementNS(svgNS, 'textPath');
       text.setAttribute('class', `arc-word ${b.classList.contains('tight') ? 'tight' : ''} ${b.classList.contains('tighter') ? 'tighter' : ''}`);
       path.setAttribute('href', `#${side}Spine`);
@@ -819,14 +827,15 @@ function drawMenuShapes() {
       text.appendChild(path);
       group.appendChild(text);
       b.word = text;
-      const glow = (on) => text.classList.toggle('hover', on);
-      b.onpointerenter = () => glow(true); b.onpointerleave = () => glow(false);
-      b.onfocus = () => glow(true); b.onblur = () => glow(false);
+      b.band = band;
+      const flip = (on) => { text.classList.toggle('hover', on); band.classList.toggle('hover', on); };
+      b.onpointerenter = () => flip(true); b.onpointerleave = () => flip(false);
+      b.onfocus = () => flip(true); b.onblur = () => flip(false);
     });
   }
   // the thin line from each pill towards the object
   const inner = PILL.R - PILL.h;
-  document.querySelector('#menuSvg .menu-line').setAttribute('d', `M ${CX} ${CY - inner} V ${CY - inner + 52} M ${CX} ${CY + inner} V ${CY + inner - 52}`);
+  document.querySelector('#menuSvg .menu-line').setAttribute('d', `M ${CX} ${CY - inner} V ${CY - inner + 52} M ${CX} ${CY + DEC_DROP + inner} V ${CY + DEC_DROP + inner - 52}`);
 }
 drawMenuShapes();
 document.fonts?.ready.then(drawMenuShapes); // re-space the labels once Funnel Sans has loaded
@@ -841,6 +850,8 @@ function setSweep(side, a) {
     const lit = a >= +b.dataset.a + 8;
     b.classList.toggle('lit', lit);
     b.word?.classList.toggle('lit', lit);
+    b.band?.classList.toggle('lit', lit);
+    if (!lit) { b.word?.classList.remove('hover'); b.band?.classList.remove('hover'); } // no stale hover on reopening
   }
 }
 function sweepTo(side, to, ms) {
@@ -954,7 +965,7 @@ const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
   for (const side of ['encode', 'decode']) {
-    const dx = sx - CX, dy = side === 'encode' ? CY - sy : sy - CY;
+    const dx = sx - CX, dy = side === 'encode' ? CY - sy : sy - CY - DEC_DROP;
     const r = Math.hypot(dx, dy), a = THREE.MathUtils.radToDeg(Math.atan2(dx, dy));
     if (Math.abs(r - PILL.R) <= PILL.h + 16 && Math.abs(a) <= PILL.span + 8) return side;
   }
@@ -1059,7 +1070,7 @@ const PANELS = {
 
 // The design's three toggles sit on a circle round the object (centre 720, 732.7;
 // radius 490.7; 21.8° apart). More toggles squeeze closer; decode mirrors it below.
-const RING = { r: 525, cyEnc: 732.7, cyDec: 1024 - 732.7 }; // the design's ring, pushed out to clear the object
+const RING = { r: 525, cyEnc: 732.7, cyDec: 1024 - 732.7 + DEC_DROP }; // the design's ring, pushed out to clear the object
 function ringPoint(side, deg, r = RING.r) {
   const a = THREE.MathUtils.degToRad(deg);
   return side === 'encode' ? [CX + r * Math.sin(a), RING.cyEnc - r * Math.cos(a)] : [CX + r * Math.sin(a), RING.cyDec + r * Math.cos(a)];

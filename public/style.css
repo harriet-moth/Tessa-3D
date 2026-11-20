@@ -9,7 +9,9 @@
   --glass: rgba(217, 217, 217, 0.2);
   --glass-line: rgba(255, 255, 255, 0.3);
   --cyan: #5ef2ff;
-  --cyan-glow: rgba(94, 242, 255, 0.45);
+  /* hover flips: anything light turns dark (white text), anything dark turns light (black text) */
+  --flip-light: radial-gradient(circle at 50% 40%, #ffffff 0%, #e6e6e6 60%, #bdbdbd 100%);
+  --flip-dark: radial-gradient(circle at 50% 40%, #3a3a3a 0%, #161616 60%, #050505 100%);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --s: 1; /* stage scale, set by app.js */
   color-scheme: dark;
@@ -33,7 +35,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #viewer canvas { display: block; width: 100%; height: 100%; }
 #app[data-screen="landing"] #viewer { opacity: 0; pointer-events: none; }
 
-#stage { position: absolute; left: 50%; top: 50%; width: 1440px; height: 1024px; pointer-events: none;
+#stage { position: absolute; left: 50%; top: 50%; width: 1440px; height: 1024px; pointer-events: none; user-select: none; -webkit-user-select: none;
   transform: translate(-50%, -50%) scale(var(--s)); transform-origin: center; }
 #stage button, #stage .drop-b, #stage .more-shapes { pointer-events: auto; }
 
@@ -53,7 +55,9 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 
 .logo { position: absolute; left: 640px; top: calc(34px - var(--T, 0px)); width: 160px; height: 96px; transition: top 400ms; }
 .logo img { display: block; width: 160px; height: 96px; transition: filter 300ms; }
-.logo:hover img { filter: drop-shadow(0 0 14px var(--cyan-glow)); }
+.logo { border-radius: 14px; transition: background 200ms; }
+.logo:hover { background: var(--flip-light); }
+.logo:hover img { filter: invert(1); }
 
 /* screens */
 .screen { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity 600ms var(--ease), visibility 0s 600ms; }
@@ -62,8 +66,8 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 /* ---------- landing (Figma 15:6) */
 .drop-title, .or { position: absolute; left: 720px; width: 460px; transform: translate(-50%, -50%); margin: 0;
   font: 400 48px/normal "Jost", sans-serif; text-align: center; color: #fff; }
-.drop-title { top: 324px; height: 92px; transition: text-shadow 400ms; }
-.drop-title:hover, #app.dragging .drop-title { text-shadow: 0 0 24px var(--cyan-glow); }
+.drop-title { top: 324px; height: 92px; border-radius: 46px; transition: background 200ms, color 200ms; }
+.drop-title:hover, #app.dragging .drop-title { background: var(--flip-light); color: #000; }
 .or { top: 455px; }
 .preset { position: absolute; transition: transform 500ms var(--ease), filter 500ms; animation: breathe 4.2s ease-in-out infinite; }
 .preset img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
@@ -73,14 +77,15 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 /* each shape slides out from the centre by its offset × --spread (offsets: cube −358.5, sphere +335.5) */
 .preset.cube { translate: calc(-358.5px * var(--spread, 0)) 0; }
 .preset.sphere { translate: calc(335.5px * var(--spread, 0)) 0; }
-.preset:hover { transform: scale(1.06); filter: drop-shadow(0 0 22px var(--cyan-glow)) brightness(1.15); animation-play-state: paused; }
-@keyframes breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18) drop-shadow(0 0 10px rgba(94, 242, 255, 0.25)); } }
+.preset:hover { transform: scale(1.06); animation-play-state: paused; }
+@keyframes breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.15); } }
 .more-shapes { position: absolute; left: 0; right: 0; top: 950px; text-align: center; font: 300 18px "IBM Plex Sans", sans-serif; color: var(--ink-faint); }
 .more-shapes button { color: var(--ink-dim); text-decoration: underline; text-underline-offset: 4px; }
-.more-shapes button:hover { color: #fff; }
+.more-shapes button, .drop-b-presets button { border-radius: 12px; padding: 0 5px; transition: background 200ms, color 200ms; }
+.more-shapes button:hover, .drop-b-presets button:hover { background: var(--flip-light); color: #000; text-decoration: none; }
 
 /* ---------- home (Figma 10:2, 18:230). #home[data-layer] is the menu layer, 0–3. */
-.hint { position: absolute; left: 720px; top: 818px; width: 452px; transform: translate(-50%, -50%); margin: 0;
+.hint { position: absolute; left: 720px; top: 808px; width: 452px; transform: translate(-50%, -50%); margin: 0;
   font: 400 24px/normal "Funnel Sans", sans-serif; text-align: center; color: #fff; opacity: 0.85;
   transition: opacity 400ms; animation: hint 3.2s ease-in-out infinite; }
 @keyframes hint { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.95; } }
@@ -101,7 +106,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .pill-band.encode { fill: url(#pillEncFill); fill-opacity: 0.64; stroke: rgba(136, 136, 136, 0.47); }
 .pill-band.decode { fill: url(#pillDecFill); stroke: rgba(190, 190, 190, 0.56); }
 .pill-band { transition: fill-opacity 200ms, stroke 200ms; }
-.pill-band.hot { fill-opacity: 0.95; stroke: rgba(94, 242, 255, 0.9); stroke-width: 3; }
+.pill-band.hot { fill: url(#flipDarkFill); fill-opacity: 1; stroke: rgba(255, 255, 255, 0.55); }
 .menu-line { stroke: #fff; stroke-width: 1; fill: none; }
 
 /* layer 1: the pills pop out of the object while it is held */
@@ -109,11 +114,11 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #menu[data-state="open"] #pills { opacity: 1; transform: none; }
 .pill-label { position: absolute; transform: translate(-50%, -50%) scale(0.82); opacity: 0; white-space: nowrap;
   font: 400 21px/normal "Funnel Sans", sans-serif; letter-spacing: -1.2px; text-align: center;
-  transition: opacity 260ms var(--ease), transform 420ms var(--ease), text-shadow 200ms; }
+  transition: opacity 260ms var(--ease), transform 420ms var(--ease), color 200ms; }
 .pill-label.encode { color: #fff; }
 .pill-label.decode { color: #000; }
 #menu[data-state="open"] .pill-label { opacity: 1; transform: translate(-50%, -50%); pointer-events: auto; }
-.pill-label.hot, .pill-label:focus-visible { text-shadow: 0 0 12px var(--cyan); outline: none; }
+.pill-label.hot, .pill-label:focus-visible { color: #fff; outline: none; }
 
 /* layer 2: labels light up as the sweep passes them */
 .arc { position: absolute; inset: 0; pointer-events: none; }
@@ -133,7 +138,10 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .arc-word.tight { letter-spacing: -1.2px; }
 .arc-word.tighter { letter-spacing: -2.4px; }
 .arc-word.lit { opacity: 1; }
-.arc-word.hover { stroke: rgba(94, 242, 255, 0.35); }
+.arc-word.hover { fill: #000; }
+/* a hovered word's own stretch of the band flips light (drawn by app.js) */
+.word-band { fill: url(#flipLightFill); opacity: 0; transition: opacity 160ms; }
+.word-band.hover.lit { opacity: 1; }
 .arc-text { pointer-events: none; }
 #menu:not([data-state="encode"]) .arc-text.encode, #menu:not([data-state="decode"]) .arc-text.decode { opacity: 0; }
 
@@ -144,7 +152,9 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #stage .back { pointer-events: none; }
 #stage .back.shown { pointer-events: auto; }
 .back img { display: block; width: 60px; height: 60px; }
-.back:hover { filter: drop-shadow(0 0 14px var(--cyan-glow)) brightness(1.25); }
+.back { transition: opacity 220ms, transform 300ms var(--ease), background 200ms, left 450ms var(--ease), top 450ms var(--ease); }
+.back:hover { background: var(--flip-light); }
+.back:hover img { filter: invert(1); }
 
 /* ---------- layer 3: settings panel (Figma 18:156, 20:14, 18:246, 20:44) */
 #panel { position: absolute; inset: 0; pointer-events: none; }
@@ -162,10 +172,12 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
   font: 400 17px/normal "Funnel Sans", sans-serif;
   opacity: 0; transform: translateY(14px) scale(0.85);
   transition: opacity 420ms var(--ease), transform 520ms var(--ease), left 700ms var(--ease), top 700ms var(--ease),
-    background 300ms, border-color 300ms, box-shadow 300ms; }
+    background 200ms, border-color 200ms, color 200ms; }
 #panel.shown .orb { opacity: 1; transform: none; }
-.orb:hover { border-color: rgba(255, 255, 255, 0.8); animation: orb-pulse 1.6s ease-in-out infinite; }
-@keyframes orb-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(94, 242, 255, 0); } 50% { box-shadow: 0 0 22px 2px var(--cyan-glow); } }
+.orb:hover { background: var(--flip-light); border-color: #fff; color: #000; }
+.orb:hover .morph span { color: #000; }
+.orb.on:hover, .orb.on.flat:hover { background: var(--flip-dark); color: #fff; }
+.orb.on:hover .morph span { color: #fff; }
 .orb.on { border: 2px solid #fff;
   background: radial-gradient(circle at 50% 50%, rgba(217, 217, 217, 0.72) 0%, rgba(166, 166, 166, 0.72) 50%, rgba(141, 141, 141, 0.72) 75%, rgba(115, 115, 115, 0.72) 100%); }
 .orb.on.flat { background: rgba(217, 217, 217, 0.72); }
@@ -188,15 +200,15 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
   opacity: 0; transition: opacity 500ms 120ms; }
 #panel.shown .arc-slider { opacity: 1; }
 .arc-slider .track { fill: none; stroke: rgba(199, 199, 199, 0.35); stroke-width: 2; stroke-linecap: round; pointer-events: stroke; cursor: pointer; }
-.arc-slider .fill { fill: none; stroke: var(--cyan); stroke-width: 3; stroke-linecap: round; filter: drop-shadow(0 0 6px var(--cyan-glow)); }
+.arc-slider .fill { fill: none; stroke: var(--cyan); stroke-width: 3; stroke-linecap: round; }
 .arc-slider .hit { fill: none; stroke: transparent; stroke-width: 44; pointer-events: stroke; cursor: pointer; }
 .arc-slider text { fill: var(--ink-dim); font: 300 16px "IBM Plex Sans", sans-serif; }
 .knob { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; border: 2px solid #fff;
   background: radial-gradient(circle, rgba(217, 217, 217, 0.72) 0%, rgba(141, 141, 141, 0.72) 75%, rgba(115, 115, 115, 0.72) 100%);
   display: grid; place-items: center; font: 400 13.5px/1.05 "Funnel Sans", sans-serif; color: #fff; text-align: center;
-  cursor: grab; touch-action: none; opacity: 0; transition: opacity 400ms 200ms, box-shadow 300ms; }
+  cursor: grab; touch-action: none; opacity: 0; transition: opacity 400ms 200ms, background 200ms; }
 #panel.shown .knob { opacity: 1; }
-.knob:hover, .knob.dragging { box-shadow: 0 0 24px 2px var(--cyan-glow); }
+.knob:hover, .knob.dragging { background: var(--flip-dark); color: #fff; }
 .knob.dragging { cursor: grabbing; }
 
 /* morph: drop the second mesh (Figma 20:44, 21:41) */
@@ -208,14 +220,19 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
   font: 400 24px/normal "Funnel Sans", sans-serif; text-align: center; color: #fff; }
 .drop-b-box { position: absolute; inset: 0; border-radius: 28px; background: var(--glass); border: 1px solid var(--glass-line);
   backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px); z-index: 1; pointer-events: none;
-  transition: border-color 300ms, backdrop-filter 300ms, box-shadow 300ms; }
-.drop-b:hover .drop-b-box, .drop-b.over .drop-b-box { border-color: rgba(255, 255, 255, 0.87); backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0);
-  box-shadow: 0 0 30px rgba(94, 242, 255, 0.18); }
+  transition: border-color 250ms, backdrop-filter 250ms, background 250ms; }
+/* hover (or a file over it): the glass flips light, its text dark and in front */
+.drop-b:hover .drop-b-box, .drop-b.over .drop-b-box { background: var(--flip-light); border-color: #fff; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.drop-b p { transition: color 250ms; }
+.drop-b:hover p, .drop-b.over p { z-index: 2; color: #000; }
+.drop-b:hover .drop-b-presets { color: rgba(0, 0, 0, 0.55); }
+.drop-b:hover .drop-b-presets button { color: #000; }
+.drop-b:hover .drop-b-presets button:hover { background: var(--flip-dark); color: #fff; }
 .drop-b.ready .drop-b-box { border-color: rgba(94, 242, 255, 0.7); }
 .drop-b-presets { position: absolute; left: 0; right: 0; bottom: 22px; z-index: 2; text-align: center;
   font: 300 15px "IBM Plex Sans", sans-serif; color: var(--ink-faint); }
 .drop-b-presets button { color: var(--ink-dim); margin: 0 3px; text-decoration: underline; text-underline-offset: 3px; }
-.drop-b-presets button:hover, .drop-b-presets button.on { color: #fff; }
+.drop-b-presets button.on { color: #fff; }
 
 /* morph options under the drop box: glass chips and the morph t slider */
 .morph-opts { position: absolute; left: 792px; top: 698px; width: 484px; display: flex; flex-direction: column; gap: 14px;
@@ -226,10 +243,11 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 .chips { display: flex; flex-wrap: wrap; gap: 10px; }
 .chip { padding: 9px 18px; border-radius: 46px; border: 1px solid var(--orb-line); background: rgba(13, 13, 13, 0.45);
   font: 300 19px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px; color: var(--ink-dim);
-  transition: color 250ms, border-color 250ms, background 250ms, box-shadow 250ms; }
-.chip:hover { color: #fff; border-color: rgba(255, 255, 255, 0.8); box-shadow: 0 0 16px rgba(94, 242, 255, 0.25); }
+  transition: color 200ms, border-color 200ms, background 200ms; }
+.chip:hover { background: var(--flip-light); border-color: #fff; color: #000; }
 .chip[aria-pressed="true"] { color: #fff; border: 2px solid #fff; padding: 8px 17px;
   background: radial-gradient(circle, rgba(217, 217, 217, 0.5) 0%, rgba(115, 115, 115, 0.5) 100%); }
+.chip[aria-pressed="true"]:hover { background: var(--flip-dark); color: #fff; }
 .chip:disabled { opacity: 0.35; pointer-events: none; }
 .morph-t { display: grid; grid-template-columns: auto 1fr 56px; align-items: center; gap: 14px;
   font: 300 20px "IBM Plex Sans", sans-serif; color: var(--ink-dim); }
@@ -240,21 +258,22 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #app.portrait .chip { font-size: 21px; }
 
 /* run buttons (Figma 21:12) */
-.run-btn { position: absolute; top: calc(896px + var(--B, 0px)); scale: 0.8; translate: 0 34px; /* smaller and lower than the design: room for the object */ width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
+.run-btn { position: absolute; top: calc(896px + var(--B, 0px)); scale: 0.8; translate: 0 16px; /* smaller and lower than the design: room for the object */ width: 101px; height: 101px; border-radius: 50%; transition: transform 300ms var(--ease), filter 300ms; }
 .run-btn img, .run-btn span { position: absolute; display: block; pointer-events: none; }
 .run-btn .ring { left: 0; top: 0; width: 101px; height: 101px; }
-#run { left: 595px; translate: 12px 34px; }
+#run { left: 595px; translate: 12px 16px; }
 #run .gear { left: 12.06px; top: 14.06px; width: 52.8758px; height: 52.8747px; transition: transform 700ms var(--ease); }
 #run .tri { left: 40.87px; top: 37.12px; width: 50.2295px; height: 45.75px; transform: rotate(90deg); }
-#play { left: 736px; width: 109px; translate: -12px 34px; }
+#play { left: 736px; width: 109px; translate: -12px 16px; }
 #play .tri { left: 15.85px; top: 30.12px; width: 43.3013px; height: 39.75px; transform: rotate(90deg); }
 #play .bars { left: 39px; top: 19px; width: 70px; height: 56px; display: grid; place-items: center;
   font: 700 48px/normal "IBM Plex Sans", sans-serif; letter-spacing: -2.4px; color: #000; }
-.run-btn:hover { transform: scale(1.06); filter: drop-shadow(0 0 16px var(--cyan-glow)); }
+.run-btn:hover { transform: scale(1.06); filter: invert(1); } /* light glass, black icons → dark glass, white icons */
 #run:hover .gear { transform: rotate(60deg); }
 .run-btn:active { transform: scale(0.96); }
-#run.stale { animation: stale 1.8s ease-in-out infinite; }
-@keyframes stale { 0%, 100% { filter: drop-shadow(0 0 0 rgba(94, 242, 255, 0)); } 50% { filter: drop-shadow(0 0 18px rgba(94, 242, 255, 0.6)); } }
+/* settings changed since the last run: the gear's ring breathes (no glow) */
+#run.stale .ring { animation: stale 1.8s ease-in-out infinite; }
+@keyframes stale { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.07); opacity: 0.7; } }
 #app.busy .run-btn { pointer-events: none; }
 #app.busy #run .gear { animation: spin 1.6s linear infinite; }
 #app.busy .run-btn .ring { animation: ring 1.2s ease-in-out infinite; }
@@ -273,9 +292,10 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #hud button, .seg button { padding: 7px 14px; border-radius: 46px; border: 1px solid var(--orb-line);
   font: 300 14px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px; color: var(--ink-dim);
   background: rgba(13, 13, 13, 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  transition: color 250ms, border-color 250ms, box-shadow 250ms, background 250ms; }
-#hud button:hover, .seg button:hover { color: #fff; border-color: rgba(255, 255, 255, 0.8); box-shadow: 0 0 16px rgba(94, 242, 255, 0.25); }
+  transition: color 200ms, border-color 200ms, background 200ms; }
+#hud button:hover, .seg button:hover { background: var(--flip-light); border-color: #fff; color: #000; }
 #hud button[aria-pressed="true"], #hud button[aria-expanded="true"], .seg button.on { color: #fff; border-color: #fff; background: rgba(217, 217, 217, 0.18); }
+#hud button[aria-pressed="true"]:hover, #hud button[aria-expanded="true"]:hover, .seg button.on:hover { background: var(--flip-dark); color: #fff; }
 #hud button:disabled { opacity: 0.4; pointer-events: none; }
 
 /* view drawer: opens to the left of the tools column */
@@ -316,7 +336,7 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #dropOverlay { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
   background: rgba(0, 0, 0, 0.35); border: 2px dashed rgba(94, 242, 255, 0.6); border-radius: 18px; margin: 12px; }
 #dropOverlay[hidden] { display: none; }
-#dropOverlay p { font: 400 40px "Jost", sans-serif; text-shadow: 0 0 24px var(--cyan-glow); }
+#dropOverlay p { font: 400 40px "Jost", sans-serif; background: var(--flip-light); color: #000; padding: 6px 28px; border-radius: 46px; }
 
 dialog { border: 1px solid var(--glass-line); border-radius: 22px; background: rgba(24, 24, 24, 0.92); color: #fff;
   max-width: min(960px, 94vw); padding: 18px 22px; font: 300 14px "IBM Plex Sans", sans-serif;
@@ -324,7 +344,8 @@ dialog { border: 1px solid var(--glass-line); border-radius: 22px; background: r
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 dialog h2 { font: 400 26px "Jost", sans-serif; margin: 0 0 10px; }
 dialog .close { float: right; font-size: 26px; line-height: 1; color: var(--ink-dim); }
-dialog .close:hover { color: #fff; }
+dialog .close { width: 32px; height: 32px; border-radius: 50%; transition: background 200ms, color 200ms; }
+dialog .close:hover { background: var(--flip-light); color: #000; }
 dialog table { border-collapse: collapse; font-size: 13px; width: 100%; }
 dialog th, dialog td { border-bottom: 1px solid rgba(255, 255, 255, 0.12); padding: 6px 8px; text-align: right; }
 dialog th:first-child, dialog td:first-child { text-align: left; }
