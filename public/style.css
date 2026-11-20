@@ -66,6 +66,8 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #app[data-screen="landing"] #landing, #app[data-screen="home"] #home { opacity: 1; visibility: visible; transition: opacity 600ms var(--ease); }
 
 /* ---------- landing (Figma 15:6) */
+/* the heading and shapes, a little smaller than the design, scaled about the middle of the group */
+.landing-centre { position: absolute; inset: 0; transform: scale(0.8); transform-origin: 720px 600px; }
 .drop-title, .or { position: absolute; left: 720px; width: 460px; transform: translate(-50%, -50%); margin: 0;
   font: 400 48px/normal "Jost", sans-serif; text-align: center; color: #fff; }
 .drop-title { top: 324px; height: 92px; border-radius: 46px; transition: background 200ms, color 200ms; }
