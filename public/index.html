@@ -3,86 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tessa Ripple</title>
-<meta name="description" content="A 3D mesh loaded into a quantum state with Moth's Tessa encoder, read back, and moved only by simulated chip noise.">
+<title>Tessa3D</title>
+<meta name="description" content="Drop a 3D mesh, load it into a quantum state with Moth's Tessa encoder, read it back and watch it move with the chip's own noise.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Funnel+Sans:wght@400;500&family=IBM+Plex+Sans:wght@300;400;700&family=IBM+Plex+Mono:wght@400&family=Jost:wght@400&display=swap">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "react": "https://esm.sh/react@18.3.1",
+  "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+  "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
+  "@figma/expressive-components": "https://esm.sh/@figma/expressive-components@0.2.0?deps=react@18.3.1&external=react"
 } }
 </script>
 </head>
 <body>
-<header>
-  <h1>Tessa Ripple</h1>
-  <p>A mesh loaded into a quantum state with <a href="https://github.com/moth-quantum/Tessa">Tessa</a>, read back on a simulator or a calibrated IBM chip model, and moved only by simulated chip noise.</p>
-</header>
-<main>
-  <section class="stage">
-    <div class="caption" id="caption">Loading…</div>
-    <div class="legends"><div class="legend" id="faceLegend" hidden></div><div class="legend" id="edgeLegend" hidden></div></div>
-    <div id="viewer"></div>
-    <div id="tip" hidden></div>
-    <div id="qmap" hidden><canvas id="qcanvas"></canvas><div id="qtext"></div></div>
-    <div class="status" id="status" role="status">Starting…</div>
-  </section>
+<div id="app" data-screen="landing">
+  <div id="shaderBg" aria-hidden="true"></div>
+  <div id="viewer" aria-label="Point cloud of the current mesh"></div>
 
-  <aside class="panel">
-    <div class="buttons">
-      <button id="run" class="primary">Run</button>
-      <button id="runFrames" class="primary">Run frames</button>
-      <button id="play">Play / Pause</button>
-      <button id="edges">Read edges</button>
-      <button id="why">Why Tessa</button>
-      <button id="curves">Curves</button>
-      <button id="obj">Download OBJ</button>
-    </div>
-    <pre class="info" id="info"></pre>
+  <div id="stage">
+    <img class="wave wave-a" src="assets/wave-a.png" alt="" aria-hidden="true">
+    <img class="wave wave-b" src="assets/wave-b.png" alt="" aria-hidden="true">
+    <button id="logo" class="logo" title="New object" aria-label="Tessa3D: start over with a new object"><img src="assets/logo.svg" alt="" width="160" height="96"></button>
 
-    <fieldset><legend>Mesh</legend>
-      <label>Shape <select id="shape"><option>blob</option><option>sphere</option><option>cube</option><option>suzanne</option></select></label>
-      <label>Resolution <select id="resolution"><option value="0">low</option><option value="1">mid</option><option value="2">high</option></select></label>
-    </fieldset>
+    <!-- landing: drop an OBJ or pick a shape -->
+    <section id="landing" class="screen" aria-label="Choose an object">
+      <button id="dropObj" class="drop-title">drop an .obj file</button>
+      <p class="or">or</p>
+      <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.png" alt=""></button>
+      <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.png" alt=""></button>
+      <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.png" alt=""></button>
+      <div class="more-shapes">also: <button data-shape="apple">apple</button> · <button data-shape="suzanne">suzanne</button></div>
+    </section>
 
-    <fieldset><legend>Encoder <small>(needs Run)</small></legend>
-      <label>Payload <select id="payload"><option>radial</option><option>xyz</option><option>spherical</option></select></label>
-      <label>Mode <select id="mode"><option value="theta">shape θ (Z)</option><option value="split">shape θ+φ</option></select></label>
-      <label>Layout <select id="layout"><option>mesh</option><option>naive</option></select></label>
-      <label>Clamp θ <input id="clamp" type="range" min="0" max="0.45" step="0.01" value="0"><output></output></label>
-      <label>Clamp φ <input id="clamp_b" type="range" min="0" max="0.45" step="0.01" value="0"><output></output></label>
-      <label>Compression % <input id="compression" type="range" min="0" max="100" step="1" value="0"><output></output></label>
-      <label>Quant bits <input id="quant_bits" type="range" min="0" max="8" step="1" value="0"><output></output></label>
-      <label>Headroom <input id="headroom" type="range" min="0" max="0.5" step="0.01" value="0.1"><output></output></label>
-    </fieldset>
+    <!-- home: the object, its arc menus and the run buttons -->
+    <section id="home" class="screen" aria-label="Encode and decode your object">
+      <p id="hint" class="hint">hover or right-click</p>
+      <div id="hitzone" aria-hidden="true"></div>
 
-    <fieldset><legend>Readout <small>(needs Run)</small></legend>
-      <label>Backend <select id="backend"><option>noiseless</option><option>flat noise</option><option>phoenix</option><option>fez</option></select></label>
-      <label>Placement <select id="placement"><option value="quality">best qubits first</option><option value="graph">Tessa's order</option></select></label>
-      <label>Shots (log₂) <input id="shots" type="range" min="8" max="16" step="1" value="12"><output></output></label>
-      <label>Noise × (flat) <input id="noise_strength" type="range" min="0" max="3" step="0.1" value="1"><output></output></label>
-      <label>Seed <input id="seed" type="number" min="0" max="999" value="0"></label>
-      <label>DRR <select id="drr"><option>none</option><option>min_max</option><option>mean_std</option><option>percentile</option><option>abs_max</option><option>min_avg_max</option></select></label>
-      <label>Frames <input id="frames" type="range" min="2" max="30" step="1" value="12"><output></output></label>
-    </fieldset>
+      <div id="menu" data-state="closed">
+        <img class="menu-line" src="assets/menu-line.svg" alt="" width="1" height="531">
+        <button id="encodePill" class="pill encode" data-side="encode"><img src="assets/encode-pill.svg" alt=""><span>Encode</span></button>
+        <button id="decodePill" class="pill decode" data-side="decode"><img src="assets/decode-pill.svg" alt=""><span>Decode</span></button>
+        <div id="encodeArc" class="arc encode" role="menu" aria-label="Encode settings">
+          <img class="arc-shape" src="assets/encode-arc.svg" alt="">
+          <button class="arc-label" role="menuitem" data-panel="load" style="left:488.34px;top:333.19px;--r:-49.64deg">load</button>
+          <button class="arc-label" role="menuitem" data-panel="mode" style="left:575.12px;top:260.06px;--r:-29.51deg">mode</button>
+          <button class="arc-label tight" role="menuitem" data-panel="layout" style="left:688.83px;top:228.38px;--r:-6.22deg">vert layout</button>
+          <button class="arc-label tight" role="menuitem" data-panel="clamps" style="left:817.92px;top:237.35px;--r:17.44deg">clamps</button>
+          <button class="arc-label tight" role="menuitem" data-panel="compression" style="left:934.97px;top:307.54px;--r:43.97deg">compression</button>
+        </div>
+        <div id="decodeArc" class="arc decode" role="menu" aria-label="Decode settings">
+          <img class="arc-shape" src="assets/decode-arc.svg" alt="">
+          <button class="arc-label" role="menuitem" data-panel="drr" style="left:486.51px;top:726.26px;--r:48.23deg">DRR</button>
+          <button class="arc-label" role="menuitem" data-panel="frames" style="left:566.96px;top:794.82px;--r:30.19deg">frames</button>
+          <button class="arc-label tight" role="menuitem" data-panel="shots" style="left:672.66px;top:828.63px;--r:6.74deg">shots</button>
+          <button class="arc-label tighter" role="menuitem" data-panel="placement" style="left:807.71px;top:820.16px;--r:-19deg">chip placement</button>
+          <button class="arc-label tight" role="menuitem" data-panel="backend" style="left:946.5px;top:734.69px;--r:-48.22deg">backend</button>
+        </div>
+      </div>
 
-    <fieldset><legend>View <small>(instant)</small></legend>
-      <label>View <select id="view"><option value="fidelity">fidelity (gain 1)</option><option value="material">material (gain)</option></select></label>
-      <label>Colour <select id="colour"><option value="error">error</option><option value="qubit">qubit</option><option value="plain">plain</option></select></label>
-      <label>Gain (material) <input id="gain" type="range" min="0" max="10" step="0.1" value="3"><output></output></label>
-      <label>In-between <input id="between" type="range" min="0" max="30" step="1" value="8"><output></output></label>
-      <label>Speed (fps) <input id="fps" type="range" min="1" max="60" step="1" value="24"><output></output></label>
-      <label class="check"><input id="loop" type="checkbox" checked> Loop</label>
-      <label class="check"><input id="orig" type="checkbox" checked> Start from original</label>
-      <label class="check"><input id="dots" type="checkbox" checked> Vertex dots (each vertex's exact colour)</label>
-      <label class="check"><input id="shade" type="checkbox"> Shading (lighting darkens colours)</label>
-      <label class="check"><input id="qmapOn" type="checkbox"> Qubit map (hover a vertex for its data and address qubits)</label>
-    </fieldset>
+      <!-- layer 3: one setting's toggles (built by app.js) -->
+      <div id="panel" data-side="encode" hidden>
+        <div class="panel-title"><span id="panelTitle">load</span><img src="assets/title-underline.svg" alt="" width="95.6667" height="5.33333"></div>
+        <button id="back" class="back" aria-label="Back to the settings arc"><img src="assets/back.svg" alt="" width="68" height="68"></button>
+        <div id="panelBody"></div>
+      </div>
+
+      <!-- morph: drop the second mesh -->
+      <div id="dropB" class="drop-b" hidden>
+        <div class="drop-b-box"></div>
+        <p id="dropBText">drop second mesh (.obj)</p>
+        <div class="drop-b-presets">or morph into: <button data-shape-b="sphere">sphere</button> <button data-shape-b="cube">cube</button> <button data-shape-b="blob">blob</button> <button data-shape-b="apple">apple</button> <button data-shape-b="suzanne">suzanne</button></div>
+      </div>
+
+      <div class="run-buttons">
+        <button id="run" class="run-btn" title="Encode and read once (default settings unless you change them)" aria-label="Encode and run">
+          <img class="ring" src="assets/run-ellipse.svg" alt="" width="101" height="101">
+          <img class="gear" src="assets/gear.svg" alt="" width="52.8758" height="52.8747">
+          <img class="tri" src="assets/play.svg" alt="" width="50.2295" height="45.75">
+        </button>
+        <button id="play" class="run-btn" title="Run frames, then play / pause them" aria-label="Run frames, play or pause">
+          <img class="ring" src="assets/run-ellipse.svg" alt="" width="101" height="101">
+          <img class="tri" src="assets/play-small.svg" alt="" width="43.3013" height="39.75">
+          <span class="bars">||</span>
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <!-- HUD: tools not in the arc menus -->
+  <nav id="hud" aria-label="Tools">
+    <button id="why">why tessa</button>
+    <button id="curves">curves</button>
+    <button id="edges">read edges</button>
+    <button id="qmapOn" aria-pressed="false">qubit map</button>
+    <button id="obj">download .obj</button>
+    <button id="viewToggle" aria-expanded="false" aria-controls="drawer">view</button>
+  </nav>
+  <aside id="drawer" hidden aria-label="View and advanced settings">
+    <h2>view</h2>
+    <div class="seg" role="radiogroup" aria-label="View"><button data-set="view" data-value="fidelity" class="on">fidelity</button><button data-set="view" data-value="material">material</button></div>
+    <label><span>gain <small>(material)</small></span><input id="gain" type="range" min="0" max="10" step="0.1" value="3"><output></output></label>
+    <div class="seg" role="radiogroup" aria-label="Colour"><button data-set="colour" data-value="glow" class="on">glow</button><button data-set="colour" data-value="error">error</button><button data-set="colour" data-value="qubit">qubit</button></div>
+    <label>in-between<input id="between" type="range" min="0" max="30" step="1" value="8"><output></output></label>
+    <label>speed (fps)<input id="fps" type="range" min="1" max="60" step="1" value="24"><output></output></label>
+    <label class="check"><input id="loop" type="checkbox" checked> loop</label>
+    <label class="check"><input id="orig" type="checkbox" checked> start from original</label>
+    <label class="check"><input id="spin" type="checkbox" checked> slow spin</label>
+    <h2>object</h2>
+    <div class="seg" role="radiogroup" aria-label="Resolution"><button data-set="resolution" data-value="0" class="on">low</button><button data-set="resolution" data-value="1">mid</button><button data-set="resolution" data-value="2">high</button></div>
+    <h2>advanced <small>(needs run)</small></h2>
+    <label>headroom<input id="headroom" type="range" min="0" max="0.5" step="0.01" value="0.1"><output></output></label>
+    <label>seed<input id="seed" type="number" min="0" max="999" value="0"></label>
+    <label><span>morph t <small>(single run)</small></span><input id="morph_t" type="range" min="0" max="1" step="0.05" value="0.5"><output></output></label>
   </aside>
-</main>
+
+  <div id="info" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>
+  <div class="legends"><div class="legend" id="faceLegend" hidden></div><div class="legend" id="edgeLegend" hidden></div></div>
+  <div id="qmap" hidden><canvas id="qcanvas"></canvas><div id="qtext"></div></div>
+  <div id="dropOverlay" hidden><p>drop to load</p></div>
+  <input id="fileA" type="file" accept=".obj" hidden>
+  <input id="fileB" type="file" accept=".obj" hidden>
+</div>
 
 <dialog id="dialog"><form method="dialog"><button class="close" aria-label="Close">×</button></form><div id="dialogBody"></div></dialog>
 
 <script type="module" src="app.js"></script>
+<script type="module">
+  import { mountShaderBackground } from './shader-bg.js';
+  mountShaderBackground(document.getElementById('shaderBg'));
+</script>
 </body>
 </html>

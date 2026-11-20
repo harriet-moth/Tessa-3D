@@ -68,17 +68,41 @@ noiseless) or Phoenix (6.8 %). Fez is too small even then (896 positions).
 
 ## Web version
 
-Live at **https://tessa-ripple.vercel.app**. It's a three.js viewer in the browser; all
-quantum work runs in one Vercel Python function (`api/tessa.py`) that calls the same
+Live at **https://tessa-ripple.vercel.app**. The web front end is **Tessa3D**, a
+game-like three.js page built from the Tessa3D Figma design; all quantum work runs in
+one Vercel Python function (`api/tessa.py`) that calls the same
 `tessa_ripple/bridge.py` as the desktop app. Every push to `main` redeploys it.
+
+How it works:
+- **Landing:** drop an `.obj` file anywhere (or click *drop an .obj file*), or pick the
+  cube, blob or sphere (apple and Suzanne are linked below them). Uploads open at full
+  detail; if one is too big for the lattice, a run decimates it and retries.
+- **Object:** drawn as a pulsing point cloud: an even lattice of dots on every face,
+  with faces gently curved between vertices (hard edges stay sharp). The dots sit on
+  the decoded vertex positions, so they move only as the readout does.
+- **Run buttons:** the gear ▶ encodes and reads once; ▶|| runs **Frames** readouts,
+  then plays and pauses them. The gear glows while the settings differ from the last run.
+- **Settings:** hover the object (or right-click / tap it) for the **Encode** and
+  **Decode** arcs. Hover an arc to open its options; click one to set it (**load**,
+  **mode**, **vert layout**, **clamps**, **compression**; **DRR**, **frames**,
+  **shots**, **chip placement**, **backend**). The menu closes when the pointer moves
+  well away or you click outside it; the round back button returns to the arc.
+- **Morph:** **mode → θ+φ morph** opens a box for mesh B: drop an `.obj` or pick a
+  shape. ▶|| then reads the morph A → B along t = 0 → 1 (closest-point matching,
+  as in the desktop app); one ▶ reads at **morph t** (in **view**, default 0.5).
+- **Top right:** why tessa, curves, read edges, qubit map, download .obj, and **view**
+  (fidelity / material, gain, colour, playback, resolution, headroom, seed).
 
 Differences from the desktop app:
 - Changing **DRR** needs a new **Run**.
 - **Run frames** is capped at 30 frames and stops after about 45 s to stay under
   Vercel's 60 s limit. On the chip backends a frame takes about 7 s there, so
-  expect about 6 frames.
+  expect about 6 frames; a morph spreads the frames it has time for over t = 0 → 1.
+- Morph uses the basis sweep with closest-point matching only (no shared topology,
+  front or interference readout), and curves and edge readouts are off in morph mode.
 - There's no GIF export; **Download OBJ** saves the current step.
-- Faces are unlit by default so colours are exact; tick **Shading** for lighting.
+- The landing background is Figma's WebGPU shader fill (`@figma/expressive-components`);
+  browsers without WebGPU show plain black there.
 
 To run the web version locally:
 
