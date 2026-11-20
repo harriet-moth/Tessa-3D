@@ -267,7 +267,9 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #app[data-screen="landing"] #hud, #app[data-screen="landing"] #info, #app[data-screen="landing"] .legends,
 #app[data-screen="landing"] #drawer, #app[data-screen="landing"] #qmap { opacity: 0; pointer-events: none; }
 #hudMore { display: none; }
-#hud { position: absolute; top: 18px; right: 18px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 46vw; }
+/* the tools: a column down the right edge, centred top to bottom, clear of the logo and object */
+#hud { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+#hud button { text-align: center; }
 #hud button, .seg button { padding: 7px 14px; border-radius: 46px; border: 1px solid var(--orb-line);
   font: 300 14px "IBM Plex Sans", sans-serif; letter-spacing: 0.3px; color: var(--ink-dim);
   background: rgba(13, 13, 13, 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -276,7 +278,8 @@ button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; bord
 #hud button[aria-pressed="true"], #hud button[aria-expanded="true"], .seg button.on { color: #fff; border-color: #fff; background: rgba(217, 217, 217, 0.18); }
 #hud button:disabled { opacity: 0.4; pointer-events: none; }
 
-#drawer { position: absolute; top: 64px; right: 18px; width: 280px; max-height: calc(100vh - 160px); overflow: auto; padding: 14px 16px;
+/* view drawer: opens to the left of the tools column */
+#drawer { position: absolute; top: 50%; right: 170px; transform: translateY(-50%); width: 280px; max-height: calc(100vh - 80px); overflow: auto; padding: 14px 16px;
   border-radius: 22px; background: rgba(30, 30, 30, 0.55); border: 1px solid var(--glass-line);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font: 300 14px "IBM Plex Sans", sans-serif; color: var(--ink-dim); }
 #drawer[hidden] { display: none; }
@@ -352,10 +355,10 @@ svg text { fill: var(--ink-dim); font-size: 11px; }
 
 /* ---------- compact (narrow or portrait): tools fold into one button; stats behind a tap */
 #app.compact #hudMore { display: block; }
-#app.compact #hud { flex-direction: column; align-items: flex-end; max-width: none; top: 12px; right: 12px; }
+#app.compact #hud { flex-direction: column; align-items: flex-end; max-width: none; top: 12px; right: 12px; transform: none; }
 #app.compact #hud button:not(#hudMore) { display: none; }
 #app.compact #hud.open button:not(#hudMore) { display: block; }
-#app.compact #drawer { top: 56px; right: 12px; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 80px); }
+#app.compact #drawer { top: 56px; right: 12px; transform: none; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 80px); }
 #app.compact #info { left: 12px; right: 12px; bottom: 10px; max-width: none; pointer-events: auto; cursor: pointer; font-size: 11px; }
 #app.compact #info #stats { display: none; }
 #app.compact #info.open #stats { display: block; }
