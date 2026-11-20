@@ -803,7 +803,7 @@ function inkMetrics(word, spacing = 0) {
   inkCanvas.font = '400 21px "Funnel Sans", sans-serif';
   if ('letterSpacing' in inkCanvas) inkCanvas.letterSpacing = `${spacing}px`;
   const m = inkCanvas.measureText(word);
-  return { ascent: m.actualBoundingBoxAscent, descent: m.actualBoundingBoxDescent };
+  return { ascent: m.actualBoundingBoxAscent, descent: m.actualBoundingBoxDescent, width: m.width };
 }
 
 function drawMenuShapes() {
@@ -817,18 +817,16 @@ function drawMenuShapes() {
     const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
     const widths = labels.map((b) => b.offsetWidth || 8 * b.textContent.length);
     const deg = (px) => THREE.MathUtils.radToDeg(px / ARC.R);
-    // Words spread evenly along the arc: the first just past the back button, the last
-    // just short of the far cap, and the rest at equal steps between their centres. If two
-    // long neighbours would touch, fall back to equal gaps between the words instead.
-    const start = ARC.a0 + deg(BACK / 2 + 8), end = ARC.a1 - deg(10), n = labels.length;
-    const first = start + deg(widths[0]) / 2, last = end - deg(widths[n - 1]) / 2;
-    let centres = labels.map((_, i) => first + ((last - first) * i) / (n - 1));
-    const touching = centres.some((c, i) => i && c - centres[i - 1] < deg((widths[i] + widths[i - 1]) / 2 + 12));
-    if (touching) {
-      const gap = (end - start - widths.reduce((t, w) => t + deg(w), 0)) / (n - 1);
-      let at = start;
-      centres = widths.map((w) => { const c = at + deg(w) / 2; at += deg(w) + gap; return c; });
-    }
+    // Even spacing: every gap the same along the arc, between neighbouring words and at
+    // both ends (from the back button's edge, and to the far cap), using each word's
+    // measured length in the arc font.
+    const spacingOf = (b) => (b.classList.contains('tighter') ? -2.4 : b.classList.contains('tight') ? -1.2 : 0);
+    const lens = labels.map((b) => inkMetrics(b.textContent, spacingOf(b)).width);
+    const s0 = ARC.a0 + deg(BACK / 2), s1 = ARC.a1 + deg(ARC.h * 0.4), n = labels.length;
+    const gap = (s1 - s0 - lens.reduce((t, w) => t + deg(w), 0)) / (n + 1);
+    let at = s0 + gap;
+    const centres = lens.map((w) => { const c = at + deg(w) / 2; at += deg(w) + gap; return c; });
+    widths.splice(0, widths.length, ...lens); // the hover patches size to the same lengths
     // The visible text runs along the arc's centre line (left to right, so it reads
     // upright on both arcs), letter by letter round the curve; the buttons stay as
     // straight, invisible hit areas over each word.
