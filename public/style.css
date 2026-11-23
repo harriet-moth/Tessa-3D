@@ -339,12 +339,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 .run-btn:hover .gear, .run-btn:hover .tri { filter: brightness(0); }
 #play:hover .bars { color: var(--black); }
 .run-btn:active { transform: scale(0.96); }
-/* status, not motion: settings changed since the last run dim the gear's ring in and
-   out; a run in progress pulses both rings. Nothing scales or spins. */
+/* settings changed since the last run dim the gear's ring in and out; a run in
+   progress pulses both rings and spins the gear (▶ and ▶|| both encode first). */
 #run.stale .ring { animation: ring 1.8s ease-in-out infinite; }
 #app.busy .run-btn { pointer-events: none; }
 #app.busy .run-btn .ring { animation: ring 1.2s ease-in-out infinite; }
 @keyframes ring { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+#app.running #run .gear { animation: spin 1.6s linear infinite; }
+@keyframes spin { to { rotate: 360deg; } }
 #play.playing .tri { opacity: 0.35; }
 
 /* ---------- HUD, drawer, info (outside the stage, so they stay readable on small windows) */

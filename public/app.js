@@ -571,6 +571,7 @@ async function run(frames) {
     openPanel('encode', 'mode');
     return status('⚠ Morph needs a second mesh: drop one in the box, or pick a shape', true);
   }
+  app.classList.add('running'); // spins the gear until the readouts are back (or fail)
   await busy(frames > 1 ? `${P.mode === 'morph' ? 'Morphing' : 'Running'} ${frames} readouts on ${P.backend}…` : `Encoding and reading once on ${P.backend}…`, async () => {
     // a mesh too big for one lattice is read in several runs (stats.runs), never decimated
     const d = await call('run', { frames });
@@ -589,6 +590,7 @@ async function run(frames) {
     const runs = d.stats.runs > 1 ? ` · too many vertices for one ${d.stats.graph}, so each readout ran in ${d.stats.runs} runs` : '';
     status(`${what} in ${d.seconds.toFixed(1)} s on ${p.backend}${cut}${runs}`);
   });
+  app.classList.remove('running');
   syncPlay(); syncStale();
 }
 
