@@ -33,7 +33,7 @@ _cold = True  # set until the first request has been served
 
 # OBJ shapes that ship with the app, by name.
 OBJ_FILES = {"suzanne": ROOT / "tessa_ripple" / "suzanne.obj",
-             "apple": ROOT / "tessa_ripple" / "apple_bitten.obj"}
+             "apple": ROOT / "tessa_ripple" / "apple_full.obj"}
 # The Params fields the web app sets, with their allowed values (None: any number).
 # Morph's ``target`` (a file path) is never taken from a request: B comes from
 # ``shape_b`` / ``obj_b`` (:func:`mesh_path`).
