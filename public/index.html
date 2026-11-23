@@ -5,9 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tessa3D</title>
 <meta name="description" content="Drop a 3D mesh, load it into a quantum state with Moth's Tessa encoder, read it back and watch it move with the chip's own noise.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Funnel+Sans:wght@400;500&family=IBM+Plex+Sans:wght@200;300;400;500;700&family=IBM+Plex+Mono:wght@400&family=Jost:wght@400&display=swap">
+<link rel="preload" href="assets/fonts/RiformaLLWeb-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/RiformaLLWeb-Medium.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 { "imports": {
@@ -21,100 +20,70 @@
 </script>
 </head>
 <body>
-<div id="app" data-screen="landing">
+<div id="app" data-screen="landing" data-layer="0">
   <div id="shaderBg" aria-hidden="true"></div>
   <div id="viewer" aria-label="Point cloud of the current mesh"></div>
-  <!-- decorative dot ribbons, pinned to the window's corners as in the Figma frame -->
-  <div id="waves" aria-hidden="true">
-    <img class="wave wave-a" src="assets/wave-a.svg?v=2" alt="">
-    <img class="wave wave-b" src="assets/wave-b.svg?v=2" alt="">
-  </div>
 
   <div id="stage">
-    <button id="logo" class="logo" title="New object" aria-label="Tessa3D: start over with a new object"><img src="assets/logo.svg" alt="" width="160" height="96"></button>
 
     <!-- landing: drop an OBJ or pick a shape -->
     <section id="landing" class="screen" aria-label="Choose an object">
       <div class="landing-centre">
-        <button id="dropObj" class="drop-title">drop an .obj file</button>
+        <button id="dropObj" class="drop-title"><span class="w" style="--i: 0">drop</span> <span class="w" style="--i: 1">an</span> <span class="w" style="--i: 2">.obj</span> <span class="w" style="--i: 3">file</span></button>
         <p class="or">or</p>
         <p id="landingMsg" class="landing-msg" role="alert" hidden></p>
-        <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.png?v=2" alt=""></button>
-        <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.png?v=2" alt=""></button>
-        <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.png?v=2" alt=""></button>
+        <button class="preset cube" data-shape="cube" aria-label="Cube" data-tip="cube"><img src="assets/cube-dots.png?v=2" alt=""></button>
+        <button class="preset blob" data-shape="blob" aria-label="Blob" data-tip="blob"><img src="assets/blob-dots.png?v=2" alt=""></button>
+        <button class="preset sphere" data-shape="sphere" aria-label="Sphere" data-tip="sphere"><img src="assets/sphere-dots.png?v=2" alt=""></button>
       </div>
       <div class="more-shapes">also: <button data-shape="apple">apple</button> · <button data-shape="suzanne">suzanne</button></div>
     </section>
 
     <!-- home: the object, its arc menus and the run buttons -->
     <section id="home" class="screen" data-layer="0" aria-label="Encode and decode your object">
-      <!-- resolution: low decimates the mesh, high subdivides it, medium is it as is -->
-      <div id="resRow" class="res-row" role="radiogroup" aria-label="Mesh resolution">
-        <button role="radio" data-res="0" aria-checked="false" title="Decimated: about half the vertices">low res</button>
-        <button role="radio" data-res="1" aria-checked="true" title="The mesh as it is">medium res</button>
-        <button role="radio" data-res="2" aria-checked="false" title="Subdivided: each triangle split into four (same shape, about four times the vertices)">high res</button>
-      </div>
       <button id="hint" class="hint" aria-label="Open the settings menu">click and hold</button>
 
-      <!-- Menu layers 1 (Encode / Decode pills, while held) and 2 (an arc of options).
-           Every shape is a band of constant width on a circle round the object, drawn by
-           app.js; an arc collapsed to zero length is the circle the back button sits on. -->
+      <!-- Menu layers 1 (Encode / Decode tabs, while held) and 2 (a web of words on the
+           left, every line from one hub), drawn by app.js -->
       <div id="menu" data-state="closed">
         <svg id="menuSvg" viewBox="0 0 1440 1024" width="1440" height="1024" aria-hidden="true">
-          <defs>
-            <filter id="bandShade" x="-10%" y="-20%" width="120%" height="140%">
-              <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
-              <feOffset dx="2" dy="8"/><feGaussianBlur stdDeviation="3.3"/>
-              <feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
-              <feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.25 0"/>
-              <feBlend mode="normal" in2="SourceGraphic"/>
-            </filter>
-            <radialGradient id="pillEncFill"><stop offset="0" stop-color="#fff" stop-opacity="0.9"/><stop offset="1" stop-color="#fff" stop-opacity="0.28"/></radialGradient>
-            <radialGradient id="pillDecFill"><stop offset="0" stop-color="#d9d9d9"/><stop offset="1" stop-color="#737373"/></radialGradient>
-            <!-- hover flips: light shapes go dark, and a hovered arc word's patch goes light -->
-            <radialGradient id="flipDarkFill"><stop offset="0" stop-color="#3a3a3a"/><stop offset="0.6" stop-color="#161616"/><stop offset="1" stop-color="#050505"/></radialGradient>
-            <radialGradient id="flipLightFill"><stop offset="0" stop-color="#ffffff"/><stop offset="0.6" stop-color="#e6e6e6"/><stop offset="1" stop-color="#bdbdbd"/></radialGradient>
-          </defs>
           <g id="pills">
-            <path class="menu-line" d=""/>
+            <path id="encodeLead" class="tab-lead"/>
+            <path id="decodeLead" class="tab-lead"/>
             <path id="encodePillBand" class="pill-band encode"/>
             <path id="decodePillBand" class="pill-band decode"/>
           </g>
-          <path id="encodeArcBand" class="arc-band encode"/>
-          <path id="decodeArcBand" class="arc-band decode"/>
-          <!-- the arc labels as text along each arc's centre line (built by app.js); the
-               .arc-label buttons above are their invisible click targets -->
-          <path id="encodeSpine" class="spine" d=""/>
-          <path id="decodeSpine" class="spine" d=""/>
-          <g id="encodeArcText" class="arc-text encode"></g>
-          <g id="decodeArcText" class="arc-text decode"></g>
+          <g id="encodeWeb" class="web encode"></g>
+          <g id="decodeWeb" class="web decode"></g>
         </svg>
         <button id="encodePill" class="pill-label encode" data-side="encode">Encode</button>
         <button id="decodePill" class="pill-label decode" data-side="decode">Decode</button>
         <div id="encodeArc" class="arc encode" role="menu" aria-label="Encode settings">
           <button class="arc-label" role="menuitem" data-panel="load">load</button>
           <button class="arc-label" role="menuitem" data-panel="mode">mode</button>
-          <button class="arc-label tight" role="menuitem" data-panel="layout">vert layout</button>
-          <button class="arc-label tight" role="menuitem" data-panel="clamps">clamps</button>
-          <button class="arc-label tight" role="menuitem" data-panel="compression">compression</button>
+          <button class="arc-label" role="menuitem" data-panel="layout">vert layout</button>
+          <button class="arc-label" role="menuitem" data-panel="clamps">clamps</button>
+          <button class="arc-label" role="menuitem" data-panel="compression">compression</button>
         </div>
         <div id="decodeArc" class="arc decode" role="menu" aria-label="Decode settings">
           <button class="arc-label" role="menuitem" data-panel="drr">DRR</button>
           <button class="arc-label" role="menuitem" data-panel="frames">frames</button>
-          <button class="arc-label tight" role="menuitem" data-panel="shots">shots</button>
-          <button class="arc-label tighter" role="menuitem" data-panel="placement">chip placement</button>
-          <button class="arc-label tight" role="menuitem" data-panel="backend">backend</button>
+          <button class="arc-label" role="menuitem" data-panel="shots">shots</button>
+          <button class="arc-label" role="menuitem" data-panel="placement">chip placement</button>
+          <button class="arc-label" role="menuitem" data-panel="backend">backend</button>
         </div>
       </div>
 
       <!-- layer 3: one setting's toggles (built by app.js) -->
       <div id="panel" data-side="encode" hidden>
-        <div class="panel-title"><span id="panelTitle">load</span><img src="assets/title-underline.svg" alt="" width="95.6667" height="5.33333"></div>
         <div id="panelBody"></div>
       </div>
 
-      <!-- one back button for layers 2 and 3: it sits on the arc's end cap -->
-      <button id="back" class="back" aria-label="Back"><img src="assets/back.svg" alt="" width="68" height="68"></button>
+      <!-- layers 2 and 3: the menu's or setting's name, and one back button -->
+      <div id="menuHead" class="menu-head">
+        <span id="menuTitle" class="menu-title">encode</span>
+        <button id="back" class="back" aria-label="Back" data-tip="back"><svg viewBox="0 0 40 30" width="40" height="30" aria-hidden="true"><path d="M 37 29 V 5 H 7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M 0 5 L 9 0.5 L 9 9.5 Z" fill="currentColor"/></svg></button>
+      </div>
 
       <!-- morph: drop the second mesh -->
       <div id="dropB" class="drop-b" hidden>
@@ -136,12 +105,12 @@
       </div>
 
       <div class="run-buttons">
-        <button id="run" class="run-btn" title="Encode and read once (default settings unless you change them)" aria-label="Encode and run">
+        <button id="run" class="run-btn" data-tip="encode and read once" aria-label="Encode and run">
           <span class="ring"></span>
           <img class="gear" src="assets/gear.svg" alt="" width="52.8758" height="52.8747">
           <img class="tri" src="assets/play.svg" alt="" width="50.2295" height="45.75">
         </button>
-        <button id="play" class="run-btn" title="Run frames, then play / pause them" aria-label="Run frames, play or pause">
+        <button id="play" class="run-btn" data-tip="run frames · play / pause" aria-label="Run frames, play or pause">
           <span class="ring"></span>
           <img class="tri" src="assets/play-small.svg" alt="" width="43.3013" height="39.75">
           <span class="bars">||</span>
@@ -151,15 +120,34 @@
   </div>
 
   <!-- HUD: tools not in the arc menus -->
-  <nav id="hud" aria-label="Tools">
-    <button id="hudMore" aria-expanded="false" aria-controls="hud">tools</button>
-    <button id="why">why tessa</button>
-    <button id="curves">curves</button>
-    <button id="edges">read edges</button>
-    <button id="qmapOn" aria-pressed="false">qubit map</button>
-    <button id="obj">download .obj</button>
-    <button id="viewToggle" aria-expanded="false" aria-controls="drawer">view</button>
-  </nav>
+  <!-- the page frame, the same on every screen: logo top right, resolution top centre,
+       tools down the right edge (positioned in window pixels, not the scaled stage) -->
+  <button id="logo" class="logo" data-tip="new object" aria-label="Tessa3D: start over with a new object"><img src="assets/logo.svg" alt="" width="160" height="96"></button>
+  <button id="help" class="help-btn" data-tip="what is this?" aria-label="What is this?" aria-haspopup="dialog">?</button>
+  <!-- resolution: low decimates the mesh, high subdivides it, medium is it as is -->
+  <div id="resRow" class="res-row" role="radiogroup" aria-label="Mesh resolution">
+    <button role="radio" data-res="0" aria-checked="false" title="Decimated: about half the vertices">low res</button>
+    <button role="radio" data-res="1" aria-checked="true" title="The mesh as it is">medium res</button>
+    <button role="radio" data-res="2" aria-checked="false" title="Subdivided: each triangle split into four (same shape, about four times the vertices)">high res</button>
+  </div>
+  <!-- the tools: hidden off the right edge behind a trapezoid handle; the handle slides
+       the menu in from the right -->
+  <div id="side" class="side">
+    <button id="sideHandle" class="side-handle" aria-expanded="false" aria-controls="hud" aria-label="Show the tools" data-tip="tools">
+      <svg viewBox="0 0 30 112" width="30" height="112" aria-hidden="true">
+        <path class="handle-shape" d="M 30 0 L 0 18 L 0 94 L 30 112 Z"/>
+        <path class="handle-arrow" d="M 18 49 L 11 56 L 18 63" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <nav id="hud" aria-label="Tools" inert>
+      <button class="trap" id="why">why tessa</button>
+      <button class="trap" id="curves">curves</button>
+      <button class="trap" id="edges">read edges</button>
+      <button class="trap" id="qmapOn" aria-pressed="false">qubit map</button>
+      <button class="trap" id="obj">download .obj</button>
+      <button class="trap" id="viewToggle" aria-expanded="false" aria-controls="drawer">view</button>
+    </nav>
+  </div>
   <aside id="drawer" hidden aria-label="View and advanced settings">
     <h2>view</h2>
     <div class="seg" role="radiogroup" aria-label="View"><button data-set="view" data-value="fidelity" class="on">fidelity</button><button data-set="view" data-value="material">material</button></div>
@@ -179,11 +167,11 @@
   <div id="info">
     <div id="logBody" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>
     <div class="corner-row">
-      <button id="logToggle" aria-expanded="false" aria-controls="logBody" aria-label="Show the log" title="log">
+      <button id="logToggle" class="trap" aria-expanded="false" aria-controls="logBody" aria-label="Show the log" title="log">
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>log</span>
       </button>
-      <button id="themeToggle" aria-pressed="false" title="Switch to light mode">
+      <button id="themeToggle" class="trap" aria-pressed="false" title="Switch to light mode">
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <span>light mode</span>
       </button>
@@ -196,7 +184,23 @@
   <input id="fileB" type="file" accept=".obj" hidden>
 </div>
 
-<dialog id="dialog"><form method="dialog"><button class="close" aria-label="Close">×</button></form><div id="dialogBody"></div></dialog>
+<div id="tip" class="tip" popover="manual" aria-hidden="true"></div>
+<dialog id="dialog"><form method="dialog"><button class="close" aria-label="Close" data-tip="close">×</button></form><div id="dialogBody"></div></dialog>
+
+<dialog id="helpDialog" aria-labelledby="helpTitle"><form method="dialog"><button class="close" aria-label="Close" data-tip="close">×</button></form>
+  <h2 id="helpTitle">what is this?</h2>
+  <p>Tessa3D stores a 3D mesh in a quantum state, reads it back, and shows you the result. Every wobble you see is shot noise or a simulated IBM chip. Nothing is added to make it move. It can also hold two meshes in the same qubits and morph between them, by changing how the state is measured rather than blending the shapes.</p>
+  <h3>encode</h3>
+  <p>Moth's Tessa encoder packs the mesh's vertex positions into rotation angles on a small lattice of qubits: many values per qubit, laid out to suit the chip so no SWAPs are needed. Press and hold beside the object, then pick <b>Encode</b> to set the load, mode, vertex layout, clamps and compression.</p>
+  <h3>decode</h3>
+  <p>Decoding measures the state and turns the counts back into vertices. <b>Decode</b> sets the shots, frames, backend (noiseless or a chip's noise) and chip placement. ▶ reads once; ▶|| reads a run of frames and plays them.</p>
+  <h3>why tessa</h3>
+  <p>In the tools on the right, <b>why tessa</b> compares Tessa with other encodings on a real chip layout, <b>curves</b> plots error against shots and compression, and <b>read edges</b> reads edge lengths straight from the state.</p>
+  <h3>morph</h3>
+  <p>Set <b>mode</b> to θ+φ morph and drop a second mesh. A sits in each qubit's θ and B in its φ, in the same qubits. Turning the measurement basis from Z to X with <b>morph t</b> reads A, then B, then every shape between: a new measurement, not a blend.</p>
+  <h3>interference morph</h3>
+  <p>With <b>interference readout</b> on, A and B sit on either side of selector qubits instead, and t turns the selectors, so the in-between shapes come from A and B interfering in the state.</p>
+</dialog>
 
 <script type="module" src="app.js"></script>
 <script type="module">

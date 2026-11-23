@@ -17,12 +17,13 @@ const shader = {
     intensity: 3.569999933242798,
     gradient: {
       stops: [
+        // Moth palette: one signal accent (#DCF900) with support gray (#E7E7E7) on black
         { position: 0, color: { r: 0, g: 0, b: 0, a: 1 } },
-        { position: 0.20673076808452606, color: { r: 0.47058823704719543, g: 1, b: 0.9911764860153198, a: 1 } },
+        { position: 0.20673076808452606, color: { r: 220 / 255, g: 249 / 255, b: 0, a: 1 } },
         { position: 0.4423076808452606, color: { r: 0, g: 0, b: 0, a: 1 } },
-        { position: 0.567307710647583, color: { r: 0.46514421701431274, g: 0.7504005432128906, b: 1, a: 1 } },
+        { position: 0.567307710647583, color: { r: 231 / 255, g: 231 / 255, b: 231 / 255, a: 1 } },
         { position: 0.7403846383094788, color: { r: 0, g: 0, b: 0, a: 1 } },
-        { position: 0.9615384340286255, color: { r: 0, g: 1, b: 0.6500000357627869, a: 1 } },
+        { position: 0.9615384340286255, color: { r: 220 / 255, g: 249 / 255, b: 0, a: 1 } },
       ],
     },
     gradientBalance: 0,

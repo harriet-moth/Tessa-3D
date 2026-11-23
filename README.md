@@ -76,7 +76,10 @@ one Vercel Python function (`api/tessa.py`) that calls the same
 How it works:
 - **Landing:** drop an `.obj` file anywhere (or click *drop an .obj file*), or pick the
   cube, blob or sphere (apple and Suzanne are linked below them).
-- **Resolution:** under the logo, **low res** decimates the mesh once (about half the
+- **Layout:** on every screen the logo sits in the top right corner, the resolution
+  options top centre (level with the logo's top), and the tools down the right edge
+  (in line with the logo's right edge).
+- **Resolution:** **low res** decimates the mesh once (about half the
   vertices), **medium res** (the default) is the mesh as it is, and **high res**
   subdivides it once (each triangle split into four at its edge midpoints: the same
   shape, about four times the vertices). If a resolution has too many vertices for
@@ -88,7 +91,8 @@ How it works:
 - **Run buttons:** the gear ▶ encodes and reads once; ▶|| runs **Frames** readouts,
   then plays and pauses them. Both switch the colour to **error**. The gear glows while the settings differ from the last run.
 - **Settings:** click (or right-click, or press on a touch screen) and hold the object:
-  **Encode** and **Decode** pills appear. Release on one to open its arc of options
+  **Encode** and **Decode** tabs appear up and down to its left, each with a leader
+  line angled in towards it. Release on one to open its arc of options
   (**load**, **mode**, **vert layout**, **clamps**, **compression**; **DRR**,
   **frames**, **shots**, **chip placement**, **backend**); release anywhere else to
   cancel. A quick drag still rotates the object. Each arc sweeps out of the round back

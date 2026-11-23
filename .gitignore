@@ -5,3 +5,8 @@ exports/
 .pytest_cache/
 .DS_Store
 .claude/
+
+# font deliveries (licensed: the desktop OTFs must not be published; the web kit's
+# used cuts are copied into public/assets/fonts)
+Riforma_OTF/
+Riforma LL - Latin - Web Fonts/

@@ -48,17 +48,16 @@ function fitStage() {
   app.classList.toggle('portrait', portrait);
   app.classList.toggle('compact', compact);
   app.style.setProperty('--s', scale);
-  // ribbons: as big as the frame would be if it covered the window (portrait: the frame's own size)
-  const WAVES = 0.72; // the corner ribbons, a little smaller than the design's
-  app.style.setProperty('--c', WAVES * (portrait ? Math.max(w / W_STAGE, scale) : Math.max(w / W_STAGE, h / H_STAGE)));
   // wide windows: spread the landing shapes out with the width (up to 1.35× the frame's spacing)
   app.style.setProperty('--spread', portrait ? 0 : Math.min(Math.max(w / scale / W_STAGE, 1), 1.35) - 1);
   app.style.setProperty('--T', `${layout.T}px`);
   app.style.setProperty('--B', `${layout.B}px`);
   app.style.setProperty('--vl', `${Math.max(0, layout.vl)}px`);
+  app.style.setProperty('--vlx', `${layout.vl}px`); // may be < 0: the window is wider than the frame
+  app.style.setProperty('--E', `${layout.E}px`);
   resize();
-  if (!panelEl.hidden) placeOrbs();
   syncShift();
+  relayoutMenus();
 }
 const toStage = (x, y) => [(x - innerWidth / 2) / scale + CX, (y - innerHeight / 2) / scale + CY];
 
@@ -86,9 +85,17 @@ const cloudGeom = new THREE.BufferGeometry();
 // texture, curved between vertices, coloured by height (or by the data colour), and
 // dimmer on the far side. At rest, size and brightness are steady (the only motion is
 // the data's); while a run is encoding or reading, the dots shimmer and pulse (uBusy).
-const SURFACE_GLSL = /* glsl */`
+// Light mode inverts the whole page (CSS on <html>). Data colours must survive that with
+// their hues, so in light mode they are first turned through CSS's hue-rotate(180deg)
+// matrix (invert then hue-rotate keeps hues). The glow is the Moth palette, given per mode.
+const LIGHT_GLSL = /* glsl */`
+    uniform float uLight;
+    const mat3 HUE180 = mat3(-0.574, 0.426, 0.426, 1.43, 0.43, 1.43, 0.144, 0.144, -0.856); // columns
+    vec3 forTheme(vec3 c) { return uLight > 0.5 ? clamp(HUE180 * c, 0.0, 1.0) : c; }`;
+const SURFACE_GLSL = /* glsl */`${LIGHT_GLSL}
     uniform sampler2D uPos; uniform sampler2D uCol; uniform sampler2D uNrm; uniform int uW;
     uniform float uMix, uZ0, uZ1, uCurve, uR;
+    uniform vec3 uGlow0, uGlow1, uGlow2;
     attribute vec3 aTri; attribute vec3 aBary; attribute float aFace;
     varying vec3 vCol; varying float vA;
     vec3 at(sampler2D t, float i) { int k = int(i + 0.5); return texelFetch(t, ivec2(k % uW, k / uW), 0).xyz; }
@@ -104,16 +111,26 @@ const SURFACE_GLSL = /* glsl */`
       p = mix(p, q, uCurve);
       vec3 c = at(uCol, aTri.x) * aBary.x + at(uCol, aTri.y) * aBary.y + at(uCol, aTri.z) * aBary.z;
       float h = clamp((p.z - uZ0) / max(uZ1 - uZ0, 1e-5), 0.0, 1.0);
-      // sci-fi palette of the design's point clouds: violet base, electric blue, cyan crown
-      vec3 glow = h < 0.45 ? mix(vec3(0.56, 0.28, 1.0), vec3(0.16, 0.45, 1.0), h / 0.45)
-                           : mix(vec3(0.16, 0.45, 1.0), vec3(0.36, 0.96, 1.0), (h - 0.45) / 0.55);
-      vCol = mix(glow, c, uMix);
+      // Moth palette by height (see GLOW): base, middle, crown
+      vec3 glow = h < 0.45 ? mix(uGlow0, uGlow1, h / 0.45) : mix(uGlow1, uGlow2, (h - 0.45) / 0.55);
+      vCol = mix(glow, forTheme(c), uMix);
       vec4 mv = modelViewMatrix * vec4(p, 1.0);
       float depth = (mv.z - (modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).z) / uR;
       vA = mix(0.22, 1.0, smoothstep(-0.7, 0.45, depth));
       return mv;
     }`;
+// The default glow, base to crown, in sRGB. Dark ground: electric blue, information blue,
+// and the highlighter-yellow signal at the crown. Light ground (the page is inverted, so
+// these are stored inverted): information blue, the electric-blue signal, navy.
+const GLOW = { dark: ['#2306FF', '#00BBFF', '#DCF900'], light: ['#00BBFF', '#2306FF', '#19238E'] };
+const glowVec = (hex, invert) => new THREE.Vector3(...[1, 3, 5].map((k) => {
+  const v = parseInt(hex.slice(k, k + 2), 16) / 255;
+  return invert ? 1 - v : v;
+}));
+const lightUniform = { value: 0 }; // shared by every material that draws data colours
 const surfaceUniforms = {
+  uLight: lightUniform,
+  uGlow0: { value: glowVec(GLOW.dark[0]) }, uGlow1: { value: glowVec(GLOW.dark[1]) }, uGlow2: { value: glowVec(GLOW.dark[2]) },
   uPos: { value: null }, uCol: { value: null }, uNrm: { value: null }, uCurve: { value: 0.75 }, uR: { value: 1 },
   uW: { value: TEX_W }, uMix: { value: 0 }, uZ0: { value: -1 }, uZ1: { value: 1 },
   uBusy: { value: 0 }, uTime: { value: 0 },
@@ -166,7 +183,23 @@ const cloud = new THREE.Points(cloudGeom, cloudMat);
 cloud.frustumCulled = false;
 
 const edgeGeom = new THREE.BufferGeometry();
-const edgeLines = new THREE.LineSegments(edgeGeom, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+/**
+ * Make a built-in material's output follow light mode (see LIGHT_GLSL).
+ *
+ * Args:
+ *   mat: a three.js material; its final sRGB colour is turned for the theme.
+ *
+ * Returns:
+ *   The same material.
+ */
+function themed(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uLight = lightUniform;
+    sh.fragmentShader = `${LIGHT_GLSL}\n${sh.fragmentShader}`.replace(/}\s*$/, '  gl_FragColor.rgb = forTheme(gl_FragColor.rgb);\n}');
+  };
+  return mat;
+}
+const edgeLines = new THREE.LineSegments(edgeGeom, themed(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false })));
 // Qubit map: every vertex on the hovered data qubit gets an orange dot.
 const discTexture = (fill, ring, width) => {
   const c = document.createElement('canvas');
@@ -180,7 +213,7 @@ const discTexture = (fill, ring, width) => {
   return t;
 };
 const mateGeom = new THREE.BufferGeometry();
-const mates = new THREE.Points(mateGeom, new THREE.PointsMaterial({ map: discTexture('rgb(230, 150, 0)', '#14161e', 12), alphaTest: 0.5, size: 0.08 }));
+const mates = new THREE.Points(mateGeom, themed(new THREE.PointsMaterial({ map: discTexture('#FFA158', '#100F0F', 12), alphaTest: 0.5, size: 0.08 })));
 edgeLines.visible = mates.visible = cloud.visible = wire.visible = false;
 scene.add(wire, cloud, edgeLines, mates);
 
@@ -272,12 +305,14 @@ $('logToggle').addEventListener('click', () => setLog(!$('info').classList.conta
 const THEME = 'tessa3d.light';
 function setLight(on) {
   document.documentElement.classList.toggle('light', on);
+  lightUniform.value = on ? 1 : 0;
+  GLOW[on ? 'light' : 'dark'].forEach((hex, i) => { cloudMat.uniforms[`uGlow${i}`].value = glowVec(hex, on); });
   $('themeToggle').setAttribute('aria-pressed', on);
   $('themeToggle').querySelector('span').textContent = on ? 'dark mode' : 'light mode';
   $('themeToggle').title = on ? 'Switch to dark mode' : 'Switch to light mode';
   try { localStorage.setItem(THEME, on ? '1' : ''); } catch { /* storage blocked: this visit only */ }
 }
-$('themeToggle').addEventListener('click', () => setLight(!document.documentElement.classList.contains('light')));
+$('themeToggle').addEventListener('click', () => { setLight(!document.documentElement.classList.contains('light')); drawMap(); });
 try { if (localStorage.getItem(THEME)) setLight(true); } catch { /* storage blocked */ }
 async function busy(label, fn) {
   S.busy = true;
@@ -619,22 +654,22 @@ function chart({ title, xlabel, ylabel, series, logx = false, logy = false }) {
   // mark: 'ring' (hollow circle), 'square' or 'none'; dashed series draw on top, so
   // two series that coincide both stay visible
   const markAt = (s, x, y) => (s.mark === 'none' ? '' : s.mark === 'square'
-    ? `<rect x="${x - 3}" y="${y - 3}" width="6" height="6" fill="${s.color}"/>`
-    : `<circle cx="${x}" cy="${y}" r="5" fill="none" stroke="${s.color}" stroke-width="1.8"/>`);
+    ? `<rect x="${x - 3}" y="${y - 3}" width="6" height="6" style="fill: ${s.color}"/>`
+    : `<circle cx="${x}" cy="${y}" r="5" fill="none" style="stroke: ${s.color}" stroke-width="1.8"/>`);
   const mark = (s, p) => markAt(s, X(p[0]), Y(p[1]));
-  const lines = series.map((s) => `<polyline fill="none" stroke="${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${s.points.map((p) => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>`
+  const lines = series.map((s) => `<polyline fill="none" style="stroke: ${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${s.points.map((p) => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>`
     + s.points.map((p) => mark(s, p)).join('')).join('');
   // legend in a row under the title, clear of the data
   const legendRow = series.map((s, i) => {
     const x = m.l + 150 * i;
-    return `<line x1="${x}" y1="29" x2="${x + 22}" y2="29" stroke="${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`
+    return `<line x1="${x}" y1="29" x2="${x + 22}" y2="29" style="stroke: ${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`
       + markAt(s, x + 11, 29)
       + `<text x="${x + 28}" y="33">${s.label}</text>`;
   }).join('');
   const xt = ticks(x0, x1, logx).map((t) => `<text x="${X(t)}" y="${H - m.b + 16}" text-anchor="middle">${fmt(t)}</text>`).join('');
   const yt = ticks(y0, y1, logy).map((t) => `<text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}">
-    <text x="${W / 2}" y="16" text-anchor="middle" style="font-weight:600">${title}</text>
+    <text x="${W / 2}" y="16" text-anchor="middle" style="font-family: var(--font-medium)">${title}</text>
     <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="currentColor" opacity=".3"/>
     <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="currentColor" opacity=".3"/>
     ${xt}${yt}${lines}${legendRow}
@@ -645,7 +680,7 @@ function chart({ title, xlabel, ylabel, series, logx = false, logy = false }) {
 async function curves() {
   await busy('Curves: 15 readouts on the current backend…', async () => {
     const r = await call('curves');
-    const A = '#5ef2ff', B = '#ffa90a', G = '#999999';
+    const A = 'var(--accent)', B = 'var(--orange)', G = 'var(--ink-dim)';
     const shots = r.shots.map(([s, e]) => [s, e]);
     const guide = shots.map(([s]) => [s, shots[0][1] * Math.sqrt(shots[0][0] / s)]);
     const err = (k) => r[k].map(([c, , e]) => [c, e]);
@@ -679,7 +714,8 @@ function downloadObj() {
 // map.vertices[i][c] = [group, address]: value c of vertex i sits in data qubit
 // groups[group].data, in the slot where address qubit groups[group].addresses[j]
 // reads bit j of address (Tessa's decoder bit order).
-const HOT = 'rgb(230, 150, 0)';
+// colours come from the stylesheet's tokens, so the map follows light mode
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 let qmapOn = false;
 const mapOn = () => qmapOn && !!S.data;
 const comps = () => (S.data.map.vertices[0].length === 1 ? ['r'] : P.payload === 'spherical' ? ['polar', 'azimuth', 'r'] : ['x', 'y', 'z']);
@@ -696,7 +732,8 @@ function drawMap() {
   const { m, step, w, h, pos } = mapGeometry(), c = $('qcanvas'), dpr = devicePixelRatio || 1;
   c.width = w * dpr; c.height = h * dpr; c.style.width = `${w}px`; c.style.height = `${h}px`;
   const ctx = c.getContext('2d');
-  const [muted, accent, line, panel] = ['rgba(255,255,255,0.45)', '#5ef2ff', 'rgba(199,199,199,0.3)', '#1b1b1b'];
+  const ink = cssVar('--ink-rgb').split(' ').join(', ');
+  const [muted, accent, line, panel, HOT] = [`rgba(${ink}, 0.45)`, cssVar('--accent'), `rgba(${ink}, 0.28)`, cssVar('--surface'), cssVar('--orange')];
   ctx.scale(dpr, dpr);
   const f = S.focus, hotGroups = new Set(f ? f.groups : []);
   const hotAddr = new Map(); // address qubit -> bit, when one value is hovered
@@ -709,7 +746,7 @@ function drawMap() {
   }
   const used = new Set(S.data.map.vertices.flat().map((v) => v[0]));
   const data = new Set(m.groups.map((g) => g.data));
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `600 ${Math.max(8, step * 0.32)}px ui-monospace, Menlo, monospace`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `400 ${Math.max(8, step * 0.32)}px "RiformaLLWeb-Medium", sans-serif`;
   m.coords.forEach((_, q) => {
     if (data.has(q)) return;
     const [x, y] = pos(q), half = step * (hotAddr.has(q) ? 0.24 : 0.17);
@@ -765,11 +802,11 @@ $('qcanvas').addEventListener('pointermove', (e) => {
 $('qcanvas').addEventListener('pointerleave', () => setFocus(null));
 
 // ====================================================================================
-// Game UI: screens, the click-and-hold arc menu, and the settings panels
+// Game UI: screens, the click-and-hold menu, and the settings panels
 //   layer 0  home: the object and the run buttons
-//   layer 1  while held: Encode and Decode pills; releasing on one opens its arc
-//   layer 2  an arc of options, unsweeping from its back button
-//   layer 3  one setting's toggles; the arc has swept back into the back button
+//   layer 1  while held: Encode and Decode tabs; releasing on one opens its web
+//   layer 2  a web of words on the left, every line from one hub beside the object
+//   layer 3  one setting's own web: outlined squares, bare words, or sliders
 // ====================================================================================
 function setScreen(name) {
   app.dataset.screen = name;
@@ -782,205 +819,200 @@ let shift = [0, 0];
 // the morph box sits right of the object (design) or, in portrait, below it
 const MORPH_SHIFT = () => (portrait ? [0, -100] : [-240, 10]);
 const morphBoxOpen = () => !panelEl.hidden && panelEl.dataset.key === 'mode' && P.mode === 'morph';
-function syncShift() {
+// On a phone the menus' webs need the left of the screen, so while one is open (layers 2
+// and 3) the object slides right, partly off the edge.
+const PORTRAIT_MENU_SHIFT = 230;
+/**
+ * Move the object for the morph box and, on portrait screens, for an open menu web.
+ *
+ * Args:
+ *   layer: the menu layer to lay out for (defaults to the current one; openArc passes
+ *     the layer it is about to show, so the web is laid out round the object's new place).
+ */
+function syncShift(layer = +home.dataset.layer) {
   shift = morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
+  if (portrait && layer >= 2) shift = [shift[0] + PORTRAIT_MENU_SHIFT, shift[1]];
   setShift(...shift);
 }
 
-// ---------- geometry: every menu shape is a band of constant width on a circle round
-// the object, so the arcs are exactly even (the design's are hand-drawn prototypes)
+// ---------- geometry
 const rad = THREE.MathUtils.degToRad;
-// The menus sit well out from the object (radius 330 against its ~275) so it has room
-// to breathe: the upper arcs high, the lower ones low.
-const ARC = { R: 330, h: 28, a0: -58, a1: 58 }; // layer 2: the back button sits on the a0 cap
-const PILL = { R: 335, h: 24, span: 20 }; // layer 1
-const BACK = 60; // back button diameter (a little more than the band's 56)
-// a point at angle a (degrees from straight up) on a circle of radius r round the
-// object: the encode side above it, the decode side mirrored below
-// The decode side's circle sits DEC_DROP lower, so the lower menus clear the object's base.
-const DEC_DROP = 40;
-const onRing = (side, r, a) => [CX + r * Math.sin(rad(a)), side === 'decode' ? CY + DEC_DROP + r * Math.cos(rad(a)) : CY - r * Math.cos(rad(a))];
-// The outline of a band from angle a0 to a1: outer arc, round cap, inner arc, round cap.
-// With a0 = a1 it is a circle of diameter 2h: the arc collapsed into an ellipse.
-function bandPath(side, R, h, a0, a1) {
-  const p = (r, a) => onRing(side, r, a).map((v) => v.toFixed(2)).join(' ');
-  const big = a1 - a0 > 180 ? 1 : 0, cw = side === 'decode' ? 0 : 1, ccw = 1 - cw;
-  return `M ${p(R + h, a0)} A ${R + h} ${R + h} 0 ${big} ${cw} ${p(R + h, a1)} A ${h} ${h} 0 0 ${cw} ${p(R - h, a1)}`
-    + ` A ${R - h} ${R - h} 0 ${big} ${ccw} ${p(R - h, a0)} A ${h} ${h} 0 0 ${cw} ${p(R + h, a0)} Z`;
+const svgNS = 'http://www.w3.org/2000/svg';
+// Layer 1: two sharp trapezoid tabs up and down to the left of the object, each with a
+// leader line angled in towards it (stage coordinates, from the redesign).
+const TABS = {
+  encode: { poly: [[346, 181], [505, 181], [530, 219], [346, 219]], label: [432, 200], lead: [[440, 219], [513, 294]] },
+  decode: { poly: [[343, 786], [553, 786], [520, 824], [343, 824]], label: [440, 805], lead: [[442, 786], [499, 711]] },
+};
+// Layers 2 and 3 are webs: every option sits at the end of a thin straight line from one
+// hub just left of the object, level with the centre of the right-hand tools (both sit
+// at the window's mid-height, stage y = CY). Angles are in degrees: 180 points straight
+// left, less points up, more points down. Encode's fan leans up and decode's down; each
+// is spaced evenly and symmetrically about its centre line.
+const WEB = {
+  dx: 330, // the hub: this far left of the object's centre (clear of the object)
+  fan2: { encode: 150, decode: 210 }, step2: 24, r2: 270, // layer 2: words
+  fan3: { encode: 180, decode: 205 }, step3: 46, span3: 124, // layer 3: options and sliders
+  rText: 230, rSquare: 190, rElbow: 150, track: 230, gap: 12,
+};
+const dirOf = (a) => [Math.cos(rad(a)), -Math.sin(rad(a))];
+function fanAngles(n, centre, step, span = Infinity) {
+  const s = n > 1 ? Math.min(step, span / (n - 1)) : 0;
+  return [...Array(n).keys()].map((i) => centre + (i - (n - 1) / 2) * s);
 }
-const capAt = (side) => onRing(side, ARC.R, ARC.a0); // the arc's start cap: home of the back button
-
-// How far a label's letters rise above and drop below its baseline, in the arc font.
-const inkCanvas = document.createElement('canvas').getContext('2d');
-function inkMetrics(word, spacing = 0) {
-  inkCanvas.font = '400 21px "Funnel Sans", sans-serif';
-  if ('letterSpacing' in inkCanvas) inkCanvas.letterSpacing = `${spacing}px`;
-  const m = inkCanvas.measureText(word);
-  return { ascent: m.actualBoundingBoxAscent, descent: m.actualBoundingBoxDescent, width: m.width };
+/**
+ * Lay out a fan of entries round the hub.
+ *
+ * Args:
+ *   entries: per option, either a box {w, h, r, gap} (its line ends at radius r and the
+ *     box sits gap beyond that, to its left or, for a steep line, above or below) or a slider {elbow: true, left} (its line
+ *     bends at WEB.rElbow and runs `left` stage px straight left from there).
+ *   angles: one direction per entry, in degrees (180 = straight left).
+ *
+ * Returns:
+ *   {hub, at}: the hub point and, per entry, {end, c}: where its line ends and (boxes
+ *   only) the box's centre. The hub moves right if the fan would cross the window's left edge.
+ */
+function fanLayout(entries, angles) {
+  const [hx0, hy] = [CX + shift[0] - WEB.dx, CY];
+  const rel = entries.map((e, i) => {
+    if (e.elbow) return null;
+    const [dx, dy] = dirOf(angles[i]), end = [dx * e.r, dy * e.r];
+    // the line meets the middle of the box's right edge, or of its top or bottom edge when
+    // the line is steep (within ~30° of vertical), so neighbours never overlap
+    const c = Math.abs(dy) < 0.86 ? [end[0] - e.gap - e.w / 2, end[1]] : [end[0], end[1] + Math.sign(dy) * (e.gap + e.h / 2)];
+    return { end, c, minX: c[0] - e.w / 2 };
+  });
+  // A slider's track runs straight left from its elbow, so the elbow sits deeper (further
+  // above or below the hub) than every option on its side: the track never crosses a line.
+  entries.forEach((e, i) => {
+    if (!e.elbow) return;
+    const [dx, dy] = dirOf(angles[i]);
+    const depth = Math.max(0, ...rel.filter((r) => r?.c && Math.sign(r.c[1]) === Math.sign(dy)).map((r) => Math.abs(r.c[1]) + 24));
+    const rE = Math.max(WEB.rElbow, Math.abs(dy) > 0.05 ? (depth + 40) / Math.abs(dy) : 0);
+    const end = [dx * rE, dy * rE];
+    rel[i] = { end, minX: end[0] - e.left };
+  });
+  const vl = Number.isFinite(layout.vl) ? layout.vl : -Infinity; // NaN while the window has no size
+  const hx = Math.max(hx0, vl + 28 - Math.min(...rel.map((r) => r.minX)));
+  return { hub: [hx, hy], at: rel.map((r) => ({ end: [hx + r.end[0], hy + r.end[1]], c: r.c && [hx + r.c[0], hy + r.c[1]] })) };
+}
+/**
+ * Draw the web's lines (hub to each end, drawn outward one after another) and its hub dot.
+ *
+ * Args:
+ *   group: the SVG <g> to fill (emptied first).
+ *   hub: the hub point, stage px.
+ *   ends: each line's far end, stage px.
+ */
+function webLines(group, hub, ends) {
+  group.replaceChildren();
+  ends.forEach((end, i) => {
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('class', 'web-line');
+    l.setAttribute('pathLength', 1);
+    for (const [k, v] of [['x1', hub[0]], ['y1', hub[1]], ['x2', end[0]], ['y2', end[1]]]) l.setAttribute(k, v.toFixed(1));
+    l.style.setProperty('--d', `${55 * i}ms`);
+    group.appendChild(l);
+  });
+  const dot = document.createElementNS(svgNS, 'circle');
+  dot.setAttribute('class', 'web-hub');
+  dot.setAttribute('cx', hub[0].toFixed(1)); dot.setAttribute('cy', hub[1].toFixed(1)); dot.setAttribute('r', 2.5);
+  group.appendChild(dot);
 }
 
+/**
+ * Lay out one side's layer 2 web: its words fanned round the hub on the left.
+ *
+ * Args:
+ *   side: 'encode' or 'decode'.
+ */
+function layoutArc(side) {
+  const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
+  if (side === 'encode') labels.reverse(); // mirrored: each list starts nearest the horizontal
+  const angles = fanAngles(labels.length, WEB.fan2[side], WEB.step2);
+  const { hub, at } = fanLayout(labels.map((b) => ({ w: b.offsetWidth, h: b.offsetHeight, r: WEB.r2, gap: WEB.gap })), angles);
+  labels.forEach((b, i) => {
+    Object.assign(b.style, { left: `${at[i].c[0]}px`, top: `${at[i].c[1]}px` });
+    b.style.setProperty('--d', `${120 + 80 * i}ms`);
+  });
+  webLines($(`${side}Web`), hub, at.map((p) => p.end));
+}
+
+/** Draw layer 1's tabs and lay out both layer 2 webs. */
 function drawMenuShapes() {
   for (const side of ['encode', 'decode']) {
-    $(`${side}PillBand`).setAttribute('d', bandPath(side, PILL.R, PILL.h, -PILL.span, PILL.span));
-    const [x, y] = onRing(side, PILL.R, 0);
+    const tab = TABS[side];
+    $(`${side}PillBand`).setAttribute('d', `M ${tab.poly.map((q) => q.join(' ')).join(' L ')} Z`);
+    $(`${side}Lead`).setAttribute('d', `M ${tab.lead[0].join(' ')} L ${tab.lead[1].join(' ')}`);
+    const [x, y] = tab.label;
     Object.assign($(`${side}Pill`).style, { left: `${x}px`, top: `${y}px` });
-    $(`${side}ArcBand`).setAttribute('d', bandPath(side, ARC.R, ARC.h, ARC.a0, ARC.a0));
-    // labels: measured, then spaced evenly along the arc between the back button and the
-    // far cap, so long words never collide
-    const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
-    const widths = labels.map((b) => b.offsetWidth || 8 * b.textContent.length);
-    const deg = (px) => THREE.MathUtils.radToDeg(px / ARC.R);
-    // Even spacing: every gap the same along the arc, between neighbouring words and at
-    // both ends (from the back button's edge, and to the far cap), using each word's
-    // measured length in the arc font.
-    const spacingOf = (b) => (b.classList.contains('tighter') ? -2.4 : b.classList.contains('tight') ? -1.2 : 0);
-    const lens = labels.map((b) => inkMetrics(b.textContent, spacingOf(b)).width);
-    const s0 = ARC.a0 + deg(BACK / 2), s1 = ARC.a1 + deg(ARC.h * 0.4), n = labels.length;
-    const gap = (s1 - s0 - lens.reduce((t, w) => t + deg(w), 0)) / (n + 1);
-    let at = s0 + gap;
-    const centres = lens.map((w) => { const c = at + deg(w) / 2; at += deg(w) + gap; return c; });
-    widths.splice(0, widths.length, ...lens); // the hover patches size to the same lengths
-    // The visible text runs along the arc's centre line (left to right, so it reads
-    // upright on both arcs), letter by letter round the curve; the buttons stay as
-    // straight, invisible hit areas over each word.
-    const [sx, sy] = onRing(side, ARC.R, ARC.a0), [ex, ey] = onRing(side, ARC.R, ARC.a1);
-    $(`${side}Spine`).setAttribute('d', `M ${sx} ${sy} A ${ARC.R} ${ARC.R} 0 0 ${side === 'decode' ? 0 : 1} ${ex} ${ey}`);
-    const group = $(`${side}ArcText`), svgNS = 'http://www.w3.org/2000/svg';
-    group.replaceChildren();
-    labels.forEach((b, i) => {
-      const a = centres[i], [lx, ly] = onRing(side, ARC.R, a);
-      Object.assign(b.style, { left: `${lx}px`, top: `${ly}px` });
-      b.style.setProperty('--r', `${side === 'decode' ? -a : a}deg`);
-      b.dataset.a = a;
-      // the word's own patch of band, which flips light while the word is hovered
-      const half = deg(widths[i]) / 2 + deg(12);
-      const band = document.createElementNS(svgNS, 'path');
-      band.setAttribute('class', 'word-band');
-      band.setAttribute('d', bandPath(side, ARC.R, ARC.h - 4, a - half, a + half));
-      group.appendChild(band);
-      const text = document.createElementNS(svgNS, 'text'), path = document.createElementNS(svgNS, 'textPath');
-      text.setAttribute('class', `arc-word ${b.classList.contains('tight') ? 'tight' : ''} ${b.classList.contains('tighter') ? 'tighter' : ''}`);
-      path.setAttribute('href', `#${side}Spine`);
-      path.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', `#${side}Spine`); // older Safari reads only this
-      path.setAttribute('startOffset', (ARC.R * rad(a - ARC.a0)).toFixed(2));
-      path.textContent = b.textContent;
-      // centre the word's ink (not its em box) on the band's centre line: baseline on the
-      // path, then shifted along the glyphs' own "down" by half the ink's height
-      const ink = inkMetrics(b.textContent, b.classList.contains('tighter') ? -2.4 : b.classList.contains('tight') ? -1.2 : 0);
-      text.setAttribute('dy', ((ink.ascent - ink.descent) / 2).toFixed(2));
-      text.appendChild(path);
-      group.appendChild(text);
-      b.word = text;
-      b.band = band;
-      const flip = (on) => { text.classList.toggle('hover', on); band.classList.toggle('hover', on); };
-      b.onpointerenter = () => flip(true); b.onpointerleave = () => flip(false);
-      b.onfocus = () => flip(b.matches(':focus-visible')); b.onblur = () => flip(false); // keyboard focus only
-    });
+    layoutArc(side);
   }
-  // the thin line from each pill towards the object
-  const inner = PILL.R - PILL.h;
-  document.querySelector('#menuSvg .menu-line').setAttribute('d', `M ${CX} ${CY - inner} V ${CY - inner + 52} M ${CX} ${CY + DEC_DROP + inner} V ${CY + DEC_DROP + inner - 52}`);
 }
 drawMenuShapes();
-document.fonts?.ready.then(drawMenuShapes); // re-space the labels once Funnel Sans has loaded
+document.fonts?.ready.then(drawMenuShapes); // re-measure the words once Riforma has loaded
 
-// ---------- the sweep: an arc grows from (or shrinks into) its start cap
-const sweep = { encode: { a: ARC.a0, raf: 0 }, decode: { a: ARC.a0, raf: 0 } };
-function setSweep(side, a) {
-  sweep[side].a = a;
-  $(`${side}ArcBand`).setAttribute('d', bandPath(side, ARC.R, ARC.h, ARC.a0, a));
-  // a label shows once the sweep has passed it, and hides as it sweeps back
-  for (const b of $(`${side}Arc`).querySelectorAll('.arc-label')) {
-    const lit = a >= Math.min(+b.dataset.a + 8, ARC.a1); // the last word lights when the sweep ends
-    b.classList.toggle('lit', lit);
-    b.word?.classList.toggle('lit', lit);
-    b.band?.classList.toggle('lit', lit);
-    if (!lit) { b.word?.classList.remove('hover'); b.band?.classList.remove('hover'); } // no stale hover on reopening
-  }
-}
-function sweepTo(side, to, ms) {
-  cancelAnimationFrame(sweep[side].raf);
-  const from = sweep[side].a, t0 = performance.now();
-  const ease = to > from ? (t) => 1 - (1 - t) ** 3 : (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
-  return new Promise((done) => {
-    const step = (now) => {
-      const t = Math.min(1, (now - t0) / ms);
-      setSweep(side, from + (to - from) * ease(t));
-      if (t < 1) sweep[side].raf = requestAnimationFrame(step); else done();
-    };
-    sweep[side].raf = requestAnimationFrame(step);
-  });
+/** Re-lay the open web after the window (and so the visible stage) changes size. */
+function relayoutMenus() {
+  const st = menuEl.dataset.state;
+  if (st === 'encode' || st === 'decode') layoutArc(st);
+  layoutPanel();
 }
 
-// ---------- the back button: on the arc's start cap (shifted with the morph layout)
-function placeBack(side) {
-  const [x, y] = capAt(side), [dx, dy] = panelEl.hidden ? [0, 0] : morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
-  const back = $('back'), jump = !back.classList.contains('shown'); // appear in place; slide only while showing
-  if (jump) back.style.transition = 'none';
-  Object.assign(back.style, { left: `${x + dx - BACK / 2}px`, top: `${y + dy - BACK / 2}px` });
-  if (jump) { void back.offsetWidth; back.style.transition = ''; }
-}
-const showBack = (on) => $('back').classList.toggle('shown', on);
+// The header (layers 2 and 3): the menu's or setting's name, and the back button.
+const setHead = (title) => { $('menuTitle').textContent = title; };
 
 // menu state: closed | open (layer 1) | encode / decode (layer 2) | panel (layer 3)
 function setMenu(state) {
-  if (state === 'open') learnedMenu();
   menuEl.dataset.state = state;
-  home.dataset.layer = { closed: 0, open: 1, encode: 2, decode: 2, panel: 3 }[state];
+  home.dataset.layer = app.dataset.layer = { closed: 0, open: 1, encode: 2, decode: 2, panel: 3 }[state]; // the page frame reads it too
   syncShift();
 }
-// Once someone has opened the menu, the "click and hold" hint has done its job: it stays
-// hidden (remembered in this browser).
-const LEARNED = 'tessa3d.menuLearned';
-function learnedMenu() {
-  home.classList.add('learned');
-  try { localStorage.setItem(LEARNED, '1'); } catch { /* private mode: this visit only */ }
-}
-try { if (localStorage.getItem(LEARNED)) home.classList.add('learned'); } catch { /* storage blocked */ }
 let menuGen = 0; // bumped by every transition, so a superseded animation stops quietly
 
-// layer 1 → 2: the chosen arc unsweeps out of its start cap
-async function openArc(side, fromKeyboard = false) {
-  const gen = ++menuGen;
-  setSweep(side, ARC.a0);
-  placeBack(side);
+/**
+ * Layer 1 → 2: the chosen side's web draws out from its hub.
+ *
+ * Args:
+ *   side: 'encode' or 'decode'.
+ *   fromKeyboard: focus the first word (opened with Enter or Space).
+ */
+function openArc(side, fromKeyboard = false) {
+  ++menuGen;
+  syncShift(2);
+  layoutArc(side);
+  setHead(side);
   setMenu(side);
-  showBack(true);
-  await sweepTo(side, ARC.a1, 560);
-  if (gen === menuGen && fromKeyboard) $(`${side}Arc`).querySelector('.arc-label')?.focus({ preventScroll: true });
+  if (fromKeyboard) $(`${side}Arc`).querySelector('.arc-label')?.focus({ preventScroll: true });
 }
-// layer 2 → home: the arc sweeps back into its cap, which then fades
-async function closeArc() {
-  const side = menuEl.dataset.state, gen = ++menuGen;
-  if (side !== 'encode' && side !== 'decode') return setMenu('closed');
-  await sweepTo(side, ARC.a0, 420);
-  if (gen !== menuGen) return;
-  showBack(false);
-  setMenu('closed');
-}
-// layer 2 → 3: the arc sweeps into the back button and the toggles fade in
-async function openPanel(side, key) {
-  const gen = ++menuGen;
-  if (menuEl.dataset.state === side) await sweepTo(side, ARC.a0, 420);
-  if (gen !== menuGen) return;
+/** Layer 2 → home: the web folds back into its hub. */
+function closeArc() { ++menuGen; setMenu('closed'); }
+/**
+ * Layer 2 → 3: the words give way to one setting's own web.
+ *
+ * Args:
+ *   side: 'encode' or 'decode'.
+ *   key: the setting, a key of PANELS.
+ */
+function openPanel(side, key) {
+  ++menuGen;
   panelEl.dataset.side = side;
   panelEl.dataset.key = key;
-  buildPanel(side, key);
   panelEl.hidden = false;
+  setHead(PANELS[key].title);
   setMenu('panel');
-  placeBack(side);
-  showBack(true);
+  buildPanel(side, key);
   requestAnimationFrame(() => { panelEl.classList.add('shown'); syncMorphBox(); });
 }
-// layer 3 → 2: the toggles fade and the back button unsweeps into the arc again
-async function backToArc() {
-  const side = panelEl.dataset.side, gen = ++menuGen, moved = morphBoxOpen();
+/** Layer 3 → 2: the setting's web folds and the words come back. */
+function backToArc() {
+  const side = panelEl.dataset.side;
+  ++menuGen;
   closePanel();
-  placeBack(side);
-  setSweep(side, ARC.a0);
+  layoutArc(side);
+  setHead(side);
   setMenu(side);
-  if (moved) await new Promise((r) => setTimeout(r, 450)); // let the back button slide home first
-  if (gen === menuGen) await sweepTo(side, ARC.a1, 560);
 }
 function goBack() {
   const st = menuEl.dataset.state;
@@ -1004,8 +1036,6 @@ function closePanel(now = false) {
 function closeAll() {
   ++menuGen;
   closePanel(true);
-  for (const side of ['encode', 'decode']) { cancelAnimationFrame(sweep[side].raf); setSweep(side, ARC.a0); }
-  showBack(false);
   setMenu('closed');
 }
 
@@ -1014,13 +1044,13 @@ function closeAll() {
 const HOLD_MS = 220;
 let hold = null;
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .arc-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #hud, #drawer, #qmap, #info, #resRow, dialog, .logo');
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #menuHead, .orb, .knob, .line-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #help, #hud, #drawer, #qmap, #info, #resRow, #side, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
+  const PAD = 16; // a forgiving margin round each tab
   for (const side of ['encode', 'decode']) {
-    const dx = sx - CX, dy = side === 'encode' ? CY - sy : sy - CY - DEC_DROP;
-    const r = Math.hypot(dx, dy), a = THREE.MathUtils.radToDeg(Math.atan2(dx, dy));
-    if (Math.abs(r - PILL.R) <= PILL.h + 16 && Math.abs(a) <= PILL.span + 8) return side;
+    const xs = TABS[side].poly.map((q) => q[0]), ys = TABS[side].poly.map((q) => q[1]);
+    if (sx >= Math.min(...xs) - PAD && sx <= Math.max(...xs) + PAD && sy >= Math.min(...ys) - PAD && sy <= Math.max(...ys) + PAD) return side;
   }
   return null;
 }
@@ -1040,7 +1070,7 @@ addEventListener('pointerdown', (e) => {
     hold = h;
   } else if ((st === 'encode' || st === 'decode' || st === 'panel') && d > OBJ_R) {
     // a click well away from the object and the menu goes home
-    if (st === 'panel') { closePanel(); showBack(false); ++menuGen; setMenu('closed'); } else closeArc();
+    if (st === 'panel') { closePanel(); ++menuGen; setMenu('closed'); } else closeArc();
   }
 });
 addEventListener('pointermove', (e) => {
@@ -1081,11 +1111,11 @@ const MORPH_ORB = `<div class="morph"><img src="assets/morph-vector.svg" alt="" 
   + `<img src="assets/morph-ellipse-b.svg" alt="" style="left:31.2px;top:21.52px;width:34.8px;height:33.478px"><span>θ+φ</span></div>`;
 const clampFmt = (v) => (v ? `${v.toFixed(2)}π` : P.mode === 'morph' ? '0.20π' : 'off');
 const PANELS = {
-  load: { title: 'load', key: 'payload', items: [
+  load: { title: 'load', key: 'payload', squares: true, items: [
     { v: 'xyz', html: '(x,y,z)', tip: 'xyz: three values per vertex' },
     { v: 'radial', html: icon('radial-icon.svg', 'r55'), tip: 'radial: one value per vertex (distance from the centre)' },
     { v: 'spherical', html: icon('spherical-icon.svg'), tip: 'spherical: direction in θ and φ, radius in θ' }] },
-  mode: { title: 'mode', key: 'mode', items: [
+  mode: { title: 'mode', key: 'mode', squares: true, items: [
     { v: 'theta', html: 'θ', cls: 'greek', tip: 'shape in θ, read in Z' },
     { v: 'split', html: 'θ+φ', cls: 'greek', tip: 'shape over θ and φ: two values per slot' },
     { v: 'morph', html: MORPH_ORB, cls: 'flat', tip: 'morph: A in θ, B in φ, read along a basis sweep' }] },
@@ -1103,7 +1133,7 @@ const PANELS = {
     { key: 'compression', label: 'compression', min: 0, max: 100, step: 1, fmt: (v) => `${v}%` },
     { key: 'quant_bits', label: 'quant bits', min: 0, max: 8, step: 1, fmt: (v) => (v ? `${v} bit${v > 1 ? 's' : ''}` : 'off') }] },
   drr: { title: 'DRR', key: 'drr', items: ['none', 'min_max', 'mean_std', 'percentile', 'abs_max', 'min_avg_max'].map((v) => (
-    { v, html: v.replace(/_/g, '‑<br>'), cls: 'tiny', tip: `Tessa's ${v} dynamic-range restoration` })) },
+    { v, html: v.replace(/_/g, ' '), tip: `Tessa's ${v} dynamic-range restoration` })) },
   frames: { title: 'frames', sliders: [
     { key: 'frames', label: 'frames', min: 2, max: 30, step: 1, fmt: (v) => `${v}` },
     // playback only (no new run needed): steps per second, as in view → speed
@@ -1111,60 +1141,62 @@ const PANELS = {
   shots: { title: 'shots', sliders: [
     { key: 'shots', label: 'shots', min: 8, max: 16, step: 1, fmt: (v) => (2 ** v).toLocaleString() }] },
   placement: { title: 'chip placement', key: 'placement', items: [
-    { v: 'quality', html: 'best<br>qubits<br>first', cls: 'tiny', tip: 'the chip\'s best qubits hold the data' },
-    { v: 'graph', html: 'Tessa\'s<br>order', cls: 'small', tip: 'Tessa\'s own qubit order' }] },
+    { v: 'quality', html: 'best qubits first', tip: 'the chip\'s best qubits hold the data' },
+    { v: 'graph', html: 'Tessa\'s order', tip: 'Tessa\'s own qubit order' }] },
   backend: { title: 'backend', key: 'backend', items: [
-    { v: 'noiseless', html: 'noise‑<br>less', cls: 'small', tip: 'ideal simulator: shot noise only' },
-    { v: 'flat noise', html: 'flat<br>noise', cls: 'small', tip: 'IBM-like flat error rates' },
-    { v: 'phoenix', html: 'phoe‑<br>nix', cls: 'small', tip: 'ibm_phoenix calibration snapshot' },
+    { v: 'noiseless', html: 'noiseless', tip: 'ideal simulator: shot noise only' },
+    { v: 'flat noise', html: 'flat noise', tip: 'IBM-like flat error rates' },
+    { v: 'phoenix', html: 'phoenix', tip: 'ibm_phoenix calibration snapshot' },
     { v: 'fez', html: 'fez', tip: 'ibm_fez calibration snapshot' }],
-  sliders: [{ key: 'noise_strength', label: 'noise ×', min: 0, max: 3, step: 0.1, fmt: (v) => `${v.toFixed(1)}×`, inner: true, show: () => P.backend === 'flat noise' }] },
+  sliders: [{ key: 'noise_strength', label: 'noise ×', min: 0, max: 3, step: 0.1, fmt: (v) => `${v.toFixed(1)}×`, show: () => P.backend === 'flat noise' }] },
 };
 
-// The design's three toggles sit on a circle round the object (centre 720, 732.7;
-// radius 490.7; 21.8° apart). More toggles squeeze closer; decode mirrors it below.
-const RING = { r: 525, cyEnc: 732.7, cyDec: 1024 - 732.7 + DEC_DROP }; // the design's ring, pushed out to clear the object
-function ringPoint(side, deg, r = RING.r) {
-  const a = THREE.MathUtils.degToRad(deg);
-  return side === 'encode' ? [CX + r * Math.sin(a), RING.cyEnc - r * Math.cos(a)] : [CX + r * Math.sin(a), RING.cyDec + r * Math.cos(a)];
-}
-function orbAngles(n) {
-  const gap = n <= 3 ? 21.8 : 52 / (n - 1);
-  return [...Array(n).keys()].map((i) => (i - (n - 1) / 2) * gap);
-}
-const orbRadius = (n) => (n <= 3 ? RING.r : 540); // longer rows sit a little further out, clear of the back button
-
+/**
+ * Build layer 3 for one setting: its options (outlined squares for shapes, bare words
+ * for text) and sliders, each at the end of a line from the hub.
+ *
+ * Args:
+ *   side: 'encode' or 'decode' (which way the fan leans).
+ *   key: the setting, a key of PANELS.
+ */
 function buildPanel(side, key) {
   const spec = PANELS[key], body = $('panelBody');
-  $('panelTitle').textContent = spec.title;
   body.innerHTML = '';
-  if (spec.items) {
-    const angles = orbAngles(spec.items.length);
-    spec.items.forEach((it, i) => {
-      const b = document.createElement('button');
-      b.className = `orb ${it.cls || ''}`;
-      b.innerHTML = it.html;
-      b.title = it.tip; b.setAttribute('aria-label', it.tip);
-      b.dataset.v = it.v;
-      [b.dataset.x, b.dataset.y] = ringPoint(side, angles[i], orbRadius(spec.items.length));
-      b.style.transitionDelay = `${120 + 60 * i}ms, ${120 + 60 * i}ms, 0s, 0s, 0s, 0s, 0s`;
-      b.addEventListener('click', () => choose(spec.key, it.v));
-      body.appendChild(b);
-    });
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'web-svg'); svg.setAttribute('viewBox', '0 0 1440 1024');
+  svg.innerHTML = '<g class="web"></g>';
+  body.appendChild(svg);
+  for (const it of spec.items || []) {
+    const b = document.createElement('button');
+    b.className = `orb ${spec.squares ? 'square' : 'word'} ${it.cls || ''}`;
+    b.innerHTML = it.html;
+    b.setAttribute('aria-label', it.tip);
+    if (spec.squares) b.dataset.tip = it.tip; // a graphic: its name shows on hover
+    b.dataset.v = it.v;
+    b.addEventListener('click', () => choose(spec.key, it.v));
+    body.appendChild(b);
   }
-  for (const [k, sl] of (spec.sliders || []).entries()) body.appendChild(arcSlider(side, sl, sl.inner ? (side === 'encode' ? 610 : 400) : (spec.items ? 605 : [RING.r, 600][k])));
-  placeOrbs();
+  for (const sl of spec.sliders || []) body.appendChild(lineSlider(sl));
   syncPanel();
 }
 
-// Toggles (and the back button) move with the object when the morph box needs the room.
-function placeOrbs() {
-  const [dx, dy] = morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
-  for (const b of $('panelBody').querySelectorAll('.orb')) {
-    b.style.left = `${+b.dataset.x + dx}px`;
-    b.style.top = `${+b.dataset.y + dy}px`;
-  }
-  if (!panelEl.hidden) placeBack(panelEl.dataset.side);
+/** Lay out the open setting's web (again after a resize, a morph shift or a slider showing). */
+function layoutPanel() {
+  if (panelEl.hidden || !PANELS[panelEl.dataset.key]) return;
+  const spec = PANELS[panelEl.dataset.key], body = $('panelBody');
+  const orbs = [...body.querySelectorAll('.orb')];
+  const sliders = [...body.querySelectorAll('.slider-wrap')].filter((w) => w.style.display !== 'none');
+  const entries = [
+    ...orbs.map((el) => ({ el, w: el.offsetWidth, h: el.offsetHeight, r: spec.squares ? WEB.rSquare : WEB.rText, gap: spec.squares ? 0 : WEB.gap })),
+    ...sliders.map((el) => ({ el, elbow: true, left: WEB.track + 80 })),
+  ];
+  const { hub, at } = fanLayout(entries, fanAngles(entries.length, WEB.fan3[panelEl.dataset.side], WEB.step3, WEB.span3));
+  entries.forEach((e, i) => {
+    const d = `${120 + 80 * i}ms`;
+    if (e.elbow) e.el.place(at[i].end, d);
+    else { Object.assign(e.el.style, { left: `${at[i].c[0]}px`, top: `${at[i].c[1]}px` }); e.el.style.setProperty('--d', d); }
+  });
+  webLines(body.querySelector('.web'), hub, at.map((p) => p.end));
 }
 
 function syncPanel() {
@@ -1176,6 +1208,7 @@ function syncPanel() {
     b.setAttribute('aria-pressed', on);
   }
   for (const el of $('panelBody').querySelectorAll('.slider-wrap')) el.sync();
+  layoutPanel(); // a slider may have shown or hidden (backend: the noise strength)
 }
 
 function choose(key, v) {
@@ -1184,7 +1217,7 @@ function choose(key, v) {
   if (key === 'payload' && v === 'spherical' && P.mode !== 'theta') { P.mode = 'theta'; status('spherical fills θ and φ itself: mode set to θ'); }
   if (key === 'mode' && v !== 'theta' && P.payload === 'spherical') { P.payload = 'radial'; status('θ+φ modes need a radial or xyz load: load set to radial'); }
   if (key === 'mode' && v === 'morph') P.clamp_b = P.clamp; // one clamp for both fields
-  if (key === 'mode') { placeOrbs(); syncMorphBox(); syncHud(); }
+  if (key === 'mode') { syncMorphBox(); syncHud(); }
   if (key === 'backend') {
     if (v !== 'noiseless' && P.interference) { P.interference = false; status('interference readout needs the noiseless backend on the web: turned it off'); }
     syncMorphBox(); syncHud();
@@ -1192,34 +1225,44 @@ function choose(key, v) {
   syncPanel(); syncStale();
 }
 
-// ---------- arc sliders for continuous settings: drag the knob round the ring
-function arcSlider(side, sl, r) {
-  const A0 = -24, A1 = 30, svgNS = 'http://www.w3.org/2000/svg'; // starts clear of the back button
+// ---------- sliders for continuous settings: the web's line bends at an elbow and runs
+// straight left as the track (minimum at the far end, maximum at the elbow)
+/**
+ * Make one slider.
+ *
+ * Args:
+ *   sl: its spec from PANELS (key, label, min, max, step, fmt, and optional link, off, show).
+ *
+ * Returns:
+ *   The slider's wrapper element, with sync() (redraw from P) and place(elbow, delay)
+ *   (move it to the end of its web line).
+ */
+function lineSlider(sl) {
   const wrap = document.createElement('div');
   wrap.className = 'slider-wrap';
   const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('class', 'arc-slider'); svg.setAttribute('viewBox', '0 0 1440 1024');
-  const arcPath = (a0, a1) => {
-    const [x0, y0] = ringPoint(side, a0, r), [x1, y1] = ringPoint(side, a1, r);
-    return `M ${x0} ${y0} A ${r} ${r} 0 0 ${side === 'encode' ? 1 : 0} ${x1} ${y1}`;
-  };
-  const mk = (cls, d) => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('class', cls); p.setAttribute('d', d); svg.appendChild(p); return p; };
-  mk('track', arcPath(A0, A1));
-  const fill = mk('fill', arcPath(A0, A0));
-  const hit = mk('hit', arcPath(A0, A1));
-  const label = document.createElementNS(svgNS, 'text');
-  const [lx, ly] = ringPoint(side, A0 + 6, r + 28); // just outside the track's start
-  label.setAttribute('x', lx); label.setAttribute('y', ly + 5); label.setAttribute('text-anchor', 'middle');
-  const labelText = () => (typeof sl.label === 'function' ? sl.label() : sl.label);
-  label.textContent = labelText();
-  svg.appendChild(label);
+  svg.setAttribute('class', 'line-slider'); svg.setAttribute('viewBox', '0 0 1440 1024');
+  const mk = (tag, cls) => { const el = document.createElementNS(svgNS, tag); el.setAttribute('class', cls); svg.appendChild(el); return el; };
+  const track = mk('path', 'track'), fill = mk('path', 'fill'), hit = mk('path', 'hit');
+  const label = mk('text', 'slider-label'), value = mk('text', 'slider-value');
+  value.setAttribute('text-anchor', 'end');
   const knob = document.createElement('button');
   knob.className = 'knob';
   knob.setAttribute('role', 'slider');
-  knob.setAttribute('aria-label', labelText());
   knob.setAttribute('aria-valuemin', sl.min); knob.setAttribute('aria-valuemax', sl.max);
   wrap.append(svg, knob);
-  const angleOf = (v) => A0 + ((A1 - A0) * (v - sl.min)) / (sl.max - sl.min);
+  const labelText = () => (typeof sl.label === 'function' ? sl.label() : sl.label);
+  let T = [0, 0]; // the track's left end; it runs WEB.track px right to the elbow
+  wrap.place = (elbow, delay) => {
+    T = [elbow[0] - WEB.track, elbow[1]];
+    const [x, y] = T;
+    track.setAttribute('d', `M ${x} ${y} H ${elbow[0]} M ${x} ${y - 6} V ${y + 6}`);
+    hit.setAttribute('d', `M ${x} ${y} H ${elbow[0]}`);
+    label.setAttribute('x', x); label.setAttribute('y', y - 20);
+    value.setAttribute('x', x - 14); value.setAttribute('y', y + 5);
+    wrap.style.setProperty('--d', delay);
+    wrap.sync();
+  };
   const set = (v) => {
     v = Math.min(sl.max, Math.max(sl.min, Math.round(v / sl.step) * sl.step));
     v = +v.toFixed(4);
@@ -1231,24 +1274,20 @@ function arcSlider(side, sl, r) {
     wrap.sync();
   };
   wrap.sync = () => {
-    const shown = !sl.show || sl.show();
-    wrap.style.display = shown ? '' : 'none';
+    wrap.style.display = !sl.show || sl.show() ? '' : 'none';
     const off = sl.off && sl.off();
-    wrap.style.opacity = off ? 0.35 : 1;
+    wrap.style.opacity = off ? 0.35 : '';
     knob.title = off || '';
     label.textContent = labelText();
-    const a = angleOf(P[sl.key]), [x, y] = ringPoint(side, a, r);
-    knob.style.left = `${x}px`; knob.style.top = `${y}px`;
-    knob.textContent = sl.fmt(P[sl.key]);
+    knob.setAttribute('aria-label', labelText());
+    const x = T[0] + (WEB.track * (P[sl.key] - sl.min)) / (sl.max - sl.min);
+    knob.style.left = `${x}px`; knob.style.top = `${T[1]}px`;
+    fill.setAttribute('d', `M ${T[0]} ${T[1]} H ${x}`);
+    value.textContent = sl.fmt(P[sl.key]);
     knob.setAttribute('aria-valuenow', P[sl.key]);
-    fill.setAttribute('d', arcPath(A0, a));
+    knob.setAttribute('aria-valuetext', sl.fmt(P[sl.key]));
   };
-  const fromPointer = (e) => {
-    const [sx, sy] = toStage(e.clientX, e.clientY), cy = side === 'encode' ? RING.cyEnc : RING.cyDec;
-    let a = THREE.MathUtils.radToDeg(Math.atan2(sx - CX, side === 'encode' ? cy - sy : sy - cy));
-    a = Math.min(A1, Math.max(A0, a));
-    set(sl.min + ((a - A0) / (A1 - A0)) * (sl.max - sl.min));
-  };
+  const fromPointer = (e) => set(sl.min + ((toStage(e.clientX, e.clientY)[0] - T[0]) / WEB.track) * (sl.max - sl.min));
   const drag = (e) => {
     e.preventDefault();
     knob.classList.add('dragging');
@@ -1290,8 +1329,8 @@ function syncMorphBox() {
     + (P.hold_t ? ` Every frame reads at t = ${P.morph_t.toFixed(2)}.` : ` Frames run t 0 → 1; one ▶ reads at t = ${P.morph_t.toFixed(2)}.`);
   $('dropBText').textContent = bLabel() ? `B: ${bLabel()} ✓ — press ▶ to morph (drop to replace)` : 'drop second mesh (.obj)';
   for (const b of box.querySelectorAll('[data-shape-b]')) b.classList.toggle('on', !S.objTextB && b.dataset.shapeB === P.shapeB);
-  placeOrbs();
   syncShift();
+  layoutPanel();
 }
 for (const c of document.querySelectorAll('#morphOpts .chip')) {
   c.addEventListener('click', () => { P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
@@ -1345,6 +1384,36 @@ for (const b of document.querySelectorAll('[data-shape]')) b.addEventListener('c
 $('dropObj').addEventListener('click', () => $('fileA').click());
 $('fileA').addEventListener('change', async (e) => { if (e.target.files[0]) await loadFileA(e.target.files[0]); e.target.value = ''; });
 $('logo').addEventListener('click', () => setScreen('landing'));
+// Hover labels for buttons that are only a graphic ([data-tip]): one shared label, just
+// above the button (or below it when there is no room above), at half opacity. It is a
+// popover so it sits in the top layer, over an open dialog too.
+const tipEl = $('tip');
+let tipFor = null;
+function showTip(el) {
+  tipFor = el;
+  tipEl.textContent = el.dataset.tip;
+  if (!tipEl.matches(':popover-open')) tipEl.showPopover();
+  const r = el.getBoundingClientRect(), t = tipEl.getBoundingClientRect(), gap = 6;
+  const above = r.top - gap - t.height >= 4;
+  const y = above ? r.top - gap - t.height : r.bottom + gap;
+  const x = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, 4), innerWidth - t.width - 4);
+  Object.assign(tipEl.style, { left: `${x}px`, top: `${y}px` });
+}
+function hideTip() { tipFor = null; if (tipEl.matches(':popover-open')) tipEl.hidePopover(); }
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const el = e.target.closest?.('[data-tip]');
+  if (el && el !== tipFor) showTip(el); else if (!el && tipFor) hideTip();
+});
+document.addEventListener('pointerdown', hideTip);
+document.documentElement.addEventListener('pointerleave', hideTip);
+addEventListener('blur', hideTip);
+$('help').addEventListener('click', () => $('helpDialog').showModal());
+// a click on the backdrop (outside the box) closes it
+$('helpDialog').addEventListener('click', (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.currentTarget.close();
+});
 
 let dragDepth = 0;
 addEventListener('dragenter', (e) => { if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return; e.preventDefault(); dragDepth++; app.classList.add('dragging'); $('dropOverlay').hidden = false; });
@@ -1407,7 +1476,6 @@ $('play').addEventListener('click', () => {
 });
 function syncPlay() {
   $('play').classList.toggle('playing', S.playing);
-  home.classList.toggle('quiet', S.playing || S.busy); // no "click and hold" prompt while frames run or play
 }
 // the run button glows while the settings differ from the last run
 function syncStale() { $('run').classList.toggle('stale', !!S.mesh && S.run !== runKey()); }
@@ -1435,6 +1503,16 @@ $('curves').onclick = curves;
 $('edges').onclick = readEdges;
 $('obj').onclick = downloadObj;
 $('qmapOn').onclick = () => { qmapOn = !qmapOn; $('qmapOn').setAttribute('aria-pressed', qmapOn); setFocus(null); };
+// The tools menu: closed behind its handle by default; the handle slides it in from the right.
+function setSide(open) {
+  $('side').classList.toggle('open', open);
+  $('hud').inert = !open; // closed: its buttons are out of reach (and out of the tab order)
+  $('sideHandle').setAttribute('aria-expanded', open);
+  $('sideHandle').setAttribute('aria-label', open ? 'Hide the tools' : 'Show the tools');
+  if (!open && !$('drawer').hidden) { $('drawer').hidden = true; $('viewToggle').setAttribute('aria-expanded', false); }
+}
+$('sideHandle').addEventListener('click', () => setSide(!$('side').classList.contains('open')));
+
 $('viewToggle').onclick = () => {
   const open = $('drawer').hidden;
   $('drawer').hidden = !open;
@@ -1497,15 +1575,6 @@ function frame(now) {
 
 // touch screens have no hover: say "tap" instead
 if (!HOVER) $('hint').textContent = 'press and hold';
-// compact windows fold the tools into one button, and the stats behind a tap
-$('hudMore').addEventListener('click', () => {
-  const open = !$('hud').classList.contains('open');
-  $('hud').classList.toggle('open', open);
-  $('hudMore').setAttribute('aria-expanded', open);
-});
-$('hud').addEventListener('click', (e) => {
-  if (compact && e.target.closest('button') && e.target.id !== 'hudMore') { $('hud').classList.remove('open'); $('hudMore').setAttribute('aria-expanded', false); }
-});
 
 window.tessa3d = { state: S, settings: P }; // read-only handle for debugging in the console
 fitStage();
