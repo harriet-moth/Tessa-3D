@@ -1417,7 +1417,7 @@ function showTip(el) {
 function hideTip() { tipFor = null; if (tipEl.matches(':popover-open')) tipEl.hidePopover(); }
 document.addEventListener('pointerover', (e) => {
   if (e.pointerType !== 'mouse') return;
-  const el = e.target.closest?.('[data-tip]');
+  const el = app.dataset.screen === 'landing' ? null : e.target.closest?.('[data-tip]'); // hints start on home
   if (el && el !== tipFor) showTip(el); else if (!el && tipFor) hideTip();
 });
 document.addEventListener('pointerdown', hideTip);

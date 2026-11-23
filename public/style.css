@@ -62,6 +62,7 @@
   --edge: clamp(14px, 5vw, 72px);  /* inset from the right edge (logo and tools share it) */
   --top: clamp(16px, 6vh, 64px);   /* inset from the top (logo and resolution row share it) */
   --logo-w: clamp(40px, 4vw, 58px);
+  --help-w: 30px;                  /* the "?" in the corner; the logo sits just left of it */
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -89,22 +90,21 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
   transform: translate(-50%, -50%) scale(var(--s)); transform-origin: center; }
 #stage button, #stage .drop-b, #stage .more-shapes { pointer-events: auto; }
 
+/* the logo: a small mark in the top right corner on every screen, just left of the "?",
+   its top level with the resolution row */
 .logo { position: absolute; z-index: 2; border-radius: 10px;
-  left: calc(50% - 80px * var(--s)); top: calc(50% + (34px - 512px - var(--T, 0px)) * var(--s)); width: calc(160px * var(--s));
+  left: calc(100% - var(--edge) - var(--help-w) - 16px - var(--logo-w)); top: var(--top); width: var(--logo-w);
   transition: background 200ms var(--ease-ctl); }
 .logo img { display: block; width: 100%; height: auto; transition: filter 200ms var(--ease-ctl); }
-/* past the landing page: a small mark in the top right corner, its top level with the
-   resolution row and its right edge in line with the tools */
-#app:not([data-screen="landing"]) .logo { left: calc(100% - var(--edge) - var(--logo-w)); top: var(--top); width: var(--logo-w); }
 .logo:hover { background: var(--flip-light); }
 .logo:hover img { filter: invert(1); }
-/* help: a small round "?" just left of the logo, on every screen */
-.help-btn { position: absolute; z-index: 2; top: calc(var(--top) + var(--logo-w) * 0.3 - 15px);
-  right: calc(var(--edge) + var(--logo-w) + 16px); width: 30px; height: 30px; border-radius: 50%;
+/* help: a small round "?" in the top right corner, on every screen, centred on the
+   logo's height (the logo is 0.6 as tall as wide); its right edge in line with the tools */
+.help-btn { position: absolute; z-index: 2; top: calc(var(--top) + var(--logo-w) * 0.3 - var(--help-w) / 2);
+  right: var(--edge); width: var(--help-w); height: var(--help-w); border-radius: 50%;
   border: 1px solid var(--glass-line); font: 400 16px/28px var(--font-medium); text-align: center; color: var(--ink-dim);
   transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 .help-btn:hover, .help-btn:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
-#app[data-screen="landing"] .help-btn { right: var(--edge); }
 #helpDialog { width: min(400px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 48px)); overflow: auto;
   margin: calc(var(--top) + var(--logo-w)) var(--edge) auto auto; font-size: 13px; line-height: 1.45; }
 #helpDialog h2 { font-size: 20px; }
@@ -117,6 +117,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 
 /* ---------- landing (Figma 15:6) */
 /* the heading and shapes, a little smaller than the design, scaled about the middle of the group */
+/* the title, where the large logo used to stand: top centre of the frame */
+.landing-title { position: absolute; left: 720px; top: calc(110px - var(--T, 0px)); transform: translate(-50%, -50%); margin: 0;
+  font: 400 72px/normal var(--font-medium); letter-spacing: -1.5px; white-space: nowrap; color: var(--ink); }
+#app[data-screen="landing"] .landing-title { animation: ghost 950ms var(--ease) backwards; }
 .landing-centre { position: absolute; inset: 0; transform: scale(0.8); transform-origin: 720px 600px; }
 .drop-title, .or { position: absolute; left: 720px; width: 460px; transform: translate(-50%, -50%); margin: 0;
   font: 400 48px/normal var(--font); text-align: center; color: var(--ink); }
@@ -162,6 +166,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
   transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 .res-row button[aria-checked="true"] { font-family: var(--font-medium); font-weight: 400; color: rgb(var(--ink-rgb) / 0.85); }
 .res-row button:hover { background: var(--flip-light); color: var(--black); }
+/* small screens: the logo and "?" take the right of the top row, so the row starts at the left edge */
+#app.compact .res-row { left: var(--edge); transform: none; }
 #app[data-screen="landing"] .res-row, #app:not([data-layer="0"]) .res-row { opacity: 0; pointer-events: none; }
 
 /* the run buttons belong to the home screen: they hide while the menu is held open
@@ -424,6 +430,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 #info:not(.open) #logBody { visibility: hidden; transition: opacity 250ms var(--ease-ctl), transform 300ms var(--ease-ctl), visibility 0s 300ms; }
 /* the settings menu fans out over the bottom-left: the open log steps aside while it is up */
 #app:not([data-layer="0"]) #info.open #logBody { opacity: 0; transform: translateY(8px); pointer-events: none; }
+/* no hints on the landing page: the log waits for home, unless it holds an error (a bad upload) */
+#app[data-screen="landing"] #info.open #logBody:not(:has(#status.err)) { opacity: 0; transform: translateY(8px); pointer-events: none; }
 #app:not([data-layer="0"]) #info { pointer-events: none; } /* its box would still catch clicks... */
 #app:not([data-layer="0"]) #info .corner-row { pointer-events: auto; } /* ...but the log and theme buttons stay live */
 /* log and light mode: trapezoids, narrower at the top */
