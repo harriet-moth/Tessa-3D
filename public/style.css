@@ -349,8 +349,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 
 /* ---------- HUD, drawer, info (outside the stage, so they stay readable on small windows) */
 #side, #info, .legends, #drawer, #qmap { transition: opacity 600ms var(--ease); }
-#app[data-screen="landing"] #side, #app[data-screen="landing"] #info, #app[data-screen="landing"] .legends,
+#app[data-screen="landing"] #side, #app[data-screen="landing"] #logBody, #app[data-screen="landing"] .legends,
 #app[data-screen="landing"] #drawer, #app[data-screen="landing"] #qmap { opacity: 0; pointer-events: none; }
+/* the landing page keeps only the light / dark toggle from the bottom-left corner */
+#app[data-screen="landing"] #logToggle { display: none; }
 /* the tools: a column down the right edge, centred top to bottom, clear of the logo and object */
 /* The handle stays stuck to the right wall; the tools slide in from the right beside it.
    Closed, the menu is pushed off the edge by its own width plus its inset. The inset is at
@@ -424,6 +426,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
   color: var(--ink-dim); font: 400 13px var(--font); letter-spacing: 0.3px; transition: color 200ms var(--ease-ctl); }
 #logToggle svg { transition: transform 300ms var(--ease-ctl); }
 #info.open #logToggle svg { transform: rotate(180deg); }
+#themeToggle { padding: 5px 15px; } /* the symbol alone */
 .corner-row { display: flex; gap: 6px; }
 
 /* light mode: the whole page inverted (black ↔ white). Set on <html> so dialogs flip too.
@@ -463,7 +466,9 @@ dialog { border: 1px solid var(--glass-line); border-radius: 22px; background: r
   max-width: min(960px, 94vw); padding: 18px 22px; font: 400 14px var(--font);
   backdrop-filter: blur(14px); box-shadow: 0 0 60px rgb(var(--accent-rgb) / 0.08); }
 .tip { position: fixed; inset: auto; margin: 0; padding: 0; border: 0; background: none; overflow: visible;
-  pointer-events: none; white-space: nowrap; font: 400 13px/1.2 var(--font); color: var(--ink); opacity: 0.5; }
+  pointer-events: none; width: max-content; max-width: 220px; font: 400 13px/1.25 var(--font); color: var(--ink); opacity: 0.5; }
+/* the label is in the top layer, which html.light's invert does not reach: flip it here */
+html.light .tip { filter: invert(1); }
 .tip:popover-open { animation: tip-in 160ms var(--ease-ctl); }
 @keyframes tip-in { from { opacity: 0; } }
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }

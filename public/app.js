@@ -301,19 +301,27 @@ function setLog(open) {
   $('logToggle').setAttribute('aria-label', open ? 'Hide the log' : 'Show the log');
 }
 $('logToggle').addEventListener('click', () => setLog(!$('info').classList.contains('open')));
-// light mode: inverts the whole page (CSS on <html>), remembered in this browser
+// light mode (the default): inverts the whole page (CSS on <html>); a choice is remembered in this browser
+const tipEl = $('tip'); // the shared hover label (see showTip)
+let tipFor = null;
 const THEME = 'tessa3d.light';
 function setLight(on) {
   document.documentElement.classList.toggle('light', on);
   lightUniform.value = on ? 1 : 0;
   GLOW[on ? 'light' : 'dark'].forEach((hex, i) => { cloudMat.uniforms[`uGlow${i}`].value = glowVec(hex, on); });
   $('themeToggle').setAttribute('aria-pressed', on);
-  $('themeToggle').querySelector('span').textContent = on ? 'dark mode' : 'light mode';
-  $('themeToggle').title = on ? 'Switch to dark mode' : 'Switch to light mode';
-  try { localStorage.setItem(THEME, on ? '1' : ''); } catch { /* storage blocked: this visit only */ }
+  $('themeToggle').setAttribute('aria-label', on ? 'Switch to dark mode' : 'Switch to light mode');
+  $('themeToggle').dataset.tip = on ? 'dark mode' : 'light mode'; // its hover label: what a click switches to
+  if (tipFor === $('themeToggle')) showTip(tipFor);
 }
-$('themeToggle').addEventListener('click', () => { setLight(!document.documentElement.classList.contains('light')); drawMap(); });
-try { if (localStorage.getItem(THEME)) setLight(true); } catch { /* storage blocked */ }
+$('themeToggle').addEventListener('click', () => {
+  const on = !document.documentElement.classList.contains('light');
+  setLight(on); drawMap();
+  try { localStorage.setItem(THEME, on ? '1' : '0'); } catch { /* storage blocked: this visit only */ }
+});
+let storedTheme = null;
+try { storedTheme = localStorage.getItem(THEME); } catch { /* storage blocked */ }
+setLight(storedTheme !== '0'); // light unless dark was chosen
 async function busy(label, fn) {
   S.busy = true;
   app.classList.add('busy');
@@ -1387,16 +1395,29 @@ $('logo').addEventListener('click', () => setScreen('landing'));
 // Hover labels for buttons that are only a graphic ([data-tip]): one shared label, just
 // above the button (or below it when there is no room above), at half opacity. It is a
 // popover so it sits in the top layer, over an open dialog too.
-const tipEl = $('tip');
-let tipFor = null;
 function showTip(el) {
   tipFor = el;
   tipEl.textContent = el.dataset.tip;
+  // a setting's options (layer 3) show their label under the menu's title, top left,
+  // instead of beside the option
+  const inMenu = !!el.closest('#panel');
+  const c = (el.getBoundingClientRect().left + el.getBoundingClientRect().right) / 2;
+  tipEl.style.textAlign = inMenu ? 'left' : c < innerWidth / 3 ? 'right' : c > (2 * innerWidth) / 3 ? 'left' : 'center'; // before measuring
   if (!tipEl.matches(':popover-open')) tipEl.showPopover();
-  const r = el.getBoundingClientRect(), t = tipEl.getBoundingClientRect(), gap = 6;
-  const above = r.top - gap - t.height >= 4;
-  const y = above ? r.top - gap - t.height : r.bottom + gap;
-  const x = Math.min(Math.max(r.left + r.width / 2 - t.width / 2, 4), innerWidth - t.width - 4);
+  const t = tipEl.getBoundingClientRect(), gap = 6;
+  let x0, y;
+  if (inMenu) {
+    const title = $('menuTitle').getBoundingClientRect();
+    [x0, y] = [title.left, title.bottom + 3 * gap];
+  } else {
+    const r = el.getBoundingClientRect();
+    y = r.top - gap - t.height >= 4 ? r.top - gap - t.height : r.bottom + gap; // above, or below if no room
+    // grow away from the middle of the window, where the object sits: a button on the
+    // left lines the label up with its right edge, one on the right with its left edge
+    const mid = (r.left + r.right) / 2, third = innerWidth / 3;
+    x0 = mid < third ? r.right - t.width : mid > 2 * third ? r.left : mid - t.width / 2;
+  }
+  const x = Math.min(Math.max(x0, 4), innerWidth - t.width - 4);
   Object.assign(tipEl.style, { left: `${x}px`, top: `${y}px` });
 }
 function hideTip() { tipFor = null; if (tipEl.matches(':popover-open')) tipEl.hidePopover(); }
