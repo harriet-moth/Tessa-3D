@@ -4,7 +4,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/tessa.py": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "excludeFiles": "{tests/**,public/**,exports/**,.venv/**,.claude/**,dev.py}"
     }
   }

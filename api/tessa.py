@@ -45,7 +45,7 @@ MAX_FRAMES = 30
 # Vercel stops the function at maxDuration (vercel.json) and answers 504. Each request
 # gets a deadline this many seconds after it arrives, leaving room to send the reply;
 # the first request after a cold start also loses the import time.
-FUNCTION_LIMIT = 60.0
+FUNCTION_LIMIT = 300.0  # batched runs of a big mesh can take ~3 minutes
 REPLY_MARGIN = 8.0
 FRAME_MARGIN = 1.25  # a frame only starts if the slowest frame so far, ×1.25, still fits
 

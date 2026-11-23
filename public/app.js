@@ -1495,7 +1495,7 @@ function syncStale() { $('run').classList.toggle('stale', !!S.mesh && S.run !== 
 
 // ---------- HUD and drawer
 // Noise simulation runs ~9× slower on the web function than on a laptop, so some work
-// cannot finish inside its 60 s limit (the server refuses it too: api/tessa.py too_slow).
+// cannot finish inside its 300 s limit (the server refuses it too: api/tessa.py too_slow).
 const CHIPS = ['phoenix', 'fez'];
 const noisy = () => P.backend !== 'noiseless';
 function syncHud() {

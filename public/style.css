@@ -420,6 +420,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
   opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity 250ms var(--ease-ctl), transform 300ms var(--ease-ctl); }
 #info.open #logBody { opacity: 1; transform: none; pointer-events: auto; }
 #info:not(.open) #logBody { visibility: hidden; transition: opacity 250ms var(--ease-ctl), transform 300ms var(--ease-ctl), visibility 0s 300ms; }
+/* the settings menu fans out over the bottom-left: the open log steps aside while it is up */
+#app:not([data-layer="0"]) #info.open #logBody { opacity: 0; transform: translateY(8px); pointer-events: none; }
+#app:not([data-layer="0"]) #info { pointer-events: none; } /* its box would still catch clicks... */
+#app:not([data-layer="0"]) #info .corner-row { pointer-events: auto; } /* ...but the log and theme buttons stay live */
 /* log and light mode: trapezoids, narrower at the top */
 #logToggle, #themeToggle { --trap: polygon(9px 0, calc(100% - 9px) 0, 100% 100%, 0 100%);
   display: flex; align-items: center; gap: 6px; padding: 5px 18px 5px 15px;
