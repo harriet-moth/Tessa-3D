@@ -107,11 +107,26 @@ def test_qubit_count_is_only_what_the_mesh_uses():
     assert data == {e.graph.groups[g].data_qubit for g, _, _ in np.reshape(qubit_map(e)["vertices"], (-1, 3))}
 
 
+@pytest.mark.parametrize("payload, mode", [("xyz", "theta"), ("spherical", "theta"), ("xyz", "split")])
+def test_too_big_for_one_lattice_runs_in_batches(payload, mode):
+    """A mesh too big for the 10x12 lattice is read in several runs, not refused."""
+    from tessa_ripple.mesh import load_obj, subdivide
+    v, f = load_obj("tessa_ripple/suzanne.obj")
+    if mode == "split":
+        v, f = subdivide(v, f)  # Suzanne xyz fits one run in split mode; four times the vertices do not
+    p = Params(payload=payload, mode=mode)
+    e = encode_mesh(v, f, p)
+    assert e.runs > 1 and len(e.parts) == e.runs and e.stats["runs"] == e.runs
+    assert sum(e.stats["values_per_run"]) == e.slots.size
+    for k in range(e.runs):  # each run places its own vertices on distinct positions
+        pos = set(zip(e.slots[e.batches == k].ravel(), e.fields[e.batches == k].ravel()))
+        assert len(pos) == e.slots[e.batches == k].size
+    assert mesh_error(v, read_mesh(e, p)) < 0.05
+
+
 def test_split_mode_fits_suzanne_xyz_and_reads_back():
     from tessa_ripple.mesh import load_obj
     v, f = load_obj("tessa_ripple/suzanne.obj")
-    with pytest.raises(ValueError, match="two values per slot"):
-        encode_mesh(v, f, Params(payload="xyz"))  # too big with one value per slot
     p = Params(payload="xyz", mode="split")
     e = encode_mesh(v, f, p)
     pos = set(zip(e.slots.ravel(), e.fields.ravel()))

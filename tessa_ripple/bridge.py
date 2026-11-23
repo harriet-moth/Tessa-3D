@@ -50,7 +50,7 @@ QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores p
 # cos(alpha) Z + sin(alpha) X, alpha = t * pi/2, and Tessa's transition decode divides
 # out sin(theta) with an alpha = 0 (Z) readout (exactly A at t = 0, exactly B at t = 1).
 MODES = ("theta", "split", "morph")
-# morph meshes too big for one run are read in batches; on a chip each later batch starts
+# meshes too big for one run are read in batches; on a chip each later batch starts
 # on the next-best data qubits, so the best ones are spread across the runs
 BATCH_SEED_STEP = 1000  # batch k of a readout with seed s uses seed s + 1000 k
 # morph's alpha = 0 (Z) reference is a separate run on the chip, so it gets its own noise
@@ -744,8 +744,9 @@ def rotated_quality(quality, skip: int) -> np.ndarray:
 def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
     """Encode a mesh with Tessa: pick the graph, place the values, build the circuit(s).
 
-    Morph meshes too large for one run are split into connected batches, one circuit
-    each; on a chip each later batch starts on the next-best data qubits.
+    Meshes too large for one run (on the largest lattice, or on a chip) are split into
+    connected batches, one circuit each; on a chip each later batch starts on the
+    next-best data qubits.
 
     Args:
         verts: (N, 3) vertex positions.
@@ -798,7 +799,6 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         top = float(np.abs(flat).max() or 1.0) * (1 + p.headroom)
         rng = (-top, top) if p.payload == "xyz" else (0.0, top)
     mesh_layout = p.layout == "mesh"
-    can_batch = mode == "morph"  # generic below; only morph switches it on for now
     quality = None
     if p.backend in DEVICES:
         graph, name = devices.graph(p.backend), f"ibm_{p.backend} (whole chip)"
@@ -806,12 +806,10 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
     else:
         try:
             graph = fit_lattice(n, slot_comps, mesh_layout, per)
-        except ValueError:
-            if not can_batch:
-                raise
+        except ValueError:  # too big for the largest lattice: read it in several runs
             graph = Lattice(MAX_ROWS, MAX_COLS)
         name = f"{graph.rows}x{graph.cols} lattice"
-    k_runs = batches_needed(n, comps, per * graph.capacity) if can_batch else 1
+    k_runs = batches_needed(n, slot_comps, per * graph.capacity)
     groups = split_batches(verts, faces, k_runs) if k_runs > 1 else [np.arange(n)]
     slots, field = np.empty((n, comps), int), np.empty((n, comps), int)
     batch = np.zeros(n, int)

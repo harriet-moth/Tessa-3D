@@ -163,11 +163,11 @@
     <label>seed<input id="seed" type="number" min="0" max="999" value="0"></label>
   </aside>
 
-  <!-- the log: collapsed to an up arrow; opens upwards with the run's stats and status -->
-  <div id="info">
+  <!-- the log: open by default with the run's stats and status; its arrow collapses it -->
+  <div id="info" class="open">
     <div id="logBody" aria-live="polite"><pre id="stats"></pre><div id="status" role="status">Starting…</div></div>
     <div class="corner-row">
-      <button id="logToggle" class="trap" aria-expanded="false" aria-controls="logBody" aria-label="Show the log" title="log">
+      <button id="logToggle" class="trap" aria-expanded="true" aria-controls="logBody" aria-label="Hide the log" title="log">
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>log</span>
       </button>

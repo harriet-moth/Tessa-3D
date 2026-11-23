@@ -294,13 +294,14 @@ function status(msg, err = false) {
   $('status').classList.toggle('err', err);
   if (err) setLog(true); // a problem opens the log so it is seen
 }
-// the log: collapsed to its arrow by default
+// the log: open by default; its arrow collapses it
 function setLog(open) {
   $('info').classList.toggle('open', open);
   $('logToggle').setAttribute('aria-expanded', open);
   $('logToggle').setAttribute('aria-label', open ? 'Hide the log' : 'Show the log');
 }
 $('logToggle').addEventListener('click', () => setLog(!$('info').classList.contains('open')));
+setLog(true);
 // light mode (the default): inverts the whole page (CSS on <html>); a choice is remembered in this browser
 const tipEl = $('tip'); // the shared hover label (see showTip)
 let tipFor = null;
@@ -557,31 +558,22 @@ function showInfo(d, p) {
     ...(d.ts ? [`${d.options.interference ? `interference readout · selector 0 = A, 1 = B${d.kept ? ` · decoded from ${(100 * d.kept.reduce((a, b) => a + b, 0) / d.kept.length).toFixed(0)}% of shots` : ''}` : 'basis sweep · θ = A, φ = B'} · clamp ${d.clamp.toFixed(2)}π (θ and φ)`
       + `${d.options.hold_t ? ` · held at t = ${d.ts[0]}` : ''}${d.options.a_dirs ? " · A's directions" : ''}`] : []),
     s.graph + (s.quality != null ? ` · data-qubit quality ${s.quality.toFixed(2)}` : ''),
-    `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`,
+    `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`
+      + (s.runs > 1 ? ` · ${s.runs} runs of ${s.values_per_run.join(' / ')} values` : ''),
     `depth ${s.depth} · 2q gates ${s.twoq}` + (s.twoq_single !== s.twoq ? ` (θ alone ${s.twoq_single})` : ''),
     `mean error ${(d.error).toFixed(4)} of bbox${P.view === 'material' ? ` · material gain ${P.gain}×` : ' · true positions'}`,
   ].join('\n');
 }
 
 // ---------- actions
-const TOO_BIG = /do not fit|exceed|capacity/i;
 async function run(frames) {
   if (P.mode === 'morph' && !bLabel()) {
     openPanel('encode', 'mode');
     return status('⚠ Morph needs a second mesh: drop one in the box, or pick a shape', true);
   }
   await busy(frames > 1 ? `${P.mode === 'morph' ? 'Morphing' : 'Running'} ${frames} readouts on ${P.backend}…` : `Encoding and reading once on ${P.backend}…`, async () => {
-    let d;
-    const askedRes = P.resolution;
-    for (;;) {
-      try { d = await call('run', { frames }); break; } catch (err) {
-        // too many values for the lattice: step the resolution down (high → medium → low) and retry
-        if (!TOO_BIG.test(err.message) || P.resolution === 0) throw err;
-        P.resolution -= 1;
-        syncRes();
-        status(`${objLabel()} has too many vertices for the lattice at that resolution: trying ${RES_NAMES[P.resolution]} res…`);
-      }
-    }
+    // a mesh too big for one lattice is read in several runs (stats.runs), never decimated
+    const d = await call('run', { frames });
     const p = params();
     if (meshKeyNow() !== S.meshKey) setMesh(d, meshKeyNow());
     Object.assign(S, { data: d, run: runKey(), frames: d.frames.map((f) => new Float32Array(f.flat())),
@@ -594,8 +586,8 @@ async function run(frames) {
     if (!S.playing) { S.step = S.seq.length - 1; draw(); }
     const cut = d.frames.length < d.requested ? ` (fitted to the time limit; asked for ${d.requested})` : '';
     const what = d.ts ? (d.ts.length > 1 ? `morph ${objLabel()} → ${bLabel()}: ${d.frames.length} readouts, t 0 → 1` : `morph at t = ${d.ts[0]}`) : `${d.frames.length} readout(s)`;
-    const stepped = P.resolution !== askedRes ? ` · ${RES_NAMES[askedRes]} res has too many vertices for the lattice, so this ran at ${RES_NAMES[P.resolution]}` : '';
-    status(`${what} in ${d.seconds.toFixed(1)} s on ${p.backend}${cut}${stepped}`);
+    const runs = d.stats.runs > 1 ? ` · too many vertices for one ${d.stats.graph}, so each readout ran in ${d.stats.runs} runs` : '';
+    status(`${what} in ${d.seconds.toFixed(1)} s on ${p.backend}${cut}${runs}`);
   });
   syncPlay(); syncStale();
 }

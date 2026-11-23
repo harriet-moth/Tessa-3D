@@ -148,7 +148,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 .more-shapes button:hover, .drop-b-presets button:hover { background: var(--flip-light); color: var(--black); text-decoration: none; }
 
 /* ---------- home (Figma 10:2, 18:230). #home[data-layer] is the menu layer, 0–3. */
-.hint { position: absolute; left: 720px; top: 808px; width: 452px; transform: translate(-50%, -50%); margin: 0;
+.hint { position: absolute; left: 720px; top: 840px; width: 452px; transform: translate(-50%, -50%); margin: 0;
   font: 400 24px/normal var(--font); text-align: center; color: var(--ink); opacity: 0.85;
   transition: opacity 300ms var(--ease-ctl); }
 #app[data-screen="home"] .hint { animation: ghost 950ms var(--ease) 300ms backwards; }
@@ -502,7 +502,7 @@ svg text { fill: var(--ink-dim); font-size: 11px; }
 #app.portrait .drop-b { left: 478px; top: 700px; width: 484px; height: 190px; }
 #app.portrait .drop-b p { top: 30px; height: 80px; font-size: 22px; }
 #app.portrait .drop-b-presets { bottom: 16px; font-size: 16px; }
-#app.portrait .hint { top: 820px; font-size: 30px; }
+#app.portrait .hint { top: 852px; font-size: 30px; }
 
 /* ---------- compact (narrow or portrait): tools fold into one button; stats behind a tap */
 /* small screens keep the same frame, just smaller buttons */
