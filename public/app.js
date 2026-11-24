@@ -1257,6 +1257,7 @@ function mapGeometry() {
 
 function drawMap() {
   $('qmap').hidden = !mapOn();
+  app.classList.toggle('map-open', mapOn()); // settings stay shut while the map is open
   syncShift(); // the object makes room while the map shows
   if (!mapOn()) return;
   const { m, step, w, h, pos } = mapGeometry(), c = $('qcanvas'), dpr = devicePixelRatio || 1;
@@ -1623,7 +1624,7 @@ addEventListener('pointerup', (e) => {
   if (!p || e.pointerId !== p.id || Math.hypot(e.clientX - p.x, e.clientY - p.y) > CLICK_SLOP) return; // a drag: it rotated
   const [sx, sy] = toStage(e.clientX, e.clientY), st = menuEl.dataset.state;
   if (st === 'closed') {
-    if (objDist(sx, sy) < OBJ_R) setMenu('open');
+    if (!mapOn() && objDist(sx, sy) < OBJ_R) setMenu('open');
   } else if (st === 'open') {
     const side = pillAt(sx, sy); // a tab opens its arc
     if (side) openArc(side);
@@ -1637,7 +1638,7 @@ addEventListener('pointermove', (e) => {
 });
 
 // keyboard (and a plain click on the hint): open layer 1, then pick a pill
-$('hint').addEventListener('click', () => { if (menuEl.dataset.state === 'closed') { setMenu('open'); $('encodePill').focus(); } });
+$('hint').addEventListener('click', () => { if (!mapOn() && menuEl.dataset.state === 'closed') { setMenu('open'); $('encodePill').focus(); } });
 for (const pill of document.querySelectorAll('.pill-label')) pill.addEventListener('click', (e) => { if (menuEl.dataset.state === 'open') openArc(pill.dataset.side, e.detail === 0); }); // detail 0: Enter / Space
 for (const label of document.querySelectorAll('.arc-label')) {
   label.addEventListener('click', () => openPanel(label.closest('.arc').classList.contains('encode') ? 'encode' : 'decode', label.dataset.panel));

@@ -211,6 +211,8 @@ button:focus-visible { outline: none; }
 #app.portrait .hint::after { display: none; } /* under the object on phones: no line */
 .hint:hover, .hint:focus-visible { background: var(--flip-light); color: var(--black); border-color: var(--ink); outline: none; }
 #app[data-screen="home"] .hint { animation: ghost 950ms var(--ease) 300ms backwards; }
+/* the qubit map is open: the hint is greyed and does nothing */
+#app.map-open .hint { opacity: 0.4; pointer-events: none; }
 #home:not([data-layer="0"]) .hint { opacity: 0; pointer-events: none; }
 /* resolution row: top centre of the window, its top level with the logo's; the chosen
    option in medium weight */
@@ -532,7 +534,7 @@ html, .legends { transition: filter 300ms var(--ease-ctl); }
 
 /* the qubit map: a panel beside the object (which slides over to make room), not a window over it;
    the page behind stays undimmed so the lit vertices show on the object as you hover the map */
-#qmap { position: fixed; z-index: 20; left: max(var(--edge, 24px), 24px); top: 84px; pointer-events: none; } /* high, clear of the log bottom left */
+#qmap { position: fixed; z-index: 20; left: var(--edge, 24px); top: 50%; transform: translateY(-50%); pointer-events: none; } /* left edge as the title and log; middle of the screen */
 .qmap-card { width: min(320px, calc(100vw - 48px)); box-sizing: border-box; padding: 18px 22px; border: 1px solid var(--glass-line); border-radius: 22px;
   background: rgba(16, 15, 15, 0.92); color: var(--ink); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: auto; }
 /* portrait: along the bottom, the object slides up */
