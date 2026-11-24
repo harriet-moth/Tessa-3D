@@ -110,7 +110,8 @@ How it works:
   ▶|| reads the morph A → B along t = 0 → 1 (or every frame at morph t with hold t);
   one ▶ reads at morph t. Morph uses one clamp for both fields, so in **clamps** the
   θ and φ knobs move together (0 means Tessa's pair default, 0.2π).
-- **Right side:** why tessa, curves, read edges, qubit map, download .obj, and **view**
+- **Right side:** why tessa, curves, read edges, qubit map, download .obj, download .glb
+  (see **Blender shape keys** below), and **view**
   (fidelity / material, gain, colour, playback, headroom, seed). On small screens they
   fold into one **tools** button.
 - **Bottom left:** **log** (collapsed; opens with the run's stats and status, and opens
@@ -130,9 +131,33 @@ Differences from the desktop app:
   them run in the desktop app.
 - Morph has every desktop option, including the morph front; curves and edge readouts
   are off in morph mode.
-- There's no GIF export; **Download OBJ** saves the current step.
+- There's no GIF export; **Download OBJ** saves the current step, and **download .glb**
+  the whole playback as Blender shape keys (the desktop app has no .glb export).
 - The landing background is Figma's WebGPU shader fill (`@figma/expressive-components`);
   browsers without WebGPU show plain black there.
+
+### Blender shape keys
+
+After a run with two or more frames, **download .glb** saves the playback as one glTF
+file that Blender opens with **File → Import → glTF 2.0** (no add-on needed):
+
+- The first key (the original mesh, or the first readout with *start from original*
+  off) is the mesh itself, Blender's **Basis**.
+- Every readout is a **shape key**, named by its morph t (or readout number) and seed,
+  e.g. `t 0.400 · seed 2`. A morph is not a straight line from A to B, so each readout
+  keeps its own shot noise and its own place on the sweep; drag one key's value to 1 to
+  see just that readout.
+- An action called `readouts` keys the shape-key values so the timeline plays exactly
+  what the page plays: the same eased in-betweens (baked as weights, so they add no
+  keys) and the same loop, starting at frame 0. Set Blender's end frame to the last
+  keyframe, and add a Cycles modifier to the curves to loop it.
+- Timing follows **speed (fps)**: playback step k sits at k / fps seconds, which
+  Blender turns into frames at the scene's frame rate. At the default 24 fps in both,
+  every step lands on a whole frame; otherwise set Blender's frame rate to match
+  before importing.
+- What is saved is what is shown: material view saves the gain-scaled positions,
+  fidelity view the true decoded ones. Polygons are split into triangles, and colour
+  is not saved (glTF cannot animate vertex colours).
 
 To run the web version locally:
 

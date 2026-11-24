@@ -25,6 +25,7 @@ const P = {
 // S: what the page has loaded and is showing
 const S = { mesh: null, meshKey: null, data: null, run: null, orig: null, frames: [], refs: [], ts: null,
   seq: [], step: 0, playing: false, acc: 0, edges: null, focus: null, busy: false,
+  keys: [], keyNames: [], seed0: 0, // keys: the positions S.seq glides through (gain applied), named for export
   objText: null, objName: null, objTextB: null, objNameB: null,
   front: null, picking: false }; // front: per-step weights of the last run's morph front
 
@@ -474,7 +475,10 @@ function rebuild() {
   }
   const lead = P.orig || !keys.length ? [S.orig] : [];
   const glide = (k) => (k.length === 1 ? k : timeline(k, P.between, P.loop));
-  S.seq = glide(lead.concat(keys));
+  S.keys = lead.concat(keys);
+  S.keyNames = (lead.length ? ['original'] : []).concat(keys.map((_, k) =>
+    `${S.ts ? `t ${S.ts[k].toFixed(3)}` : `readout ${k + 1}`} · seed ${S.seed0 + k}`));
+  S.seq = glide(S.keys);
   S.step = Math.min(S.step, S.seq.length - 1);
   // Error colour follows the playback: each step's true decoded error (the same timeline
   // without gain), on one scale fixed to the largest error anywhere in the run.
@@ -494,6 +498,7 @@ function rebuild() {
   } else S.front = null;
   colourise();
   draw();
+  syncHud(); // download .glb needs two keys
 }
 
 function colourise(stepOnly = false) {
@@ -662,7 +667,7 @@ async function run(frames) {
     const p = params();
     if (meshKeyNow() !== S.meshKey) setMesh(d, meshKeyNow());
     Object.assign(S, { data: d, run: runKey(), frames: d.frames.map((f) => new Float32Array(f.flat())),
-      refs: d.refs ? d.refs.map((r) => new Float32Array(r.flat())) : [], ts: d.ts || null, step: 0 });
+      refs: d.refs ? d.refs.map((r) => new Float32Array(r.flat())) : [], ts: d.ts || null, step: 0, seed0: p.seed });
     showInfo(d, p);
     S.focus = null;
     rebuild();
@@ -792,6 +797,118 @@ function downloadObj() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' }));
   a.download = `tessa3d-${objLabel().replace(/\.obj$/i, '')}-step-${S.step + 1}.obj`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/**
+ * Per-step morph weights that rebuild `timeline(keys, steps, loop)` from keys[0] and
+ * the offsets of keys[1..]: in-between s of keys i → i+1 is (1 − e)·key i + e·key i+1,
+ * e the smoothstep of s / (steps + 1), and keys[0] (Basis) carries no weight of its own.
+ *
+ * Args:
+ *   n: number of keys (at least 2).
+ *   steps: in-betweens after each key (P.between).
+ *   loop: also glide from the last key back to the first (P.loop).
+ *
+ * Returns:
+ *   Float32Array of (playback steps) × (n − 1) weights, row-major by step.
+ */
+function glbWeights(n, steps, loop) {
+  const m = n - 1, rows = [], pairs = loop ? n : n - 1;
+  const row = (i, e) => {
+    const w = new Float32Array(m);
+    if (i >= 1) w[i - 1] += 1 - e;
+    if (i + 1 >= 1 && i + 1 < n) w[i] += e; // key i+1 is target i; key n (loop) is Basis
+    rows.push(w);
+  };
+  for (let i = 0; i < pairs; i++) {
+    for (let s = 0; s <= steps; s++) { const t = s / (steps + 1); row(i, t * t * (3 - 2 * t)); }
+  }
+  if (!loop) row(n - 1, 0);
+  const out = new Float32Array(rows.length * m);
+  rows.forEach((w, k) => out.set(w, k * m));
+  return out;
+}
+
+/**
+ * A binary glTF (.glb) of the playback: keys[0] is the mesh, every later key a morph
+ * target (a Blender shape key, named in mesh.extras.targetNames), and one animation
+ * drives the target weights through the same eased timeline the page plays.
+ *
+ * Args:
+ *   keys: Float32Arrays of N·3 positions in the app's Z-up frame (at least 2).
+ *   faces: polygons as vertex-index arrays (fan-triangulated here).
+ *   names: one name per key; names[0] is the Basis (the node's name).
+ *   steps: in-betweens after each key.
+ *   loop: glide from the last key back to the first.
+ *   fps: playback steps per second.
+ *
+ * Returns:
+ *   ArrayBuffer holding the .glb file.
+ */
+function buildGlb(keys, faces, names, steps, loop, fps) {
+  const n = keys[0].length / 3, m = keys.length - 1;
+  // glTF is Y-up: (x, y, z) -> (x, z, -y), as downloadObj and mesh.write_obj do
+  const yUp = (v) => { const o = new Float32Array(v.length); for (let i = 0; i < v.length; i += 3) { o[i] = v[i]; o[i + 1] = v[i + 2]; o[i + 2] = -v[i + 1]; } return o; };
+  const base = yUp(keys[0]);
+  const deltas = keys.slice(1).map((k) => { const d = yUp(k); for (let j = 0; j < d.length; j++) d[j] -= base[j]; return d; });
+  const tris = [];
+  for (const f of faces) for (let j = 1; j + 1 < f.length; j++) tris.push(f[0], f[j], f[j + 1]);
+  const weights = glbWeights(keys.length, steps, loop), count = weights.length / m;
+  const times = Float32Array.from({ length: count }, (_, k) => k / fps);
+  const bounds = (v) => {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < v.length; i++) { const c = i % 3; lo[c] = Math.min(lo[c], v[i]); hi[c] = Math.max(hi[c], v[i]); }
+    return { min: lo, max: hi };
+  };
+  // one buffer, one view per array; every array is 4-byte, so views stay aligned
+  const parts = [], views = [], accessors = [];
+  let offset = 0;
+  const add = (arr, accessor, target) => {
+    views.push({ buffer: 0, byteOffset: offset, byteLength: arr.byteLength, ...(target ? { target } : {}) });
+    accessors.push({ bufferView: views.length - 1, ...accessor });
+    parts.push(arr); offset += arr.byteLength;
+    return accessors.length - 1;
+  };
+  const FLOAT = 5126, UINT = 5125, ARRAY = 34962, INDEX = 34963;
+  const position = add(base, { componentType: FLOAT, count: n, type: 'VEC3', ...bounds(base) }, ARRAY);
+  const indices = add(Uint32Array.from(tris), { componentType: UINT, count: tris.length, type: 'SCALAR' }, INDEX);
+  const targets = deltas.map((d) => ({ POSITION: add(d, { componentType: FLOAT, count: n, type: 'VEC3', ...bounds(d) }, ARRAY) }));
+  const input = add(times, { componentType: FLOAT, count, type: 'SCALAR', min: [0], max: [times[count - 1]] });
+  const output = add(weights, { componentType: FLOAT, count: weights.length, type: 'SCALAR' });
+  const gltf = {
+    asset: { version: '2.0', generator: 'Tessa3D' },
+    scene: 0, scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, name: names[0] }],
+    meshes: [{ name: names[0], primitives: [{ attributes: { POSITION: position }, indices, targets, mode: 4 }],
+      weights: Array(m).fill(0), extras: { targetNames: names.slice(1) } }],
+    animations: [{ name: 'readouts', channels: [{ sampler: 0, target: { node: 0, path: 'weights' } }],
+      samplers: [{ input, output, interpolation: 'LINEAR' }] }],
+    accessors, bufferViews: views, buffers: [{ byteLength: offset }],
+  };
+  // GLB: 12-byte header, then a JSON chunk (space-padded) and a BIN chunk (zero-padded)
+  const pad4 = (x) => (x + 3) & ~3;
+  const json = new TextEncoder().encode(JSON.stringify(gltf));
+  const jsonLen = pad4(json.length), binLen = pad4(offset), total = 12 + 8 + jsonLen + 8 + binLen;
+  const out = new ArrayBuffer(total), dv = new DataView(out), bytes = new Uint8Array(out);
+  dv.setUint32(0, 0x46546c67, true); dv.setUint32(4, 2, true); dv.setUint32(8, total, true); // "glTF", v2
+  dv.setUint32(12, jsonLen, true); dv.setUint32(16, 0x4e4f534a, true); // "JSON"
+  bytes.fill(0x20, 20, 20 + jsonLen); bytes.set(json, 20);
+  let at = 20 + jsonLen;
+  dv.setUint32(at, binLen, true); dv.setUint32(at + 4, 0x004e4942, true); at += 8; // "BIN\0"
+  for (const p of parts) { bytes.set(new Uint8Array(p.buffer, p.byteOffset, p.byteLength), at); at += p.byteLength; }
+  return out;
+}
+
+// download .glb: the playback as Blender shape keys (see buildGlb)
+function downloadGlb() {
+  if (S.keys.length < 2) return;
+  const glb = buildGlb(S.keys, S.mesh.faces, S.keyNames, P.between, P.loop, P.fps);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+  const name = (s) => String(s).replace(/\.obj$/i, '');
+  a.download = `tessa3d-${name(objLabel())}${S.ts ? `-to-${name(bLabel())}` : ''}.glb`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -1617,6 +1734,7 @@ function syncHud() {
     : noisy() ? `Curves with ${P.backend} noise take minutes on the web: switch backend to noiseless, or use the desktop app` : '';
   $('why').disabled = S.busy || !S.mesh || (morph && !bLabel());
   $('obj').disabled = !S.seq.length;
+  $('glb').disabled = S.keys.length < 2;
   $('qmapOn').disabled = !S.data;
   $('viewToggle').disabled = false;
 }
@@ -1624,6 +1742,7 @@ $('why').onclick = why;
 $('curves').onclick = curves;
 $('edges').onclick = readEdges;
 $('obj').onclick = downloadObj;
+$('glb').onclick = downloadGlb;
 $('qmapOn').onclick = () => { qmapOn = !qmapOn; $('qmapOn').setAttribute('aria-pressed', qmapOn); setFocus(null); };
 // The tools menu: closed behind its handle by default; the handle slides it in from the right.
 function setSide(open) {
@@ -1698,7 +1817,7 @@ function frame(now) {
 // touch screens have no hover: say "tap" instead
 if (!HOVER) $('hint').textContent = 'tap for settings';
 
-window.tessa3d = { state: S, settings: P }; // read-only handle for debugging in the console
+window.tessa3d = { state: S, settings: P, buildGlb }; // read-only handle for debugging in the console
 fitStage();
 syncDrawer(); syncHud();
 requestAnimationFrame(frame);
