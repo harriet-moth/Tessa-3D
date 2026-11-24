@@ -71,19 +71,6 @@ def shares_topology(verts, faces, b_path) -> bool:
     return len(vb) == len(verts) and [list(x) for x in fb] == [list(x) for x in faces]
 
 
-def per_vertex_alpha(e, alpha_values) -> np.ndarray:
-    """Each vertex's angle: the mean over its values (xyz values may sit on several qubits).
-
-    Args:
-        e: A morph encoding.
-        alpha_values: (N*comps,) angles per value.
-
-    Returns:
-        np.ndarray: (N,) angles.
-    """
-    return np.asarray(alpha_values).reshape(e.slots.shape).mean(1)
-
-
 def cost(e, alpha) -> dict:
     """Two-qubit gates and depth of one sweep frame, summed over the runs.
 
@@ -113,7 +100,7 @@ def experiment(job):
     """
     from tessa_ripple.bridge import (Params, decode_raw, encode_mesh, front_distances, front_reference,
                                      front_smooth_alpha, morph_alpha, morph_expected, morph_frame,
-                                     tilted_angles, _per_value)
+                                     per_vertex, tilted_angles, _per_value)
 
     mesh, payload, backend, shots_list = job
     v, f, b_path, shared = load(mesh)
@@ -138,7 +125,7 @@ def experiment(job):
         for t in TS:
             alpha = morph_alpha(e, t, fr)
             per = _per_value(e, alpha)
-            alphas[(w, t)] = per_vertex_alpha(e, per)
+            alphas[(w, t)] = per_vertex(e, per)
             front = morph_expected(e, t, a_dirs, fr)
             smooth = front_reference(e, t, fr, a_dirs)
             scalar = morph_expected(e, t, a_dirs)
@@ -204,7 +191,7 @@ def experiment(job):
                                  if reached.any() else "",
                                  sec_frame=round(sec, 2), sec_frame_scalar=round(sec_scalar, 2)))
                 if mesh == "apple" and payload == "radial" and w == 0.15 and shots == max(shots_list):
-                    strips[t] = (got, per_vertex_alpha(e, per.ravel()))
+                    strips[t] = (got, per_vertex(e, per.ravel()))
     return {"key": (mesh, payload, backend), "rows": rows, "alpha": alphas, "strips": strips,
             "faces": f, "verts": v, "source": source, "d_vertex": d_vertex, "d_qubit_used": len(np.unique(d_qubit))}
 
@@ -252,7 +239,7 @@ def draw_strip(results, path):
             ax = fig.add_subplot(3, 3, r * 3 + c + 1, projection="3d")
             if backend is None:
                 pos = front_reference(e, t, (0.15, None), True)
-                a = per_vertex_alpha(e, front_smooth_alpha(e, t, (0.15, None)))
+                a = per_vertex(e, front_smooth_alpha(e, t, (0.15, None)))
             else:
                 pos, a = results[("apple", "radial", backend)]["strips"][t]
             face_a = np.array([a[q].mean() for q in f]) / (np.pi / 2)

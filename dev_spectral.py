@@ -244,7 +244,7 @@ def morph(job) -> list[dict]:
         circuits = sum(len(I._clusters(ie, k)) for k in range(e.runs))
     base = dict(mesh=mesh, backend=backend, readout=readout, config=config[0], graph=e.name, runs=e.runs,
                 k=None if e.spectral is None else e.spectral["k"], values=e.stats["values"],
-                twoq=sum(two_qubit(c) for c, _ in (e.parts or ((e.circuit, e.enc),))),
+                twoq=sum(two_qubit(c) for c, _ in e.run_parts),
                 circuits_per_frame=circuits, disp_over_diag=disp / diag,
                 trunc_a=rms(a_ref - v, diag), trunc_b=rms(b_ref - np.asarray(match["target"]), diag),
                 encode_sec=round(enc_sec, 2))

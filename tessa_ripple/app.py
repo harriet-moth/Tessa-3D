@@ -32,10 +32,10 @@ from PIL import Image
 
 from . import animate as anim
 from . import interfere as interf
-from .bridge import (BACKENDS, DEVICES, DRR_METHODS, MAX_COLS, MAX_ROWS, PAYLOADS, Lattice, Params, _per_value,
-                     cells, encode_mesh, encoded_shape, fidelity_curves, front_smooth_alpha, mesh_error,
-                     morph_alpha, morph_clamp, morph_expected, morph_frame, qubit_map, read_edges, resources,
-                     restore, spectral_cap, vertex_qubits)
+from .bridge import (BACKENDS, DEVICES, DRR_METHODS, MAX_COLS, MAX_ROWS, PAYLOADS, Lattice, Params,
+                     cap_spectral, cells, encode_mesh, encoded_shape, fidelity_curves, front_weights, mesh_error,
+                     morph_clamp, morph_expected, morph_frame, qubit_map, read_edges, resources, restore,
+                     vertex_qubits)
 from .bridge import front_source as auto_source
 from .mesh import PRESETS, load_decimated
 from .morph import correspond
@@ -397,7 +397,7 @@ class App:
             (None); in morph, clamp_b follows Clamp θ. The front is on only with Front
             ticked, Interference readout off (it turns the basis sweep) and a payload
             other than spectral. Spectral k 0 is None (auto); the slider's k is passed
-            as is and capped to one run in :meth:`quantum_changed` (:meth:`spectral_params`).
+            as is and capped to one run in :meth:`quantum_changed` (:func:`bridge.cap_spectral`).
         """
         qb = int(self.val("Quant bits"))
         clamp = lambda name: self.val(name) * np.pi or None  # noqa: E731  0 = Tessa default
@@ -416,22 +416,6 @@ class App:
                       spectral_k=int(self.val("Spectral k")) or None,
                       morph_front=morph["front"] and not morph["interf"] and self.val("Payload") != "spectral",
                       front_width=round(float(self.val("Front width")), 2), front_source=self.front_source)
-
-    def spectral_params(self, p, n_verts: int, interference: bool):
-        """``p`` with Spectral k capped to what one run holds (a k past the cap encodes the cap).
-
-        Args:
-            p: Settings from :meth:`params`.
-            n_verts: Vertices of A.
-            interference: The interference readout, whose run holds half as many values.
-
-        Returns:
-            Params: ``p``, with ``spectral_k`` at most :func:`bridge.spectral_cap`.
-        """
-        if p.payload != "spectral" or p.spectral_k is None:
-            return p
-        cap = spectral_cap(n_verts, p, interf.spectral_positions(p) if interference else None)
-        return replace(p, spectral_k=min(p.spectral_k, cap))
 
     def toggles(self):
         """The Toggles check boxes.
@@ -462,22 +446,6 @@ class App:
         if self.front_source is not None:
             return self.front_source
         return auto_source(self.encoded) if self.morphing and self.encoded.target is not None else None
-
-    def front_weights(self, t, front, smooth=False):
-        """How far each vertex has turned from A (0) to B (1) at t.
-
-        Args:
-            t: Morph parameter.
-            front: ``(width, source)`` (``Params.front``).
-            smooth: The smooth reference (each vertex's own distance), which no circuit
-                can make, instead of its data qubits' angle.
-
-        Returns:
-            np.ndarray: (N,) weights, averaged over each vertex's components.
-        """
-        e = self.encoded
-        a = front_smooth_alpha(e, t, front) if smooth else _per_value(e, morph_alpha(e, t, front))
-        return np.asarray(a, float).reshape(len(e.verts), -1).mean(1) / (np.pi / 2)
 
     def sync_front_controls(self):
         """Grey out the front's width and source while the front is off (or Interference
@@ -716,7 +684,7 @@ class App:
         if self.encoded is None or key != self.enc_key:
             try:
                 verts, faces = make()
-                p = self.spectral_params(p, len(verts), interf_on)
+                p = cap_spectral(p, len(verts), interf_on)
                 target = None
                 if p.mode == "morph":
                     mkey = (shape, name, p.target, p.shared_topology)
@@ -1016,8 +984,8 @@ class App:
             if self.morphing:  # classical preview of the morph at the slider's t
                 t, front = float(self.val("Morph t")), (None if self.interfering else self.params().front)
                 if front is not None:
-                    self.front_seq = [self.front_weights(t, front)]
-                    self.front_smooth = [self.front_weights(t, front, smooth=True)]
+                    self.front_seq = [front_weights(self.encoded, t, front)]
+                    self.front_smooth = [front_weights(self.encoded, t, front, smooth=True)]
                 return self.morph_refs([t], front)
             return [encoded_shape(self.encoded) if self.encoded is not None else self.verts]
         e, drr, n = self.encoded, self.val("DRR"), len(self.raw)
@@ -1049,8 +1017,8 @@ class App:
         self.err_top = self.err_seq.max() or 1.0
         if self.morphing and self.raw_front is not None:  # front weights follow the same timeline
             zero = [np.zeros(len(self.verts))] if t["orig"] else []
-            self.front_seq = glide(zero + [self.front_weights(x, self.raw_front) for x in self.raw_ts])
-            self.front_smooth = glide(zero + [self.front_weights(x, self.raw_front, smooth=True)
+            self.front_seq = glide(zero + [front_weights(self.encoded, x, self.raw_front) for x in self.raw_ts])
+            self.front_smooth = glide(zero + [front_weights(self.encoded, x, self.raw_front, smooth=True)
                                               for x in self.raw_ts])
         return glide(lead + list(keys))
 

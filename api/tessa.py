@@ -252,13 +252,10 @@ def spectral_capped(req, p, n_verts: int):
         n_verts: Vertices of A.
 
     Returns:
-        bridge.Params: ``p``, with ``spectral_k`` at most ``bridge.spectral_cap``.
+        bridge.Params: ``p``, with ``spectral_k`` at most ``bridge.spectral_cap``
+        (:func:`bridge.cap_spectral`).
     """
-    if p.payload != "spectral" or p.spectral_k is None:
-        return p
-    interference = p.mode == "morph" and morph_options(req)["interference"]
-    positions = interf.spectral_positions(p) if interference else None
-    return replace(p, spectral_k=min(p.spectral_k, bridge.spectral_cap(n_verts, p, positions)))
+    return bridge.cap_spectral(p, n_verts, p.mode == "morph" and morph_options(req)["interference"])
 
 
 def encode_of(req, verts, faces, logs, full, p):
@@ -404,13 +401,16 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
     hold, a_dirs = opts["hold_t"], opts["a_dirs"]
     start = time.time()
     reference = None if ie else bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
+    # a frame at a new t pays for a new circuit, as the reference did; frame 0 (t = 0)
+    # reuses the reference's circuit, so on its own it would promise too many frames
+    fresh = time.time() - start
     ts, frames, kept = ([t_one] if want == 1 or hold else [0.0]), [], []
     if not ie and (want == 1 or hold):  # one t: the frames share each circuit's simulator job
         q = replace(p, morph_t=t_one)
         raws = readouts(lambda n, k: bridge.decode_frames(e, q, n, p.seed + k, reference), want, deadline)
         frames = [bridge.morph_frame(e, raw, t_one, drr, a_dirs, p.front) for raw in raws]
         ts = ts * len(frames)
-    slowest = 0.0
+    slowest = fresh
     while len(frames) < len(ts):
         if frames and not fits(deadline, slowest):  # slower than the first frame promised: stop here
             ts = ts[:len(frames)]
@@ -425,7 +425,7 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
             frames.append(bridge.morph_frame(e, raw, t, drr, a_dirs, p.front))
         slowest = max(slowest, time.time() - began)
         if want > 1 and k == 0:
-            per = max(time.time() - start, 1e-3) / (1 if ie else 2)  # the sweep's reference cost about one readout
+            per = max(slowest, 1e-3)
             n = int(np.clip(1 + (deadline - time.time()) // (per * FRAME_MARGIN), 1, want))
             ts = [t_one] * n if hold else list(np.linspace(0.0, 1.0, n))
     refs = {}
@@ -452,11 +452,10 @@ def front_info(e, p, ts) -> dict:
         can make: the gap to ``weights`` is the chip's patch quantisation).
     """
     width, source = p.front
-    source = bridge.front_distances(e, source)[0]
-    n = len(e.verts)
-    per_vertex = lambda a: (np.asarray(a, float).reshape(n, -1).mean(1) / (np.pi / 2))
-    weights = [per_vertex(bridge._per_value(e, bridge.morph_alpha(e, t, (width, source)))) for t in ts]
-    smooth = [per_vertex(bridge.front_smooth_alpha(e, t, (width, source))) for t in ts]
+    front = (width, bridge.front_distances(e, source)[0])  # the automatic source resolved
+    weights = [bridge.front_weights(e, t, front) for t in ts]
+    smooth = [bridge.front_weights(e, t, front, smooth=True) for t in ts]
+    source = front[1]
     return {"source": int(source), "width": width,
             "weights": [rounded(w, 3) for w in weights], "smooth": [rounded(w, 3) for w in smooth]}
 
@@ -563,12 +562,14 @@ def resources(req):
         req: request dict; reads the mesh keys and Params keys.
 
     Returns:
-        Dict: ``rows`` (bridge.resources), ``stats`` (Encoded.stats), ``payload``,
-        ``mode``.
+        Dict: ``rows`` (bridge.resources), ``scaled`` (bridge.scaled_resources),
+        ``stats`` (Encoded.stats), ``payload``, ``mode``.
     """
     verts, faces, logs, full = mesh_of(req)
-    e = encode_of(req, verts, faces, logs, full, params_of(req))[0]  # interference: its sweep encoding
-    return {"rows": bridge.resources(e), "stats": e.stats, "payload": e.payload, "mode": e.mode}
+    p = params_of(req)
+    e = encode_of(req, verts, faces, logs, full, p)[0]  # interference: its sweep encoding
+    return {"rows": bridge.resources(e), "scaled": bridge.scaled_resources(e, p),
+            "stats": e.stats, "payload": e.payload, "mode": e.mode}
 
 
 def curves(req):

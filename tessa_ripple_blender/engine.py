@@ -53,7 +53,7 @@ class Job:
     b_faces: list | None = None
 
 
-_cache = {}  # the last encoding: "key", "e", "ie", "match", "ideal" (interference refs by t)
+_cache = {}  # the last encoding: "key", "e", "ie", "match"
 
 
 def normalise(verts):
@@ -148,7 +148,7 @@ def _encode(job: Job, v, p, interf_on: bool, progress):
     else:
         ie, e = None, bridge.encode_mesh(v, job.faces, p, target)
     _cache.clear()
-    _cache.update(key=key, e=e, ie=ie, match=match, ideal={})
+    _cache.update(key=key, e=e, ie=ie, match=match)
     return e, ie, match
 
 
@@ -186,9 +186,7 @@ def run(job: Job, progress=lambda text, frac: None, cancelled=lambda: False) -> 
     interf_on = morph and job.interference
     if morph and interf_on and p.morph_front:
         p = replace(p, morph_front=False)  # the front turns the basis sweep, not the selectors
-    if p.payload == "spectral" and p.spectral_k is not None:  # cap k to what one run holds
-        cap = bridge.spectral_cap(len(v), p, interf.spectral_positions(p) if interf_on else None)
-        p = replace(p, spectral_k=min(p.spectral_k, cap))
+    p = bridge.cap_spectral(p, len(v), interf_on)  # spectral: k at most what one run holds
 
     e, ie, match = _encode(job, v, p, interf_on, progress)
 
@@ -208,9 +206,7 @@ def run(job: Job, progress=lambda text, frac: None, cancelled=lambda: False) -> 
     if interf_on:
         raw, kept = interf.run_frames(ie, p, ts, progress=step)
         decoded = [interf.frame(ie, r, t, job.drr, a) for r, t in zip(raw, ts)]
-        ideal = _cache["ideal"]
-        refs = [interf.frame(ie, ideal.setdefault(float(t), interf.ideal(ie, float(t))), t, "none", a)
-                for t in ts]
+        refs = [interf.frame(ie, interf.ideal(ie, t), t, "none", a) for t in ts]  # ideal caches per t
     elif morph:
         raw = animate.run_frames(e, p, n, progress=step, ts=ts)
         decoded = [bridge.morph_frame(e, r, t, job.drr, a, p.front) for r, t in zip(raw, ts)]

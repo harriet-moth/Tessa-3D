@@ -463,14 +463,16 @@ The mesh is then K separate quantum states, and the info panel says so. On a chi
 with **Placement** *quality*, each run's ranking starts after the best qubits the
 earlier runs filled, so the best qubits are spread across the runs.
 
-**Frames share one job.** Frames read at one setting (every readout outside a morph,
-and a morph's frames at one t) are not separate decodes: each circuit is transpiled
-once and sampled frames × shots in one simulator job, which Tessa's `decode` reads
-for frame 0 and `decode_from_cell_counts` for the rest, each frame from its own
-`shots` draws. They are as independent as separately seeded readouts and 2.5–4×
-faster (12 blob frames: 1.8 → 0.75 s noiseless, 13.6 → 3.7 s on Phoenix). A job
-holds at most 2^19 shots per circuit; the job holding frames i… is seeded seed + i,
-so with one frame per job frame i is exactly the readout seeded seed + i.
+**Frames share one job.** A readout does not call Tessa's `decode` afresh: it builds
+`decode`'s own per-cell jobs (`cell_halo`, `cell_circuit`, `codec._measured`, transpile,
+`codec._trace_halo`) once per circuit, keeps them on the encoding, and decodes the
+counts with `decode_from_cell_counts`, bit for bit what `decode` returns. Frames
+read at one setting (every readout outside a morph, and a morph's frames at one t)
+are sampled frames × shots in one simulator job, each frame from its own `shots`
+draws: as independent as separately seeded readouts. 12 blob frames: 1.8 → 0.35 s
+noiseless, 8.5 → 1.4 s flat noise, 13.6 → 2.7 s on Phoenix. A job holds at most 2^19
+shots per circuit; the job holding frames i… is seeded seed + i, so with one frame
+per job frame i is exactly the readout seeded seed + i.
 
 Measured (Suzanne at *high*, 4,096 shots, error as a fraction of the bounding box,
 each against its noiseless reference):

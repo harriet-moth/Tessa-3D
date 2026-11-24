@@ -738,15 +738,116 @@ function openDialog(html) {
   $('dialog').showModal();
 }
 
+// ---------- Why Tessa: the conclusion first, then the table that backs it
+const PHOENIX_QUBITS = 120;
+const num = (v) => v.toLocaleString();
+// Shots each value gets when every shot is split over a cell's outcomes
+const perValue = (shots, configs) => (shots >= configs ? num(Math.floor(shots / configs)) : 'under 1');
+// The same with its noun: "1 shot", "256 shots", "under 1 shot"
+const shotsPer = (shots, configs) => `${perValue(shots, configs)} ${Math.floor(shots / configs) > 1 ? 'shots' : 'shot'}`;
+// "A, B and C"
+const listOf = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+// "QCrank (parallel QPIXL)" → "QCrank"
+const shortName = (name) => name.split(' (')[0];
+
+/**
+ * Why Tessa's opening: a one-line answer and the sentence that backs it, both built from
+ * the table, so each claim is only made when this mesh's numbers support it.
+ *
+ * Args:
+ *   rows: bridge.resources rows, Tessa first.
+ *   values: number of values encoded.
+ *   shots: shots per readout.
+ *
+ * Returns:
+ *   {answer, detail}: two HTML strings.
+ */
+function whyAnswer(rows, values, shots) {
+  const [t, ...base] = rows;
+  const angle = base.find((b) => b.configs === 1); // one qubit per value, read directly
+  const packed = base.filter((b) => b !== angle);  // the encodings that pack values into fewer qubits
+  const minDepth = Math.min(...packed.map((b) => b.depth));
+  const minSwaps = Math.min(...packed.map((b) => b.swaps));
+  const minCfg = Math.min(...packed.map((b) => b.configs)); // their best shots per value
+  const traits = [t.depth < minDepth && 'shallow', t.swaps === 0 && 'SWAP-free'].filter(Boolean);
+  const answer = traits.length
+    ? `Tessa fits these ${num(values)} values onto a real chip with a ${traits.join(', ')} circuit.`
+    : `Tessa fits these ${num(values)} values onto a real chip, here with depth ${num(t.depth)} and ${num(t.swaps)} SWAPs.`;
+  const costs = [
+    t.depth < minDepth && (minDepth >= 2 * t.depth ? `at least ${Math.floor(minDepth / t.depth)}× the depth` : `more depth (${num(minDepth)} or more)`),
+    minSwaps > t.swaps && `${num(minSwaps)} or more SWAPs`,
+    t.configs < minCfg && `give each value at most ${shotsPer(shots, minCfg)} to Tessa's ${perValue(shots, t.configs)}`,
+  ].filter(Boolean);
+  const fewer = packed.every((b) => b.qubits < t.qubits);
+  const names = listOf(packed.map((b) => (b.name === 'Amplitude' ? 'amplitude' : shortName(b.name))));
+  const parts = [];
+  if (costs.length) {
+    parts.push(`${names} ${fewer ? 'use fewer qubits, but ' : ''}need ${listOf(costs.slice(0, 2))}${costs[2] ? `, and ${costs[2]}` : ''}.`);
+  }
+  if (angle) {
+    parts.push(angle.fits
+      ? `Angle encoding is shallow but spends one qubit per value (${num(angle.qubits)} here).`
+      : `Angle encoding needs one qubit per value: ${num(angle.qubits)}, more than the chip's ${PHOENIX_QUBITS}.`);
+  }
+  return { answer, detail: parts.join(' ') };
+}
+
+/**
+ * The scaled-up line: what each encoding would need for a mesh a few times larger.
+ *
+ * Args:
+ *   s: bridge.scaled_resources, or null (spectral: no line).
+ *   shots: shots per readout.
+ *
+ * Returns:
+ *   An HTML string ('' for null).
+ */
+function whyScaled(s, shots) {
+  if (!s) return '';
+  const items = s.rows.map((x) => {
+    const where = x.graph ? ` (${x.graph}${x.runs > 1 ? `, ${x.runs} runs` : ''})` : '';
+    const read = x.fits ? `${shotsPer(shots, x.configs)} per value` : `more than the chip's ${s.chip_qubits}`;
+    return `<span class="${x.name === 'Tessa' ? 'tessa' : ''}">${shortName(x.name)}: ${num(x.qubits)} qubits${where}, ${read}</span>`;
+  });
+  return `<p class="scaled"><b>Scaled up ${s.factor}× (${num(s.values)} values)</b> ${items.join(' <i>·</i> ')}</p>`;
+}
+
 async function why() {
   await busy('Transpiling Tessa and four baselines onto ibm_phoenix…', async () => {
     const r = await call('resources');
     const shots = 2 ** P.shots;
-    const rows = r.rows.map((x) => `<tr><td>${x.name}</td><td>${x.qubits}</td><td>${x.fits ? 'yes' : 'no'}</td><td>${x.twoq}</td><td>${x.depth}</td><td>${x.swaps}</td><td>${x.settings}</td><td>${x.configs}</td><td>${Math.floor(shots / x.configs)}</td></tr>`).join('');
-    openDialog(`<h2>Why Tessa</h2>
-      <p>${r.stats.values} values (${r.payload}, ${r.mode}) transpiled onto the ibm_phoenix snapshot (120 qubits, square lattice).</p>
-      <table><tr><th>Encoding</th><th>Qubits</th><th>Fits on chip</th><th>2q gates</th><th>Depth</th><th>SWAPs</th><th>Settings</th><th>Outcomes / cell</th><th>Shots / value (${shots})</th></tr>${rows}</table>
-      <p class="note">Generic random data in every row, no compression. SWAPs ≈ extra CZs from routing ÷ 3. Each shot is split over a cell's outcomes, so each value gets about shots ÷ outcomes. Amplitude: Z readout gives magnitudes only. With a chip backend, Tessa's row is on that chip; the baselines stay on Phoenix.</p>`);
+    const { answer, detail } = whyAnswer(r.rows, r.stats.values, shots);
+    // the four columns that make the argument first; the rest (class "extra") behind the toggle
+    const rows = r.rows.map((x, k) => `<tr${k ? '' : ' class="tessa"'}><td>${x.name}</td>`
+      + `<td>${num(x.qubits)}${x.fits ? '' : ' <span class="flag">won\'t fit</span>'}</td>`
+      + `<td>${num(x.swaps)}</td><td>${num(x.depth)}</td><td>${perValue(shots, x.configs)}</td>`
+      + `<td class="extra">${x.fits ? 'yes' : 'no'}</td><td class="extra">${num(x.twoq)}</td>`
+      + `<td class="extra">${x.settings}</td><td class="extra">${num(x.configs)}</td></tr>`).join('');
+    openDialog(`<div class="why"><h2>Why Tessa</h2>
+      <p class="answer">${answer}</p>
+      <p class="lede">${detail}</p>
+      <div class="table-scroll"><table>
+        <tr><th>Encoding</th><th>Qubits</th><th>SWAPs</th><th>Depth</th><th>Shots / value</th>
+          <th class="extra">Fits on chip</th><th class="extra">2q gates</th><th class="extra">Settings</th><th class="extra">Outcomes / cell</th></tr>
+        ${rows}</table></div>
+      ${whyScaled(r.scaled, shots)}
+      <dl class="col-notes">
+        <dt>Qubits</dt><dd>How many the circuit uses. The ibm_phoenix chip has ${PHOENIX_QUBITS}.</dd>
+        <dt>SWAPs</dt><dd>Extra moves the chip makes when two qubits that must interact aren't neighbours. Each one adds noise.</dd>
+        <dt>Depth</dt><dd>Steps from start to readout once fitted to the chip. Deeper circuits pick up more error.</dd>
+        <dt>Shots / value</dt><dd>Of the ${num(shots)} shots, about how many land on each value. More shots give a sharper reading.</dd>
+        <dt class="extra">Fits on chip</dt><dd class="extra">Whether it needs no more than the chip's ${PHOENIX_QUBITS} qubits.</dd>
+        <dt class="extra">2q gates</dt><dd class="extra">Two-qubit gates after fitting to the chip, the noisiest step.</dd>
+        <dt class="extra">Settings</dt><dd class="extra">Measurement settings one readout needs.</dd>
+        <dt class="extra">Outcomes / cell</dt><dd class="extra">How many outcomes each shot is split over.</dd>
+      </dl>
+      <button type="button" class="more" id="whyAll" aria-expanded="false">Show all columns</button>
+      <p class="note">${num(r.stats.values)} values (${r.payload}, ${r.mode}), each encoding transpiled onto the ibm_phoenix snapshot (120 qubits, square lattice). Generic random data in every row, no compression. SWAPs ≈ extra CZs from routing ÷ 3. Shots per value = shots ÷ outcomes per cell. Amplitude: Z readout gives magnitudes only. With a chip backend, Tessa's row is on that chip; the baselines stay on Phoenix.${r.scaled ? ' Scaled up counts qubits and outcomes from the sizes alone (no circuits built), so it has no depth or SWAPs.' : ''}</p></div>`);
+    $('whyAll').addEventListener('click', (ev) => {
+      const all = $('dialogBody').querySelector('.why').classList.toggle('all');
+      ev.currentTarget.textContent = all ? 'Show fewer columns' : 'Show all columns';
+      ev.currentTarget.setAttribute('aria-expanded', all);
+    });
     status('Why Tessa: resource table opened');
   });
 }

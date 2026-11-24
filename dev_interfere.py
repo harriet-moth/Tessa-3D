@@ -167,7 +167,7 @@ def cost_row(job):
     mesh, backend = job
     ie, p = setup(mesh, "radial", backend)
     sweep = encode_mesh(ie.e.verts, ie.e.faces, p, target=ie.e.match)
-    sq = [c for c, _ in (sweep.parts or ((sweep.circuit, sweep.enc),))]
+    sq = [c for c, _ in sweep.run_parts]
     c = I.cost(ie)
     return {"mesh": mesh, "backend": backend, "graph": ie.e.name,
             "interfere_twoq": c["twoq"], "interfere_depth": c["depth"], "interfere_runs": c["runs"],

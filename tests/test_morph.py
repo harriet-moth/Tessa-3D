@@ -459,3 +459,13 @@ def test_drr_stretches_a_frame_towards_its_own_t_not_towards_a(b_path, payload):
     assert mesh_error(want, morph_frame(e, raw, 1.0, "mean_std")) < 1.5 * plain
     against_a = mesh_error(want, bridge.restore(e, raw, "min_max", bridge.morph_dirs(e, 1.0)))  # A's input
     assert mesh_error(want, morph_frame(e, raw, 1.0, "min_max")) < 0.5 * against_a
+
+
+def test_front_weights_run_from_a_to_b(b_path):
+    e, _ = morph(A, AF, b_path)
+    fr = (0.15, None)
+    assert np.allclose(bridge.front_weights(e, 0.0, fr), 0) and np.allclose(bridge.front_weights(e, 1.0, fr), 1)
+    mid = bridge.front_weights(e, 0.5, fr)
+    assert mid.shape == (len(A),) and 0 < mid.mean() < 1
+    smooth = bridge.front_weights(e, 0.5, fr, smooth=True)
+    assert smooth.shape == mid.shape and np.all((0 <= smooth) & (smooth <= 1))

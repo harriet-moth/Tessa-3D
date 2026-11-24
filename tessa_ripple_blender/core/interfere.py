@@ -36,12 +36,12 @@ cluster extraction, ``codec._run`` (transpile, trace the halo, sample),
 and ``restore_field`` (via ``bridge.restore``) for DRR.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import numpy as np
 from qiskit.quantum_info import Statevector
-from ..tessa import DataGroup, Lattice, cell_circuit, encode, prepare_field
+from ..tessa import DataGroup, Lattice, cell_circuit, cell_halo, encode, prepare_field
 from ..tessa.codec import _check_traceable, _measured, _normalise, _run
 from ..tessa.core.decode import _bit_table, decode_cells
 from ..tessa.core.mode import get_mode
@@ -192,6 +192,7 @@ class Interfered:
         a01: (N*comps,) A's values normalised to [0, 1] (as ``encode`` sees them).
         b01: (N*comps,) B's, likewise.
         clamp: θ clamp of both meshes.
+        ideals: :func:`ideal`'s frames by t, filled as they are asked for.
     """
     e: Encoded
     stars: Stars
@@ -199,6 +200,7 @@ class Interfered:
     a01: np.ndarray
     b01: np.ndarray
     clamp: float
+    ideals: dict = field(default_factory=dict, compare=False, repr=False)
 
 
 def spectral_positions(p: Params) -> int:
@@ -383,8 +385,7 @@ def _clusters(ie: Interfered, part: int):
         members = np.flatnonzero(st.star == s)
         data = [g.groups[k].data_qubit for k in members]
         addr = sorted({a for k in members for a in g.groups[k].address_qubits})
-        halo = sorted({h.data_qubit for h in g.groups if h.data_qubit not in data
-                       and set(h.address_qubits) & set(addr)})
+        halo = sorted(set().union(*(cell_halo(g, g.groups[k]) for k in members)) - set(data))  # Tessa's diamond
         out.append((st.selectors[s], members, data + addr, halo))
     return out
 
@@ -481,12 +482,8 @@ def _gather(ie: Interfered, packed_by_run) -> np.ndarray:
     g, e = ie.e.graph, ie.e
     lo, hi = e.enc.ranges[0]
     out = np.empty(e.slots.shape)
-    for k, packed in enumerate(packed_by_run):
-        full = np.zeros(g.capacity)
-        for i, grp in enumerate(g.groups):
-            if grp.site in packed:
-                lo_i, hi_i = cells(g)[i]
-                full[lo_i:hi_i] = packed[grp.site]
+    for k, packed in enumerate(packed_by_run):  # a cell no star read stays 0
+        full = g.unpack({grp.site: packed.get(grp.site, np.zeros(grp.n_values)) for grp in g.groups})
         m = e.batches == k
         out[m] = full[e.slots[m]]
     return (lo + (hi - lo) * out).ravel()
@@ -516,7 +513,7 @@ def read(ie: Interfered, p: Params, t: float, seed: int | None = None, dephase: 
     beta = beta_of(t)
     packed_by_run, zero, total = [], 0.0, 0.0
     for k in range(ie.e.runs):
-        circuit = (ie.e.parts[k] if ie.e.parts else (ie.e.circuit, ie.e.enc))[0]
+        circuit = ie.e.run_parts[k][0]
         stars = _clusters(ie, k)
         flips = (False, True) if dephase else (False,)
         jobs = []
@@ -566,7 +563,25 @@ def ideal(ie: Interfered, t: float) -> np.ndarray:
     """The exact noiseless frame at t (infinite shots), entanglement within stars included.
 
     Each cluster's statevector (``qiskit.quantum_info.Statevector``) gives exact
-    probabilities, decoded by Tessa's ``decode_cells`` like counts.
+    probabilities, decoded by Tessa's ``decode_cells`` like counts. A frame is computed
+    once per t and kept on ``ie`` (every redraw of a reference asks again).
+
+    Args:
+        ie: The encoding.
+        t: Morph parameter.
+
+    Returns:
+        np.ndarray: (N*comps,) values in A's units (read-only: it is shared).
+    """
+    t = float(t)
+    if t not in ie.ideals:
+        ie.ideals[t] = out = _ideal(ie, t)
+        out.setflags(write=False)
+    return ie.ideals[t]
+
+
+def _ideal(ie: Interfered, t: float) -> np.ndarray:
+    """:func:`ideal`, computed.
 
     Args:
         ie: The encoding.
@@ -578,7 +593,7 @@ def ideal(ie: Interfered, t: float) -> np.ndarray:
     beta = beta_of(t)
     packed_by_run = []
     for k in range(ie.e.runs):
-        circuit = (ie.e.parts[k] if ie.e.parts else (ie.e.circuit, ie.e.enc))[0]
+        circuit = ie.e.run_parts[k][0]
         packed = {}
         for sel, members, qubits, _ in _clusters(ie, k):
             qc = _cluster_circuit(circuit, qubits, (), sel, beta)
@@ -661,7 +676,8 @@ def frame(ie: Interfered, raw, t: float, drr: str = "none", a_dirs_only: bool = 
     """Positions of a frame: DRR and payload back to vertices (``bridge.restore``).
 
     Radial directions turn with ``bridge.morph_dirs`` (slerp at t), as the sweep morph;
-    xyz and spectral read every part of the shape from the state.
+    xyz and spectral read every part of the shape from the state. DRR stretches towards
+    the noiseless frame at t (:func:`ideal`), not A's input.
 
     Args:
         ie: The encoding.
@@ -673,7 +689,8 @@ def frame(ie: Interfered, raw, t: float, drr: str = "none", a_dirs_only: bool = 
     Returns:
         np.ndarray: (N, 3) positions.
     """
-    return restore(ie.e, raw, drr, morph_dirs(ie.e, t, a_dirs_only))
+    reference = None if drr == "none" else ideal(ie, t)
+    return restore(ie.e, raw, drr, morph_dirs(ie.e, t, a_dirs_only), reference)
 
 
 def cost(ie: Interfered) -> dict:
@@ -686,6 +703,6 @@ def cost(ie: Interfered) -> dict:
         dict: ``twoq``, ``depth``, ``runs``, ``stars`` (in the first run) and
         ``capacity`` (A/B pairs per run).
     """
-    qcs = [c for c, _ in (ie.e.parts or ((ie.e.circuit, ie.e.enc),))]
+    qcs = [c for c, _ in ie.e.run_parts]
     return {"twoq": sum(two_qubit(q) for q in qcs), "depth": sum(q.depth() for q in qcs),
             "runs": ie.e.runs, "stars": len(_clusters(ie, 0)), "capacity": ie.stars.capacity}

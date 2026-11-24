@@ -547,6 +547,37 @@ dialog th, dialog td { border-bottom: 1px solid var(--hairline); padding: 6px 8p
 dialog th:first-child, dialog td:first-child { text-align: left; }
 dialog th { font-weight: 400; color: var(--ink-dim); }
 dialog .note { color: var(--ink-faint); font-size: var(--fs-small); }
+/* Why Tessa: the answer, then the table with Tessa's row marked, the scaled-up line, the
+   column notes; the extra columns (and their notes) only after "Show all columns" */
+.why { max-width: 760px; }
+.why.all { max-width: none; } /* all nine columns: use the window's full width */
+.why:not(.all) .extra { display: none; }
+.why .answer { margin: 0 0 6px; font: 400 var(--fs-control)/1.35 var(--font); color: var(--ink); }
+.why .lede { line-height: 1.5; margin-bottom: 18px; }
+.why .table-scroll { overflow-x: auto; }
+.why tr.tessa td { color: var(--ink); font-family: var(--font-medium); background: rgb(var(--accent-rgb) / 0.08); }
+.why tr.tessa td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.why td { color: var(--ink-dim); }
+.why .flag { margin-left: 4px; padding: 0 6px; border: 1px solid var(--orb-line); border-radius: 999px; color: var(--ink);
+  font-size: var(--fs-small); white-space: nowrap; }
+.why .scaled { margin: 14px 0 0; line-height: 1.6; color: var(--ink-dim); }
+.why .scaled b { display: block; font-weight: 400; color: var(--ink); }
+.why .scaled span { white-space: nowrap; }
+.why .scaled span.tessa { color: var(--ink); }
+.why .scaled i { font-style: normal; margin: 0 4px; color: var(--ink-faint); }
+.why .col-notes { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 16px 0 12px; font-size: var(--fs-small); }
+.why .col-notes dt { color: var(--ink); }
+.why .col-notes dd { margin: 0; color: var(--ink-dim); }
+.why .more { padding: 4px 12px; border: 1px solid var(--orb-line); border-radius: 999px; color: var(--ink-dim); font-size: var(--fs-small);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+.why .more:hover, .why .more:focus-visible { background: var(--flip-light); color: var(--black); }
+/* phones: tighter cells so the four main columns fit, and the scaled-up line one entry a line */
+@media (max-width: 600px) {
+  .why th, .why td { padding: 6px 4px; }
+  .why th { font-size: var(--fs-small); }
+  .why .scaled span { display: block; white-space: normal; }
+  .why .scaled i { display: none; }
+}
 /* the Curves window: each chart with a plain-language reading of it underneath */
 dialog .lede { margin: 0 0 14px; color: var(--ink-dim); font-size: var(--fs-body); }
 /* one chart a page, 440px wide as the charts were before, with a round arrow either side;

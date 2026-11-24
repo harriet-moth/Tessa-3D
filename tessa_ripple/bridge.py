@@ -4,11 +4,11 @@ decode it per seed, compare resources, and read edge lengths from coherences.
 Pure functions, numpy in and numpy out, so a Blender add-on can reuse them.
 
 Wherever Tessa already implements a step, this module calls it rather than
-re-deriving it: ``encode``/``decode`` and ``prepare_field``/``restore_field`` for the
-codec; ``slot_order``, ``probe_qubits`` and ``_slot_ranges`` for placement; the
+re-deriving it: ``encode``, ``decode``'s own steps (``cell_halo``, ``cell_circuit``,
+``codec._measured``, ``codec._trace_halo``, ``decode_from_cell_counts``; built once per
+circuit, not per readout) and ``prepare_field``/``restore_field`` for the codec; ``slot_order``, ``probe_qubits`` and ``_slot_ranges`` for placement; the
 samplers (``aer_sampler``, ``backends.aer._aer_sampler`` with ``topology_device``) with
 ``build_local_noise_model``, ``build_average_noise_model`` and ``backend_rates``;
-``decode_from_cell_counts`` for frames that share one simulator job;
 ``hardware.devices`` for chip snapshots; ``hardware.pipeline._tilted``, ``_angle_readout``, ``_transition_frames``
 and ``ideal_frames`` for the morph basis sweep; ``rectangular_layout`` and
 ``square_lattice_edges`` for lattice geometry; and ``DYNAMIC_RANGE_METHODS``.
@@ -23,15 +23,13 @@ from pathlib import Path
 import numpy as np
 from qiskit import ClassicalRegister, QuantumCircuit, transpile
 from qiskit.circuit.library import StatePreparation, UCRYGate
-from qiskit.primitives.containers import DataBin
-from qiskit.primitives.containers.sampler_pub_result import SamplerPubResult
 from tessa import (DYNAMIC_RANGE_METHODS, Lattice, backend_rates, build_average_noise_model,
-                   build_local_noise_model, decode, decode_from_cell_counts, encode, graph_from_coupling,
-                   prepare_field, probe_qubits, rectangular_layout, restore_field, slot_order,
-                   square_lattice_edges)
-from tessa.backends import aer_sampler, device_of
+                   build_local_noise_model, cell_circuit, cell_halo, decode_from_cell_counts, encode,
+                   graph_from_coupling, prepare_field, probe_qubits, rectangular_layout, restore_field,
+                   slot_order, square_lattice_edges)
+from tessa.backends import device_of
 from tessa.backends.aer import _TWO_QUBIT_GATES, _aer_sampler, topology_device
-from tessa.codec import _normalise
+from tessa.codec import _check_traceable, _measured, _normalise, _trace_halo
 from tessa.core.mode import DEFAULT_CLAMP, get_mode
 from tessa.hardware import devices
 from tessa.hardware.pipeline import _angle_readout, _tilted, _transition_frames, ideal_frames
@@ -234,6 +232,7 @@ class Encoded:
             ``error_b`` None outside morph), else None.
         _sweeps: Cache of :func:`sweep_circuit` results per (part, alpha).
         _fronts: Cache of :func:`front_distances` per source vertex.
+        _jobs: Cache of :func:`_cell_jobs` per (circuit, device).
     """
     verts: np.ndarray
     faces: list
@@ -261,6 +260,7 @@ class Encoded:
     spectral: dict | None = None
     _sweeps: dict = dc_field(default_factory=dict, compare=False, repr=False)
     _fronts: dict = dc_field(default_factory=dict, compare=False, repr=False)
+    _jobs: dict = dc_field(default_factory=dict, compare=False, repr=False)
 
     @property
     def fields(self) -> np.ndarray:
@@ -279,6 +279,15 @@ class Encoded:
             int: At least 1.
         """
         return max(1, len(self.parts))
+
+    @property
+    def run_parts(self) -> tuple:
+        """Every run's ``(circuit, enc)``, in batch order (one for an unbatched mesh).
+
+        Returns:
+            tuple: ``parts``, or ``((circuit, enc),)``.
+        """
+        return self.parts or ((self.circuit, self.enc),)
 
     @property
     def batches(self) -> np.ndarray:
@@ -488,6 +497,31 @@ def spectral_cap(n_verts: int, p: Params, positions: int | None = None) -> int:
     if positions is None:
         positions = run_positions(p, 2 if p.mode == "split" else 1)
     return int(min(positions // 3 - (p.mode == "morph"), n_verts - 1))
+
+
+def cap_spectral(p: Params, n_verts: int, interference: bool = False) -> Params:
+    """``p`` with ``spectral_k`` capped to what one run holds (a slider may ask for more).
+
+    One place for the desktop app, the web API and the Blender add-on: a k past the
+    cap encodes the cap.
+
+    Args:
+        p: Settings.
+        n_verts: Vertices of A.
+        interference: The interference morph readout, whose run holds half as many
+            values (``interfere.spectral_positions``).
+
+    Returns:
+        Params: ``p``, with ``spectral_k`` at most :func:`spectral_cap` (unchanged
+        outside the spectral payload, or with k automatic).
+    """
+    if p.payload != "spectral" or p.spectral_k is None:
+        return p
+    positions = None
+    if interference:
+        from .interfere import spectral_positions  # interfere builds on this module
+        positions = spectral_positions(p)
+    return replace(p, spectral_k=min(p.spectral_k, spectral_cap(n_verts, p, positions)))
 
 
 def spectral_payload(verts, faces, p: Params, positions: int, target=None) -> dict:
@@ -991,6 +1025,12 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
             s_k, fld_k = s_k[:, [0, 0, 1]], np.broadcast_to([0, 1, 0], (len(idx), 3)).copy()
         slots[idx], field[idx], batch[idx] = s_k, fld_k, k
         if q_k is not None:  # the best data qubits whose capacity this batch takes first
+            # Counted as if its values packed densely. place() puts whole vertices in a
+            # cell, so radial matches it exactly; xyz and split batches (sized to the
+            # chip) overflow whole-vertex packing and spill over every data qubit, so
+            # all cells are used either way, and counting every one would rotate the
+            # ranking a full turn (each batch back on the best qubits). Measured on
+            # Suzanne (fez, phoenix): the dense count is the better spread.
             sizes = np.diff(cells(graph), axis=1)[np.argsort(-q_k, kind="stable"), 0] * per
             skip += int(np.searchsorted(np.cumsum(sizes), len(idx) * slot_comps)) + 1
         if spherical:
@@ -1149,9 +1189,9 @@ def sampler(graph, p: Params, seed: int):
 
     Chips: Tessa's ``calibrated_sampler`` construction (``_aer_sampler`` on the
     snapshot backend) with the cached noise model. "flat noise": ``noisy_sampler``'s
-    construction with its model cached (:func:`_flat`), IBM_LIKE_RATES scaled by
-    ``p.noise_strength`` (errors times it, T1/T2 divided by it). Otherwise the
-    noiseless ``aer_sampler``.
+    construction, IBM_LIKE_RATES scaled by ``p.noise_strength`` (errors times it,
+    T1/T2 divided by it). Otherwise the noiseless ``aer_sampler``'s. Lattice devices
+    and noise models are built once (:func:`_lattice`).
 
     Args:
         graph: Tessa ``Lattice`` or ``TessaGraph`` (unused for chips).
@@ -1164,36 +1204,40 @@ def sampler(graph, p: Params, seed: int):
     if p.backend in DEVICES:  # tessa.calibrated_sampler, reusing the noise model across seeds
         be, nm = _chip(p.backend)
         return _aer_sampler(be, noise_model=nm, seed=seed)
+    device, models = _lattice(graph)
     if p.backend == "flat noise" and p.noise_strength > 0:  # tessa.noisy_sampler, its model built once
-        device, nm = _flat(graph, p.noise_strength)
-        return _aer_sampler(device, noise_model=nm, seed=seed)
-    return aer_sampler(graph, seed=seed)
+        s = p.noise_strength
+        if s not in models:
+            rates = {k: (v / s if k in ("t1", "t2") else v * s if k.endswith("error") else v)
+                     for k, v in IBM_LIKE_RATES.items()}
+            models[s] = build_average_noise_model(graph, rates)
+        return _aer_sampler(device, noise_model=models[s], seed=seed)
+    return _aer_sampler(device, seed=seed)  # tessa.aer_sampler
 
 
-_FLAT = {}  # (graph key, strength) -> (graph, device, noise model)
+_LATTICES = {}  # graph key -> (graph, device, {noise strength: flat noise model})
 
 
-def _flat(graph, strength: float):
-    """A graph's device and "flat noise" model, built once per graph and strength.
+def _lattice(graph):
+    """A graph's simulator device and its "flat noise" models, built once.
 
-    ``tessa.noisy_sampler`` builds both on every call (about 1 s), and a run reads many
-    seeds. A ``Lattice`` (not hashable) is keyed by its shape; any other graph (the
-    edge readout's fixed PAIR) by identity, kept alive by the cache.
+    ``tessa.aer_sampler`` and ``noisy_sampler`` build a ``topology_device`` (and the
+    noisy one its noise model, about 1 s) on every call, and a run reads many seeds;
+    the device staying the same object also lets :func:`_cell_jobs` keep its
+    transpiles. A ``Lattice`` (not hashable) is keyed by its shape; any other graph
+    (the edge readout's fixed PAIR) by identity, kept alive by the cache.
 
     Args:
         graph: Tessa ``Lattice`` or ``TessaGraph``.
-        strength: ``Params.noise_strength``: error rates times it, T1/T2 divided by it.
 
     Returns:
-        tuple: ``(device, noise_model)``: Tessa's ``topology_device`` and
-        ``build_average_noise_model`` with IBM_LIKE_RATES scaled.
+        tuple: ``(device, models)``: Tessa's ``topology_device`` and a dict of
+        ``build_average_noise_model`` results by noise strength, filled by :func:`sampler`.
     """
-    key = ((graph.rows, graph.cols) if isinstance(graph, Lattice) else id(graph), strength)
-    if key not in _FLAT:
-        rates = {k: (v / strength if k in ("t1", "t2") else v * strength if k.endswith("error") else v)
-                 for k, v in IBM_LIKE_RATES.items()}
-        _FLAT[key] = graph, topology_device(graph), build_average_noise_model(graph, rates)
-    return _FLAT[key][1:]
+    key = (graph.rows, graph.cols) if isinstance(graph, Lattice) else id(graph)
+    if key not in _LATTICES:
+        _LATTICES[key] = graph, topology_device(graph), {}
+    return _LATTICES[key][1:]
 
 
 def batch_seed(seed: int, k: int) -> int:
@@ -1259,7 +1303,7 @@ def sweep_circuit(e: Encoded, alpha, part: int = 0):
         raise ValueError(f"alpha needs one angle per data qubit ({len(groups)}), got shape {alpha.shape}")
     key = (part, alpha.tobytes())
     if key not in e._sweeps:
-        circuit, enc = e.parts[part] if e.parts else (e.circuit, e.enc)
+        circuit, enc = e.run_parts[part]
         if (alpha == alpha[0]).all():
             qc = _tilted(circuit, enc, float(alpha[0]))
         else:
@@ -1271,93 +1315,52 @@ def sweep_circuit(e: Encoded, alpha, part: int = 0):
     return e._sweeps[key]
 
 
-class _ShotSplit:
-    """A sampler that runs each circuit once for ``frames`` readouts.
+def _cell_jobs(e: Encoded, circuit, enc, device) -> tuple[list, list]:
+    """``tessa.decode``'s per-cell jobs for ``circuit``, transpiled once and kept on ``e``.
 
-    ``tessa.decode`` transpiles every cell and runs them in one job; reading n frames as
-    n decodes repeats the transpile, the simulator set-up and (with noise) the noise
-    model's set-up n times. Through this sampler one ``decode`` samples n × shots: it
-    hands ``decode`` the first ``shots`` of every circuit (frame 0) and keeps the rest,
-    which :meth:`counts` cuts into later frames. Each frame is its own ``shots`` draws of
-    the same circuit, so it is distributed exactly as a separately seeded readout.
+    The same jobs as ``decode(..., per_group=True, halo="traced")`` builds, from
+    Tessa's own steps: each cell with its diamond halo (``cell_halo``,
+    ``cell_circuit``), measured in each basis its mode reads (``codec._measured``),
+    transpiled onto its own qubits, and the halo traced out (``codec._trace_halo``).
+    ``decode`` rebuilds them on every call; a readout here only samples them.
 
-    Attributes:
-        inner: The Tessa sampler that executes.
-        frames: Readouts per circuit.
-        shots: Shots per readout.
-        noise_model: ``inner``'s, which ``decode``'s traced halo reads.
+    Args:
+        e: The encoding that owns ``circuit`` (holds the cache).
+        circuit: Unmeasured Tessa circuit (a run's, or a sweep's tilted one).
+        enc: Its Tessa ``Encoding``.
+        device: The device to transpile for (a cached object: part of the key).
+
+    Returns:
+        tuple: ``(keys, pubs)``: ``(site, basis)`` per job, and the transpiled jobs.
     """
-
-    def __init__(self, inner, frames: int, shots: int):
-        """Wrap ``inner``.
-
-        Args:
-            inner: A Tessa ``DeviceSampler`` (:func:`sampler`).
-            frames: Readouts per circuit.
-            shots: Shots per readout.
-        """
-        self.inner, self.frames, self.shots = inner, frames, shots
-        self.noise_model = inner.noise_model
-        self._result = None
-
-    def backend(self):
-        """The device ``decode`` transpiles for (``inner``'s).
-
-        Returns:
-            The device behind ``inner``.
-        """
-        return device_of(self.inner)
-
-    def _frame(self, i: int, k: int):
-        """Pub ``i``'s shots of frame ``k``, as a SamplerV2 pub result.
-
-        Args:
-            i: Pub (circuit) index in the job.
-            k: Frame index.
-
-        Returns:
-            SamplerPubResult: Its ``meas`` register over that frame's shots.
-        """
-        bits = self._result[i].data.meas
-        return SamplerPubResult(DataBin(meas=bits.slice_shots(range(k * self.shots, (k + 1) * self.shots))))
-
-    def run(self, pubs, shots: int | None = None):
-        """Run every pub at ``frames`` × ``shots``; the job's result is frame 0.
-
-        Args:
-            pubs: Transpiled circuits, as ``decode`` submits them.
-            shots: Ignored: always ``self.shots`` per frame.
-
-        Returns:
-            SimpleNamespace: A job whose ``result()`` lists frame 0's pub results.
-        """
-        self._result = self.inner.run(pubs, shots=self.shots * self.frames).result()
-        first = [self._frame(i, 0) for i in range(len(self._result))]
-        return SimpleNamespace(result=lambda: first)
-
-    def counts(self, layout: dict, k: int) -> dict:
-        """Frame ``k``'s counts in ``decode(..., return_counts=True)``'s per-cell layout.
-
-        Args:
-            layout: Frame 0's ``{site: {basis: counts}}`` from ``decode``: its order is
-                the job's pub order.
-            k: Frame index.
-
-        Returns:
-            dict: ``{site: {basis: counts}}`` for ``tessa.codec.decode_from_cell_counts``.
-        """
-        pubs = iter(range(len(self._result)))
-        return {site: {basis: self._frame(next(pubs), k).data.meas.get_counts() for basis in by_basis}
-                for site, by_basis in layout.items()}
+    key = (id(circuit), id(device))
+    if key not in e._jobs:
+        graph, keys, pubs = enc.graph, [], []
+        for g in graph.groups:
+            halo = cell_halo(graph, g, "diamond")
+            cell = cell_circuit(circuit, g, halo)
+            for basis in get_mode(enc.mode).bases:
+                tqc = transpile(_measured(cell, [0], basis), device, optimization_level=1, seed_transpiler=0,
+                                initial_layout=[g.data_qubit, *g.address_qubits, *halo])
+                keys.append((g.site, basis))
+                pubs.append(_trace_halo(tqc, halo))
+        e._jobs[key] = (circuit, device, keys, pubs)  # circuit and device kept, so their ids stay theirs
+    return e._jobs[key][2:]
 
 
 MAX_JOB_SHOTS = 1 << 19  # shots per circuit in one job of several frames (bounds the result's memory)
 
 
-def _decode_frames(circuit, enc, inner, frames: int, shots: int) -> list:
-    """``frames`` readouts of one circuit by ``tessa.decode`` from one simulator job.
+def _decode_frames(e: Encoded, circuit, enc, inner, frames: int, shots: int) -> list:
+    """``frames`` readouts of one circuit from one simulator job, decoded by Tessa.
+
+    The cell jobs (:func:`_cell_jobs`) are sampled frames × shots at once; each frame
+    is its own ``shots`` of them, decoded with ``tessa.decode_from_cell_counts``. So it
+    is distributed exactly as a separately seeded readout, and one frame is exactly
+    ``tessa.decode(circuit, enc, inner, shots=shots)``.
 
     Args:
+        e: The encoding that owns ``circuit``.
         circuit: Unmeasured Tessa circuit.
         enc: Its Tessa ``Encoding``.
         inner: Tessa sampler (:func:`sampler`).
@@ -1365,20 +1368,55 @@ def _decode_frames(circuit, enc, inner, frames: int, shots: int) -> list:
         shots: Shots per readout.
 
     Returns:
-        list: One ``decode`` result per frame (an array, or a tuple of arrays for a
-        pair encoding). One frame is exactly ``decode(circuit, enc, inner, shots=shots)``.
+        list: One decoded result per frame (an array, or a tuple of arrays for a
+        pair encoding).
+
+    Raises:
+        ValueError: ``inner`` cannot stand in for the traced halo (Tessa's check).
     """
-    if frames == 1:
-        return [decode(circuit, enc, inner, shots=shots)]
-    split = _ShotSplit(inner, frames, shots)
-    first, layout = decode(circuit, enc, split, shots=shots, return_counts=True)
-    return [first] + [decode_from_cell_counts(split.counts(layout, k), enc) for k in range(1, frames)]
+    _check_traceable(inner)
+    keys, pubs = _cell_jobs(e, circuit, enc, device_of(inner))
+    result = inner.run(pubs, shots=shots * frames).result()
+    per_job = [_frame_counts(r.data.meas, shots, frames) for r in result]
+    out = []
+    for k in range(frames):
+        counts = {}
+        for (site, basis), by_frame in zip(keys, per_job):
+            counts.setdefault(site, {})[basis] = by_frame[k]
+        out.append(decode_from_cell_counts(counts, enc))
+    return out
+
+
+def _frame_counts(bits, shots: int, frames: int) -> list[dict]:
+    """``BitArray.get_counts()`` of each frame's ``shots``, counted by outcome.
+
+    ``get_counts`` turns every shot into a string; a cell has only a few distinct
+    outcomes, so each shot becomes an integer and only the distinct ones are
+    formatted. The dicts are equal to ``get_counts``'s.
+
+    Args:
+        bits: A SamplerV2 ``BitArray`` of ``shots * frames`` shots (no extra shape).
+        shots: Shots per frame.
+        frames: Frames, in shot order.
+
+    Returns:
+        list[dict]: Per frame, ``{bitstring: count}``.
+    """
+    if bits.num_bits > 62:  # too wide for one integer: qiskit's own count
+        return [bits.slice_shots(range(k * shots, (k + 1) * shots)).get_counts() for k in range(frames)]
+    raw = bits.array.reshape(-1, bits.array.shape[-1]).astype(np.int64)
+    codes = raw @ (256 ** np.arange(raw.shape[1] - 1, -1, -1, dtype=np.int64))  # big-endian bytes
+    out = []
+    for k in range(frames):
+        values, n = np.unique(codes[k * shots:(k + 1) * shots], return_counts=True)
+        out.append({format(int(v), f"0{bits.num_bits}b"): int(c) for v, c in zip(values, n)})
+    return out
 
 
 def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1):
     """``tessa.decode`` every run with its own seed and gather each vertex's values.
 
-    Several frames share each run's transpile and simulator job (:func:`_decode_frames`),
+    Several frames share each run's cached jobs and one simulator job (:func:`_decode_frames`),
     in jobs of at most MAX_JOB_SHOTS shots per circuit: the job holding frames i..j is
     seeded seed + i (run k: :func:`batch_seed` of that), so with one frame per job frame
     i is exactly a readout seeded seed + i.
@@ -1402,7 +1440,7 @@ def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1):
         for i0 in range(0, frames, per_job):
             n = min(per_job, frames - i0)
             inner = sampler(e.graph, p, batch_seed(seed + i0, k))
-            for i, out in enumerate(_decode_frames(circuit, enc, inner, n, p.shots), start=i0):
+            for i, out in enumerate(_decode_frames(e, circuit, enc, inner, n, p.shots), start=i0):
                 oa, ob = out if isinstance(out, tuple) else (out, None)
                 a[i, m] = oa[e.slots[m]]
                 if ob is not None:
@@ -1570,7 +1608,7 @@ def decode_frames(e: Encoded, p: Params, n: int, seed: int | None = None, refere
             reference = tilted_angles(e, p, reference_seed(seed), 0.0)
         # alpha = 0 everywhere: each frame is its own Z readout (transition_values)
         return np.array([transition_values(e, a, a if reference is None else reference, alpha) for a in angles])
-    a, b = _read(e, p, seed, e.parts or ((e.circuit, e.enc),), n)
+    a, b = _read(e, p, seed, e.run_parts, n)
     if e.field is not None:  # split mode, spherical payload: each value from its own field
         a = np.where(e.fields == 1, b, a)
     return a.reshape(n, -1)
@@ -1703,6 +1741,36 @@ def morph_alpha(e: Encoded, t: float, front=None):
         raise ValueError(SPECTRAL_FRONT)
     width, source = front
     return front_alpha(front_distances(e, source)[2], t, width)
+
+
+def per_vertex(e: Encoded, values) -> np.ndarray:
+    """A per-value array as one number per vertex: the mean over its components.
+
+    Args:
+        e: The encoding (its ``slots`` shape).
+        values: (N*comps,) one number per encoded value.
+
+    Returns:
+        np.ndarray: (N,) means (an xyz vertex's values may sit on several qubits).
+    """
+    return np.asarray(values, float).reshape(e.slots.shape).mean(1)
+
+
+def front_weights(e: Encoded, t: float, front, smooth: bool = False) -> np.ndarray:
+    """How far each vertex has turned from A (0) to B (1) at t, under a morph front.
+
+    Args:
+        e: A morph encoding.
+        t: Morph parameter.
+        front: ``(width, source)`` (``Params.front``; source None = auto).
+        smooth: The smooth reference (:func:`front_smooth_alpha`: each vertex's own
+            distance, which no circuit can make) instead of its data qubits' angle.
+
+    Returns:
+        np.ndarray: (N,) weights in [0, 1]: :func:`per_vertex` of the sweep angle / (π/2).
+    """
+    alpha = front_smooth_alpha(e, t, front) if smooth else _per_value(e, morph_alpha(e, t, front))
+    return per_vertex(e, alpha) / (np.pi / 2)
 
 
 def front_smooth_alpha(e: Encoded, t: float, front) -> np.ndarray:
@@ -1925,6 +1993,73 @@ def phoenix_layout(lat: Lattice) -> list[int]:
     return [layout[turned.qubit_index(c, r)] for r, c in map(lat.site_of_qubit, range(lat.n_qubits))]
 
 
+SCALE_UP = 10  # "Why Tessa"'s scaled-up line: this many times the mesh's values
+
+
+def baseline_sizes(n: int) -> tuple[int, int, int]:
+    """Register sizes of the compressing baselines for ``n`` values.
+
+    Args:
+        n: Number of values.
+
+    Returns:
+        tuple: ``(k, a, m)``: amplitude/FRQI address qubits ``k = ceil(log2 n)``, and
+        QCrank's ``a`` address and ``m`` data qubits, chosen for the fewest qubits.
+    """
+    k = int(np.ceil(np.log2(max(n, 2))))
+    a = int(np.argmin([j + np.ceil(n / 2 ** j) for j in range(k + 1)]))  # past k only adds qubits
+    return k, a, int(np.ceil(n / 2 ** a))
+
+
+def scaled_resources(e: Encoded, p: Params, factor: int = SCALE_UP) -> dict | None:
+    """What Tessa and the baselines would need for a mesh ``factor`` times larger.
+
+    Counts only what follows from the sizes, with no circuits built: Tessa's graph and
+    runs come from :func:`fit_lattice` (or ``e``'s chip) and :func:`batches_needed`, as
+    :func:`encode_mesh` would pick them; the baselines' registers from
+    :func:`baseline_sizes`.
+
+    Args:
+        e: The encoding.
+        p: Its settings (layout).
+        factor: Size multiple.
+
+    Returns:
+        dict | None: ``factor``, ``values``, ``chip_qubits`` and ``rows``, one per
+        encoding (as in :func:`resources`) with ``name``, ``qubits``, ``graph``,
+        ``runs``, ``configs`` and ``fits``. None for the spectral payload, whose values
+        are a fixed number of modes, not one per vertex.
+    """
+    if e.payload == "spectral":
+        return None
+    chip = PHOENIX_ROWS * PHOENIX_COLS
+    n = e.stats["values"] * factor
+    rows_n = len(e.slots) * factor  # vertices
+    comps = 2 if e.payload == "spherical" else e.slots.shape[1]
+    per = 2 if e.mode == "split" else 1
+    if e.device is not None:
+        graph, name = e.graph, f"ibm_{e.device}"
+    else:
+        try:
+            graph = fit_lattice(rows_n, comps, p.layout == "mesh", per)
+        except ValueError:  # too big for the largest lattice: several runs
+            graph = Lattice(MAX_ROWS, MAX_COLS)
+        name = f"{graph.rows}x{graph.cols} lattice"
+    k, a, m = baseline_sizes(n)
+    rows = [
+        dict(name="Tessa", qubits=graph.n_qubits, graph=name,
+             runs=batches_needed(rows_n, comps, per * graph.capacity),
+             configs=2 ** max(g.degree for g in graph.groups), fits=True),
+        dict(name="Angle (1 value/qubit)", qubits=n, configs=1),
+        dict(name="QCrank (parallel QPIXL)", qubits=a + m, configs=2 ** a),
+        dict(name="FRQI", qubits=k + 1, configs=2 ** k),
+        dict(name="Amplitude", qubits=k, configs=2 ** k),
+    ]
+    for row in rows[1:]:
+        row.update(graph=None, runs=1, fits=row["qubits"] <= chip)
+    return {"factor": factor, "values": n, "chip_qubits": chip, "rows": rows}
+
+
 def resources(e: Encoded, where=None) -> list[dict]:
     """Cost of ``e``'s values under Tessa and four baselines, transpiled onto a chip.
 
@@ -1967,15 +2102,13 @@ def resources(e: Encoded, where=None) -> list[dict]:
         tessa = routed(generic, layout=phoenix_layout(e.graph))
     else:
         tessa = routed(generic, devices.snapshot_backend(e.device), list(range(e.graph.n_qubits)))
-    k = int(np.ceil(np.log2(n)))
+    k, a, m = baseline_sizes(n)
     amp = QuantumCircuit(k)
     vec = rng.random(2 ** k)
     amp.append(StatePreparation(vec / np.linalg.norm(vec)), range(k))
     frqi = QuantumCircuit(k + 1)
     frqi.h(range(k))
     frqi.append(UCRYGate(list(rng.random(2 ** k))), [k, *range(k)])
-    a = int(np.argmin([j + np.ceil(n / 2 ** j) for j in range(12)]))  # fewest qubits
-    m = int(np.ceil(n / 2 ** a))
     qcrank = QuantumCircuit(a + m)
     qcrank.h(range(a))
     for d in range(m):

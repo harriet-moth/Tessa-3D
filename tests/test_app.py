@@ -7,7 +7,7 @@ import pytest
 matplotlib.use("Agg")
 
 from tessa_ripple import app as appmod  # noqa: E402
-from tessa_ripple.bridge import mesh_error  # noqa: E402
+from tessa_ripple.bridge import front_weights, mesh_error  # noqa: E402
 from tessa_ripple.mesh import PRESETS, write_obj  # noqa: E402
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -80,7 +80,7 @@ def test_front_runs_shows_its_colour_and_stays_off_with_interference(app):
     app.run_frames()
     assert app.val("Colour") == "front" and "Morph front" in app.ax.get_title()
     assert len(app.front_seq) == len(app.seq) and np.allclose(app.front_seq[0], 0)  # leads in from A
-    assert np.allclose(app.front_weights(1.0, app.raw_front), 1)  # t = 1: every vertex at B
+    assert np.allclose(front_weights(app.encoded, 1.0, app.raw_front), 1)  # t = 1: every vertex at B
     assert max(mesh_error(r, d) for r, d in zip(app.refs, app.decoded)) < 0.05
     app.w["Morph"].set_active(3)  # Interference readout: the front needs the basis sweep
     assert app.params().front is None and app.src_label.get_text() == "front: basis sweep only"

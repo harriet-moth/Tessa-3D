@@ -96,7 +96,7 @@ def test_about_as_many_two_qubit_gates_as_the_sweep_morph_on_a_chip(b_path):
     """Summed over every run: the counts depend on the data (out/interfere/costs.csv has
     apple on Phoenix at 504 against 496), so only a rough match is promised."""
     kw = dict(mode="morph", target=b_path, shared_topology=True, backend="fez")
-    total = lambda e: sum(two_qubit(c) for c, _ in (e.parts or ((e.circuit, e.enc),)))  # noqa: E731
+    total = lambda e: sum(two_qubit(c) for c, _ in e.run_parts)  # noqa: E731
     ie = I.encode_interfere(A, AF, Params(**kw))
     sweep = encode_mesh(A, AF, Params(**kw))
     assert total(ie.e) <= 1.1 * total(sweep)

@@ -513,7 +513,7 @@ def read(ie: Interfered, p: Params, t: float, seed: int | None = None, dephase: 
     beta = beta_of(t)
     packed_by_run, zero, total = [], 0.0, 0.0
     for k in range(ie.e.runs):
-        circuit = (ie.e.parts[k] if ie.e.parts else (ie.e.circuit, ie.e.enc))[0]
+        circuit = ie.e.run_parts[k][0]
         stars = _clusters(ie, k)
         flips = (False, True) if dephase else (False,)
         jobs = []
@@ -593,7 +593,7 @@ def _ideal(ie: Interfered, t: float) -> np.ndarray:
     beta = beta_of(t)
     packed_by_run = []
     for k in range(ie.e.runs):
-        circuit = (ie.e.parts[k] if ie.e.parts else (ie.e.circuit, ie.e.enc))[0]
+        circuit = ie.e.run_parts[k][0]
         packed = {}
         for sel, members, qubits, _ in _clusters(ie, k):
             qc = _cluster_circuit(circuit, qubits, (), sel, beta)
@@ -703,6 +703,6 @@ def cost(ie: Interfered) -> dict:
         dict: ``twoq``, ``depth``, ``runs``, ``stars`` (in the first run) and
         ``capacity`` (A/B pairs per run).
     """
-    qcs = [c for c, _ in (ie.e.parts or ((ie.e.circuit, ie.e.enc),))]
+    qcs = [c for c, _ in ie.e.run_parts]
     return {"twoq": sum(two_qubit(q) for q in qcs), "depth": sum(q.depth() for q in qcs),
             "runs": ie.e.runs, "stars": len(_clusters(ie, 0)), "capacity": ie.stars.capacity}

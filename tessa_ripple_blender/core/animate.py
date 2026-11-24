@@ -5,39 +5,46 @@ from pathlib import Path
 
 import numpy as np
 
-from .bridge import Encoded, Params, decode_raw, reference_seed, tilted_angles
+from .bridge import Encoded, Params, decode_frames, decode_raw, reference_seed, tilted_angles
 from .mesh import write_obj
 
 
 def run_frames(e: Encoded, p: Params, n: int, progress=None, ts=None):
-    """``n`` independent readouts of one encoding, with seeds seed, seed + 1, ...
+    """``n`` independent readouts of one encoding.
 
+    Frames at one setting (no ``ts``, or one t for all) share each circuit's transpile
+    and simulator job (:func:`~tessa_ripple.bridge.decode_frames`), seeded ``p.seed``.
     ``ts`` (morph) gives each frame its own t: the basis sweep reads each frame at that
-    t's angle, and every frame shares one Z (alpha = 0) readout, as Tessa's
-    transition does. That readout is its own run, seeded by
+    t's angle (seeds seed, seed + 1, ...), and every frame shares one Z (alpha = 0)
+    readout, as Tessa's transition does. That readout is its own run, seeded by
     :func:`~tessa_ripple.bridge.reference_seed`.
 
     Args:
         e: the encoded mesh.
         p: readout settings; ``p.seed`` is frame 0's seed.
         n: number of frames.
-        progress: optional callback ``progress(i, n)`` before frame i.
+        progress: optional callback ``progress(i, n)`` before frame i (once, before
+            frame 0, when the frames share one job).
         ts: optional per-frame morph t (length n); None uses ``p.morph_t``.
 
     Returns:
         np.ndarray: (n, N*comps) raw decoded values.
     """
-    values = []
     reference = None
     if e.mode == "morph":
         # one Z (alpha = 0) readout serves every frame, as in Tessa's transition; a
         # frame (or a front's unreached part) at alpha = 0 reads A from its own readout
         reference = tilted_angles(e, p, reference_seed(p.seed), 0.0)
+    if ts is None or len(set(map(float, ts))) == 1:
+        if progress:
+            progress(0, n)
+        q = p if ts is None else replace(p, morph_t=float(ts[0]))
+        return decode_frames(e, q, n, p.seed, reference)
+    values = []
     for i in range(n):
         if progress:
             progress(i, n)
-        q = p if ts is None else replace(p, morph_t=float(ts[i]))
-        values.append(decode_raw(e, q, p.seed + i, reference))
+        values.append(decode_raw(e, replace(p, morph_t=float(ts[i])), p.seed + i, reference))
     return np.array(values)
 
 

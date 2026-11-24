@@ -177,3 +177,57 @@ def test_resources_count_every_run_of_a_batched_mesh():
 def test_read_edges_of_a_mesh_without_faces_is_empty():
     E, measured, exact = read_edges(np.zeros((3, 3)), [], Params())
     assert E.shape == (0, 2) and measured.size == exact.size == 0
+
+
+@pytest.mark.parametrize("backend, mode", [("noiseless", "theta"), ("flat noise", "split"), ("phoenix", "theta")])
+def test_cached_cell_jobs_decode_exactly_as_tessa(backend, mode):
+    """A readout from the cached cell jobs is bit for bit tessa.decode's, and reuses its transpiles."""
+    from tessa import decode
+    from tessa_ripple import bridge
+    V, F = blob(8, 6)
+    p = Params(backend=backend, mode=mode, shots=512)
+    e = encode_mesh(V, F, p)
+    want = decode(e.circuit, e.enc, bridge.sampler(e.graph, p, 3), shots=512)
+    got = bridge._decode_frames(e, e.circuit, e.enc, bridge.sampler(e.graph, p, 3), 1, 512)[0]
+    fields = lambda x: x if isinstance(x, tuple) else (x,)  # noqa: E731
+    assert all(np.array_equal(w, g) for w, g in zip(fields(want), fields(got), strict=True))
+    jobs = dict(e._jobs)
+    bridge.decode_raw(e, p, 4)
+    assert e._jobs.keys() == jobs.keys()  # no new transpile for another seed
+
+
+def test_frame_counts_match_qiskit():
+    from tessa_ripple import bridge
+    from qiskit.primitives.containers import BitArray
+    rng = np.random.default_rng(0)
+    bits = BitArray(rng.integers(0, 256, size=(300, 2), dtype=np.uint8) & np.uint8(0b00011111), num_bits=13)
+    got = bridge._frame_counts(bits, 100, 3)
+    assert got == [bits.slice_shots(range(100 * k, 100 * (k + 1))).get_counts() for k in range(3)]
+
+
+def test_run_parts_and_spectral_cap():
+    from tessa_ripple.bridge import cap_spectral, spectral_cap
+    V, F = blob(8, 6)
+    e = encode_mesh(V, F, Params())
+    assert e.run_parts == ((e.circuit, e.enc),)
+    p = Params(payload="spectral", spectral_k=10_000)
+    assert cap_spectral(p, len(V)).spectral_k == spectral_cap(len(V), p)
+    assert cap_spectral(Params(spectral_k=10_000), len(V)).spectral_k == 10_000  # not spectral: untouched
+    assert cap_spectral(p, len(V), interference=True).spectral_k <= cap_spectral(p, len(V)).spectral_k
+
+
+def test_scaled_resources_match_a_real_encoding_of_that_size():
+    """The scaled-up line's Tessa graph and runs are what encode_mesh picks, and one
+    qubit per value stops fitting the chip."""
+    from tessa_ripple.bridge import scaled_resources
+    p = Params(payload="xyz")
+    e = encode_mesh(V, F, p)
+    s = scaled_resources(e, p, factor=4)
+    tessa, angle = s["rows"][0], s["rows"][1]
+    v4 = np.concatenate([V + 3 * k for k in range(4)])  # four copies: 4x the vertices
+    f4 = [[i + k * len(V) for i in f] for k in range(4) for f in F]
+    big = encode_mesh(v4, f4, p)
+    assert s["values"] == big.stats["values"] == 4 * e.stats["values"]
+    assert (tessa["runs"], tessa["qubits"]) == (big.runs, big.graph.n_qubits)
+    assert angle["qubits"] == s["values"] and not angle["fits"]
+    assert scaled_resources(encode_mesh(V, F, Params(payload="spectral")), p) is None
