@@ -117,3 +117,8 @@ def test_why_tessa_costs_a_and_b_slots_as_one_field(ie):
     where = [np.concatenate([ie.e.slots.ravel(), ie.b_slots.ravel()])]
     tessa = resources(ie.e, where)[0]
     assert tessa["name"] == "Tessa" and tessa["settings"] == 1  # one Z setting, no φ field
+
+
+def test_ideal_frames_are_computed_once_per_t(ie):
+    first = I.ideal(ie, 0.25)
+    assert I.ideal(ie, 0.25) is first and not first.flags.writeable

@@ -60,6 +60,9 @@ def load(mesh: str):
     from tessa_ripple.morph import correspond
 
     a, b = MESHES[mesh]
+    if not b.exists():  # suzanne's B is generated (dev_front.py writes it)
+        from dev_front import write_uv_sphere
+        write_uv_sphere()
     v, f = load_obj(a)
     return v, f, str(b), correspond(v, f, str(b))
 

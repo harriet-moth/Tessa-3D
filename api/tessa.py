@@ -75,6 +75,35 @@ def fits(deadline: float, per: float) -> bool:
     return time.time() + per * FRAME_MARGIN < deadline
 
 
+def readouts(read, want: int, deadline: float) -> list:
+    """Up to ``want`` frames at one setting, as many as finish before ``deadline``.
+
+    The first call reads one frame, which times a readout; each later call reads as
+    many frames as the time left allows at the last call's cost per frame. Frames read
+    together share each circuit's simulator job (``bridge.decode_frames``), so after
+    the first a frame costs less, and the estimate tightens as it goes. At least one
+    frame always runs.
+
+    Args:
+        read: ``read(n, k)`` -> n frames, the first being frame k (it seeds by k).
+        want: Frames asked for.
+        deadline: time.time() by which the readouts must be done.
+
+    Returns:
+        list: The frames read, in order.
+    """
+    out, per = [], None
+    while len(out) < want:
+        left = want - len(out)
+        n = 1 if per is None else int(np.clip((deadline - time.time()) // (per * FRAME_MARGIN), 0, left))
+        if n == 0:
+            break
+        began = time.time()
+        out.extend(read(n, len(out)))
+        per = (time.time() - began) / n
+    return out
+
+
 def too_slow(req, what: str):
     """Refuse up front work that cannot finish inside the function's time limit.
 
@@ -100,6 +129,8 @@ def too_slow(req, what: str):
     if what == "interference" and noisy:
         raise ValueError(f"The interference readout with {backend} noise takes minutes per frame on the web; "
                          "switch Backend to noiseless, turn off interference readout, or use the desktop app.")
+
+
 MAX_OBJ = 3_000_000  # characters of uploaded OBJ text (Vercel caps request bodies at 4.5 MB)
 UPLOADS = Path(tempfile.gettempdir()) / "tessa_ripple_obj"  # Vercel's writable /tmp
 
@@ -350,7 +381,8 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
     Frames run along t = 0 -> 1, or all at ``t_one`` with ``hold_t`` (one readout
     reads at ``t_one`` either way). With ``p.front`` each data qubit reads at its own
     angle (bridge.morph_alpha). The basis sweep shares one alpha = 0 readout over
-    its frames, as animate.run_frames does; the interference readout reads each frame
+    its frames, as animate.run_frames does; frames at one t share each circuit's
+    simulator job too (:func:`readouts`). The interference readout reads each frame
     on its own (interfere.read). The first frame times the readout; the frame count is
     then cut so the rest (and the noiseless references) finish before ``deadline``.
 
@@ -373,6 +405,11 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
     start = time.time()
     reference = None if ie else bridge.tilted_angles(e, p, bridge.reference_seed(p.seed), 0.0)
     ts, frames, kept = ([t_one] if want == 1 or hold else [0.0]), [], []
+    if not ie and (want == 1 or hold):  # one t: the frames share each circuit's simulator job
+        q = replace(p, morph_t=t_one)
+        raws = readouts(lambda n, k: bridge.decode_frames(e, q, n, p.seed + k, reference), want, deadline)
+        frames = [bridge.morph_frame(e, raw, t_one, drr, a_dirs, p.front) for raw in raws]
+        ts = ts * len(frames)
     slowest = 0.0
     while len(frames) < len(ts):
         if frames and not fits(deadline, slowest):  # slower than the first frame promised: stop here
@@ -425,10 +462,10 @@ def front_info(e, p, ts) -> dict:
 
 
 def run(req):
-    """Encode once, decode up to ``frames`` readouts (seeds seed, seed + 1, ...).
+    """Encode once, decode up to ``frames`` readouts.
 
-    Decoding stops before a frame that would not finish by the request's deadline
-    (:func:`deadline_of`; at least one frame always runs).
+    The readouts share each circuit's simulator job (:func:`readouts`), as many as
+    finish by the request's deadline (:func:`deadline_of`; at least one always runs).
     A morph (``mode`` "morph") reads its frames along t = 0 -> 1 (or at a held t)
     instead (:func:`morph_frames`), each compared with the noiseless morph at its t.
 
@@ -473,13 +510,9 @@ def run(req):
                  "match": {k: match[k] for k in ("method", "coverage", "distance")},
                  "clamp": bridge.morph_clamp(p) / np.pi, **({"kept": kept} if ie else {})}
     else:
-        refs, per = [bridge.encoded_shape(e)], 0.0  # the mesh, or spectral's truncated mesh
-        while len(frames) < want and (not frames or fits(deadline, per)):
-            start = time.time()
-            raw = bridge.decode_raw(e, p, p.seed + len(frames))
-            frames.append(bridge.restore(e, raw, drr))
-            per = max(per, time.time() - start)
-        refs = refs * len(frames)
+        raws = readouts(lambda n, k: bridge.decode_frames(e, p, n, p.seed + k), want, deadline)
+        frames = [bridge.restore(e, raw, drr) for raw in raws]
+        refs = [bridge.encoded_shape(e)] * len(frames)  # the mesh, or spectral's truncated mesh
         if e.spectral is not None:
             extra["refs"] = [rounded(r) for r in refs]
     return {"verts": rounded(verts), "faces": [list(map(int, f)) for f in faces],

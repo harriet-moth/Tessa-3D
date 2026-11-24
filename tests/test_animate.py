@@ -42,3 +42,15 @@ def test_blend_and_export(tmp_path):
     assert np.allclose(blend(V, V + 1, gain=2), V + 2)
     paths = export_obj_sequence(tmp_path, [V, V + 1], F)
     assert [p.name for p in paths] == ["frame_000.obj", "frame_001.obj"]
+
+
+def test_frames_share_one_job_yet_each_is_its_own_shots(monkeypatch):
+    """Frames at one setting come from one simulator job, split into independent shots;
+    with one frame per job they are exactly the per-seed readouts."""
+    from tessa_ripple import bridge
+    p = Params(shots=512)
+    e = encode_mesh(V, F, p)
+    batched = run_frames(e, p, 3)
+    assert not np.array_equal(batched[1], batched[2])
+    monkeypatch.setattr(bridge, "MAX_JOB_SHOTS", p.shots)  # one frame per job
+    assert np.array_equal(run_frames(e, p, 3), [bridge.decode_raw(e, p, p.seed + i) for i in range(3)])

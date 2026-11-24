@@ -41,13 +41,34 @@ def load(mesh: str):
 
     Returns:
         tuple: ``(verts, faces, b_path, shared)``: A's (N, 3) vertices and faces, B's
-        OBJ path and whether B shares A's topology (equal vertex counts).
+        OBJ path and whether B shares A's topology (:func:`shares_topology`).
     """
     from tessa_ripple.mesh import load_obj
 
     a, b = MESHES[mesh]
     v, f = load_obj(a)
-    return v, f, str(b), len(load_obj(b)[0]) == len(v)
+    return v, f, str(b), shares_topology(v, f, b)
+
+
+def shares_topology(verts, faces, b_path) -> bool:
+    """Whether B can be paired with A by vertex index: the same vertex count and faces.
+
+    ``morph.correspond`` refuses a shared topology whose faces differ (the apples have
+    equal vertex counts but a bite's worth of different faces), so those match by
+    closest point.
+
+    Args:
+        verts: (N, 3) A's vertices.
+        faces: A's faces.
+        b_path: B's OBJ path.
+
+    Returns:
+        bool: True if B has A's vertex count and faces.
+    """
+    from tessa_ripple.mesh import load_obj
+
+    vb, fb = load_obj(b_path)
+    return len(vb) == len(verts) and [list(x) for x in fb] == [list(x) for x in faces]
 
 
 def per_vertex_alpha(e, alpha_values) -> np.ndarray:

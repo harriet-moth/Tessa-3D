@@ -51,9 +51,11 @@ def setup(mesh: str, payload: str = "radial", backend: str = "noiseless"):
     from tessa_ripple.bridge import Params
     from tessa_ripple.mesh import load_obj
 
+    from dev_front import shares_topology
+
     a, b = MESHES[mesh]
     v, f = load_obj(a)
-    shared = len(load_obj(b)[0]) == len(v)
+    shared = shares_topology(v, f, b)
     p = Params(mode="morph", payload=payload, target=str(b), shared_topology=shared,
                backend=backend, shots=SHOTS)
     return I.encode_interfere(v, f, p), p

@@ -31,11 +31,11 @@
       <div class="landing-centre">
         <button id="dropObj" class="drop-title"><span class="w" style="--i: 0">To</span> <span class="w" style="--i: 1">begin,</span> <span class="drop-link"><span class="w" style="--i: 2">drop</span> <span class="w" style="--i: 3">an</span> <span class="w" style="--i: 4">.obj</span> <span class="w" style="--i: 5">file</span></span> <span class="w" style="--i: 6">anywhere</span> <span class="w" style="--i: 7">or</span> <span class="w" style="--i: 8">choose</span> <span class="w" style="--i: 9">a</span> <span class="w" style="--i: 10">preset</span></button>
         <p id="landingMsg" class="landing-msg" role="alert" hidden></p>
-        <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.png?v=2" alt=""></button>
-        <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.png?v=2" alt=""></button>
-        <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.png?v=2" alt=""></button>
-        <button class="preset apple" data-shape="apple" aria-label="Apple"><img src="assets/apple-dots.png" alt=""></button>
-        <button class="preset suzanne" data-shape="suzanne" aria-label="Suzanne"><img src="assets/suzanne-dots.png" alt=""></button>
+        <button class="preset cube" data-shape="cube" aria-label="Cube"><img src="assets/cube-dots.webp" alt=""></button>
+        <button class="preset blob" data-shape="blob" aria-label="Blob"><img src="assets/blob-dots.webp" alt=""></button>
+        <button class="preset sphere" data-shape="sphere" aria-label="Sphere"><img src="assets/sphere-dots.webp" alt=""></button>
+        <button class="preset apple" data-shape="apple" aria-label="Apple"><img src="assets/apple-dots.webp" alt=""></button>
+        <button class="preset suzanne" data-shape="suzanne" aria-label="Suzanne"><img src="assets/suzanne-dots.webp" alt=""></button>
       </div>
     </section>
 
@@ -210,7 +210,7 @@
 <script type="module" src="app.js"></script>
 <script type="module">
   import { mountShaderBackground } from './shader-bg.js';
-  mountShaderBackground(document.getElementById('shaderBg'));
+  mountShaderBackground(document.getElementById('shaderBg'), document.getElementById('app'));
 </script>
 </body>
 </html>

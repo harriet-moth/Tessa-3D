@@ -32,7 +32,7 @@ def app(tmp_path):
     Args:
         tmp_path: pytest's temporary folder, for B's OBJ.
 
-    Returns:
+    Yields:
         App: Encoded with the basis sweep, ready to toggle the interference readout.
     """
     v, f = next(iter(PRESETS["blob"].values()))()  # the Shape "blob" at resolution low
@@ -44,7 +44,10 @@ def app(tmp_path):
     pick(a, "Payload", "radial")
     a.w["Morph"].set_active(0)  # Shared topology
     a.w["Shots (log2)"].set_val(10)
-    return a
+    yield a
+    # the app's figure is named, so a new App would reuse it and stack its widgets on
+    # this one's: every later test would draw them all
+    appmod.plt.close(a.fig)
 
 
 def test_interference_readout_toggles_on_and_off(app):
@@ -143,3 +146,11 @@ def test_spectral_payload_encodes_runs_and_guards_vertex_features(app):
     assert app.focus["mates"] == [] and "modes 1" in app.focus_text()
     app.run()
     assert np.isfinite(app.err)
+
+
+def test_qubit_map_caption_names_b_in_phi_for_the_basis_sweep(app):
+    """The basis sweep's caption says where B sits (φ), not a function's repr."""
+    app.w["Toggles"].set_active(3)  # qubit map
+    app.set_focus(vertex=0)
+    text = app.focus_text()
+    assert " in φ" in text and "<function" not in text

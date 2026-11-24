@@ -6,3 +6,9 @@ tests
 __pycache__
 .pytest_cache
 .DS_Store
+# not used by the site or api/tessa.py: build outputs, the Blender add-on, experiments
+dist
+out
+docs
+tessa_ripple_blender
+dev_*.py

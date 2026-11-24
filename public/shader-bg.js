@@ -40,11 +40,29 @@ const shader = {
 };
 
 /**
- * Render the landing shader fill into an element (it fills the element).
- * @param {HTMLElement} el - Positioned container; the design shows it at 26 % opacity.
+ * Render the landing shader fill into an element (it fills the element), only while the
+ * landing screen shows. ShaderFill has no pause: its WebGPU loop draws every frame for as
+ * long as it is mounted, so off the landing (where the element is at opacity 0) it is
+ * unmounted, and mounted again on the way back.
+ *
+ * Args:
+ *   el: Positioned container; the design shows it at 26 % opacity.
+ *   screenOf: The element whose ``data-screen`` attribute names the screen ("landing", ...).
  */
-export function mountShaderBackground(el) {
-  createRoot(el).render(React.createElement(ShaderFill, {
-    shader, style: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
-  }));
+export function mountShaderBackground(el, screenOf) {
+  let root = null;
+  const sync = () => {
+    const want = screenOf.dataset.screen === 'landing';
+    if (want && !root) {
+      root = createRoot(el);
+      root.render(React.createElement(ShaderFill, {
+        shader, style: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
+      }));
+    } else if (!want && root) {
+      root.unmount();
+      root = null;
+    }
+  };
+  new MutationObserver(sync).observe(screenOf, { attributes: true, attributeFilter: ['data-screen'] });
+  sync();
 }

@@ -123,8 +123,9 @@ Differences from the desktop app:
 - **Run frames** is capped at 30 frames, and stops before a frame that would not
   finish inside the function's 300 s limit (vercel.json maxDuration) (each request has a deadline; a cold start also
   loses its import time). Noise simulation runs about 9× slower on Vercel than on a
-  laptop, so a chip frame takes 8 s or more there: expect about 5 frames on
-  phoenix or fez. A morph spreads the frames it has time for over t = 0 → 1.
+  laptop. Frames at one setting share each circuit's simulator job (see **Frames
+  share one job**), so after the first a chip frame costs about a third as much.
+  A morph spreads the frames it has time for over t = 0 → 1.
 - Work that cannot fit in 300 s on the web is refused at once with advice, and its
   button is greyed out: **curves** with any noisy backend, **read edges** on phoenix
   or fez, and the **interference readout** with noise (minutes per frame). All of
@@ -461,6 +462,15 @@ value range, uses its own seed (`seed + 1000·k`), and is stitched back by verte
 The mesh is then K separate quantum states, and the info panel says so. On a chip
 with **Placement** *quality*, each run's ranking starts after the best qubits the
 earlier runs filled, so the best qubits are spread across the runs.
+
+**Frames share one job.** Frames read at one setting (every readout outside a morph,
+and a morph's frames at one t) are not separate decodes: each circuit is transpiled
+once and sampled frames × shots in one simulator job, which Tessa's `decode` reads
+for frame 0 and `decode_from_cell_counts` for the rest, each frame from its own
+`shots` draws. They are as independent as separately seeded readouts and 2.5–4×
+faster (12 blob frames: 1.8 → 0.75 s noiseless, 13.6 → 3.7 s on Phoenix). A job
+holds at most 2^19 shots per circuit; the job holding frames i… is seeded seed + i,
+so with one frame per job frame i is exactly the readout seeded seed + i.
 
 Measured (Suzanne at *high*, 4,096 shots, error as a fraction of the bounding box,
 each against its noiseless reference):

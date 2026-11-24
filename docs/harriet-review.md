@@ -53,7 +53,7 @@ a narrow browser window (under about 900px wide) for:
 
 ## 4. Apple and Suzanne preset pictures
 
-`public/assets/apple-dots.png` and `suzanne-dots.png` are rendered stand-ins and don't quite
+`public/assets/apple-dots.webp` and `suzanne-dots.webp` are rendered stand-ins and don't quite
 match the cube, blob and sphere pictures. If you can export these two the same way as the
 others (transparent background, same angle and framing), drop them in with the same file
 names. The CSS in `public/style.css` (`.preset.apple`, `.preset.suzanne`) may need its box

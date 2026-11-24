@@ -99,12 +99,13 @@ def test_shared_topology_pairs_by_index_and_refuses_other_meshes():
 
 
 def _slow_readouts(monkeypatch, seconds):
-    """Make every readout take ``seconds`` longer, like Vercel's slower CPU."""
-    for name in ("decode_raw", "tilted_angles"):
+    """Make every readout take ``seconds`` longer, like Vercel's slower CPU (each frame
+    of a ``decode_frames`` batch too)."""
+    for name in ("decode_raw", "tilted_angles", "decode_frames"):
         real = getattr(api.bridge, name)
 
-        def slow(*a, _real=real, **k):
-            time.sleep(seconds)
+        def slow(*a, _real=real, _name=name, **k):
+            time.sleep(seconds * (a[2] if _name == "decode_frames" else 1))
             return _real(*a, **k)
         monkeypatch.setattr(api.bridge, name, slow)
 

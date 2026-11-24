@@ -66,6 +66,13 @@ function fitStage() {
   relayoutMenus();
 }
 const toStage = (x, y) => [(x - innerWidth / 2) / scale + CX, (y - innerHeight / 2) / scale + CY];
+// [min, max] of a mesh-sized array: Math.min(...a) passes every item as an argument and
+// overflows the call stack past ~10^5 of them (a big uploaded OBJ)
+function extent(a) {
+  let lo = Infinity, hi = -Infinity;
+  for (const x of a) { if (x < lo) lo = x; if (x > hi) hi = x; }
+  return [lo, hi];
+}
 
 // ---------- three.js scene
 const viewer = $('viewer');
@@ -257,11 +264,12 @@ const ERROR = stops(ERROR_GLOW_HEX), EDGE = stops(EDGE_HEX);
 const GOLDEN = 0.618034;
 // HSL is given in sRGB (what the eye sees), not three.js's linear working space.
 const hsl = (h, s, l) => new THREE.Color().setHSL(((h % 1) + 1) % 1, s, l, THREE.SRGBColorSpace);
-function ramp(cs, t) { // blends in sRGB, like CSS gradients and matplotlib, so mesh and legend agree
+// blends in sRGB, like CSS gradients and matplotlib, so mesh and legend agree; `out` lets
+// per-vertex loops reuse one Color instead of allocating one per vertex every frame
+function ramp(cs, t, out = new THREE.Color()) {
   t = Math.min(1, Math.max(0, t));
-  const x = t * (cs.length - 1), i = Math.min(Math.floor(x), cs.length - 2), f = x - i;
-  const [r, g, b] = cs[i].map((c, k) => c + (cs[i + 1][k] - c) * f);
-  return new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
+  const x = t * (cs.length - 1), i = Math.min(Math.floor(x), cs.length - 2), f = x - i, a = cs[i], b = cs[i + 1];
+  return out.setRGB(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, THREE.SRGBColorSpace);
 }
 
 // ---------- API
@@ -386,7 +394,7 @@ function buildCloud(d) {
   const total = area.reduce((s, a) => s + a, 0) || 1;
   // bounding radius about the centroid, for the camera and the sample density
   const c = [0, 1, 2].map((i) => V.reduce((s, p) => s + p[i], 0) / n);
-  objRadius = Math.max(...V.map((p) => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]))) || 1;
+  objRadius = extent(V.map((p) => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2])))[1] || 1;
   // dot pitch: ~70 dots across the object, coarser if that would pass ~60k dots
   let spacing = objRadius / 27;
   spacing = Math.max(spacing, Math.sqrt(total / 60000));
@@ -440,8 +448,7 @@ function buildCloud(d) {
   cloudMat.uniforms.uSize.value = spacing * 0.7;
   cloudMat.uniforms.uR.value = objRadius;
   S.tris = tris;
-  const zs = V.map((p) => p[2]);
-  cloudMat.uniforms.uZ0.value = Math.min(...zs); cloudMat.uniforms.uZ1.value = Math.max(...zs);
+  [cloudMat.uniforms.uZ0.value, cloudMat.uniforms.uZ1.value] = extent(V.map((p) => p[2]));
   mates.material.size = spacing * 2.5;
   srcMark.material.size = spacing * 4;
   cloud.visible = wire.visible = true;
@@ -492,7 +499,7 @@ function rebuild() {
     for (let i = 0; i < n; i++) e[i] = Math.hypot(v[3 * i] - r[3 * i], v[3 * i + 1] - r[3 * i + 1], v[3 * i + 2] - r[3 * i + 2]);
     return e;
   });
-  S.errTop = Math.max(...S.err.map((e) => Math.max(...e))) || 1;
+  S.errTop = S.err.reduce((top, e) => Math.max(top, extent(e)[1]), 0) || 1;
   // front weights follow the same timeline (the original leads in at 0: all A)
   const fr = S.data?.front;
   if (fr && fr.weights.length === S.frames.length) {
@@ -509,15 +516,16 @@ function colourise(stepOnly = false) {
   if (!colTex) return;
   const n = S.orig.length / 3, col = colTex.image.data;
   const set = (i, c) => { col[4 * i] = c.r; col[4 * i + 1] = c.g; col[4 * i + 2] = c.b; };
+  const c = new THREE.Color(); // reused by every ramp below
   let mix = 0.85;
   if (P.colour === 'error' && S.frames.length) {
     const err = S.err[S.step];
-    for (let i = 0; i < n; i++) set(i, ramp(ERROR, err[i] / S.errTop));
+    for (let i = 0; i < n; i++) set(i, ramp(ERROR, err[i] / S.errTop, c));
     if (!stepOnly) legend('faceLegend', ERROR_GLOW_HEX, '0', S.errTop.toFixed(4), `vertex error at this step (distance${S.ts ? ' from the noiseless morph' : ''}, mesh units)`);
   } else if (P.colour === 'front' && S.front) {
     const w = S.front.w[S.step], sm = S.front.smooth[S.step];
     let gap = 0;
-    for (let i = 0; i < n; i++) { set(i, ramp(EDGE, w[i])); gap += Math.abs(w[i] - sm[i]); }
+    for (let i = 0; i < n; i++) { set(i, ramp(EDGE, w[i], c)); gap += Math.abs(w[i] - sm[i]); }
     if (!stepOnly) legend('faceLegend', EDGE_HEX, '0 = A', '1 = B', `front: share of the way to B · source vertex ${S.data.front.source}`);
     $('faceLegend').querySelector('.gap')?.remove();
     $('faceLegend').insertAdjacentHTML('beforeend', `<div class="gap">Patch steps: ${(gap / n).toFixed(3)} from a smooth front</div>`);
@@ -549,6 +557,7 @@ function copyEnds(target, pairs, v) {
   pairs.forEach((vi, j) => { target[3 * j] = v[3 * vi]; target[3 * j + 1] = v[3 * vi + 1]; target[3 * j + 2] = v[3 * vi + 2]; });
 }
 
+const faceNormals = { unit: new Float32Array(0), area: new Float32Array(0) }; // draw's scratch buffers
 function draw() {
   if (!S.seq.length || !posTex) return;
   if ((P.colour === 'error' && S.frames.length) || (P.colour === 'front' && S.front)) colourise(true);
@@ -559,13 +568,18 @@ function draw() {
   // Corner normals of the current shape, for the curved faces: each corner averages
   // (by area) the faces round its vertex that bend less than CREASE from its own face,
   // so smooth surfaces round off and hard edges stay sharp.
-  const T = S.tris, fn = new Float32Array(T.length * 3), fu = new Float32Array(T.length * 3);
+  const T = S.tris;
+  if (faceNormals.unit.length !== T.length * 3) { // sized once per mesh, reused every step
+    faceNormals.unit = new Float32Array(T.length * 3);
+    faceNormals.area = new Float32Array(T.length * 3);
+  }
+  const fn = faceNormals.unit, fu = faceNormals.area;
   T.forEach(([a, b, c], t) => {
     const ux = v[3 * b] - v[3 * a], uy = v[3 * b + 1] - v[3 * a + 1], uz = v[3 * b + 2] - v[3 * a + 2];
     const wx = v[3 * c] - v[3 * a], wy = v[3 * c + 1] - v[3 * a + 1], wz = v[3 * c + 2] - v[3 * a + 2];
     const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, l = Math.hypot(nx, ny, nz) || 1;
-    fu.set([nx, ny, nz], 3 * t);
-    fn.set([nx / l, ny / l, nz / l], 3 * t);
+    fu[3 * t] = nx; fu[3 * t + 1] = ny; fu[3 * t + 2] = nz;
+    fn[3 * t] = nx / l; fn[3 * t + 1] = ny / l; fn[3 * t + 2] = nz / l;
   });
   T.forEach((corners, t) => corners.forEach((i, k) => {
     let x = 0, y = 0, z = 0;
@@ -666,11 +680,13 @@ async function run(frames) {
   }
   app.classList.add('running'); // marks a run in progress until the readouts are back (or fail)
   await busy(frames > 1 ? `${P.mode === 'morph' ? 'Morphing' : 'Running'} ${frames} readouts on ${P.backend}…` : `Encoding and reading once on ${P.backend}…`, async () => {
-    // a mesh too big for one lattice is read in several runs (stats.runs), never decimated
+    // a mesh too big for one lattice is read in several runs (stats.runs), never decimated.
+    // The settings are read before the request: ones changed while it runs belong to the
+    // next run, so the run button turns stale rather than claiming them.
+    const p = params(), key = runKey(), meshKey = meshKeyNow();
     const d = await call('run', { frames });
-    const p = params();
-    if (meshKeyNow() !== S.meshKey) setMesh(d, meshKeyNow());
-    Object.assign(S, { data: d, run: runKey(), frames: d.frames.map((f) => new Float32Array(f.flat())),
+    if (meshKey !== S.meshKey) setMesh(d, meshKey);
+    Object.assign(S, { data: d, run: key, frames: d.frames.map((f) => new Float32Array(f.flat())),
       refs: d.refs ? d.refs.map((r) => new Float32Array(r.flat())) : [], ts: d.ts || null, step: 0, seed0: p.seed });
     showInfo(d, p);
     S.focus = null;
@@ -692,7 +708,7 @@ function setEdges(r) {
   $('edges').textContent = r ? 'Hide edges' : 'Read edges';
   $('edgeLegend').hidden = !r;
   if (!r) { edgeLines.visible = false; return; }
-  const lo = Math.min(...r.exact), hi = Math.max(...r.exact), span = hi - lo || 1; // true edge range
+  const [lo, hi] = extent(r.exact), span = hi - lo || 1; // true edge range
   legend('edgeLegend', EDGE_HEX, lo.toFixed(3), hi.toFixed(3), 'edge length read from coherences');
   r.ends = r.edges.flat();
   edgeGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(r.ends.length * 3), 3));
@@ -1110,9 +1126,10 @@ $('qcanvas').addEventListener('pointerleave', () => setFocus(null));
 //   layer 2  a web of words on the left, every line from one hub beside the object
 //   layer 3  one setting's own web: outlined squares, bare words, or sliders
 // ====================================================================================
+let landedAt = -Infinity; // when the landing last showed: the object fades out over 600 ms, then stops drawing
 function setScreen(name) {
   app.dataset.screen = name;
-  if (name === 'landing') { closeAll(); S.playing = false; }
+  if (name === 'landing') { closeAll(); S.playing = false; landedAt = performance.now(); }
 }
 
 // object offset in stage px (left of, or in portrait above, the morph drop box)
@@ -1985,7 +2002,8 @@ function frame(now) {
     }
     if (moved) draw();
   }
-  renderer.render(scene, camera);
+  // the landing hides the viewer (opacity 0): once it has faded out, skip the GPU work
+  if (app.dataset.screen !== 'landing' || now - landedAt < 700) renderer.render(scene, camera);
 }
 
 // touch screens have no hover: say "tap" instead

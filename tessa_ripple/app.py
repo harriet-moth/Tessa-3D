@@ -207,7 +207,7 @@ class App:
         self.shape = None
         self.b_path, self.match, self.match_key, self.mode = None, None, None, None
         self.error = None  # status message of the last failed encode (e.g. an unreadable OBJ)
-        self.ie, self.ideal_cache = None, {}  # interference morph: its encoding, ideal frames per t
+        self.ie = None  # interference morph: its encoding
         self.kept = None  # interference: share of shots each frame was decoded from
         # morph front: picked source (None = auto), the mesh it belongs to, picking mode,
         # the front the cached frames were read with, per-step weights for the colour
@@ -217,7 +217,7 @@ class App:
         self.ax = fig.add_axes([0.0, 0.07, 0.49, 0.88], projection="3d")
         self.encoded = self.raw = self.raw_key = self.edge_data = None
         self.idx, self.playing, self.sec_per_frame, self.decoded, self.w = 0, False, None, [], {}
-        self.sec_per_run = {}  # backend -> seconds per run, for the Run frames estimate
+        self.sec_per_run = {}  # (backend, interference readout) -> seconds per run, for the Run frames estimate
 
         def radios(x, y, specs):
             """Labelled radio groups stacked down from (x, y) in figure coordinates.
@@ -738,7 +738,7 @@ class App:
             self.error = None
             # swap everything together, before say()/flush_events lets a tick draw
             self.verts, self.faces, self.encoded, self.enc_key = verts, faces, encoded, key
-            self.ie, self.ideal_cache, self.kept = ie, {}, None
+            self.ie, self.kept = ie, None
             self.face_mean = np.zeros((len(faces), len(verts)))  # face colour = mean of its corners
             for k, f in enumerate(faces):
                 self.face_mean[k, f] = 1 / len(f)
@@ -798,7 +798,7 @@ class App:
         if self.toggles()["auto"]:
             return self.run()
         stale = self.raw is not None and self.raw_key != self.decode_key(p)
-        est, per_run = "", self.sec_per_run.get(p.backend)
+        est, per_run = "", self.sec_per_run.get((p.backend, self.interfering))
         if per_run:  # last measured time of one run on this backend, times this mesh's runs
             n, sec = int(self.val("Frames")), per_run * s["runs"]
             est = f"  ≈{sec:.1f}s/frame, Run frames ≈{sec * n:.0f}s"
@@ -854,7 +854,7 @@ class App:
         if self.raw_front is not None:  # a front run shows the front, as the web version does
             self.set_quiet("Colour", COLOURS.index("front"))
         self.sec_per_frame = (time.time() - t0) / n
-        self.sec_per_run[p.backend] = self.sec_per_frame / runs
+        self.sec_per_run[(p.backend, self.interfering)] = self.sec_per_frame / runs
         self.idx = 0
         kept = f", decoded from {self.kept.mean():.0%} of shots (selector 0)" if self.kept is not None else ""
         self.say(f"{n} frame(s) in {time.time() - t0:.1f}s ({self.sec_per_frame:.2f}s/frame){kept}")
@@ -994,9 +994,8 @@ class App:
             list[np.ndarray]: (N, 3) expected positions per t.
         """
         a_dirs = self.morph_opts()["a_dirs"]
-        if self.interfering:  # exact noiseless frame (star statevectors), cached per t
-            ideal = [self.ideal_cache.setdefault(float(t), interf.ideal(self.ie, float(t))) for t in ts]
-            return [interf.frame(self.ie, x, t, "none", a_dirs) for x, t in zip(ideal, ts)]
+        if self.interfering:  # exact noiseless frame (star statevectors; interf.ideal caches per t)
+            return [interf.frame(self.ie, interf.ideal(self.ie, t), t, "none", a_dirs) for t in ts]
         return [morph_expected(self.encoded, t, a_dirs, front) for t in ts]
 
     def positions(self):
@@ -1326,8 +1325,8 @@ class App:
         names = (["polar", "azimuth", "r"] if e.payload == "spherical"
                  else ["r"] if len(m["vertices"][0]) == 1 else ["x", "y", "z"])
         split, morph = e.mode == "split" or e.payload == "spherical", e.mode == "morph"
-        where_b = (lambda c: f" in slot {self.ie.b_slots[i, c] - cells(e.graph)[m['vertices'][i][c][0], 0]}"  # noqa: E731
-                   if self.interfering else lambda c: " in φ")
+        where_b = ((lambda c: f" in slot {self.ie.b_slots[i, c] - cells(e.graph)[m['vertices'][i][c][0], 0]}")  # noqa: E731
+                   if self.interfering else (lambda c: " in φ"))
         both = lambda c: (f": A {e.prep.reference.reshape(e.slots.shape)[i, c]:+.3f}"  # noqa: E731
                           + ("" if self.interfering else " in θ")
                           + f", B {e.prep_b.reference.reshape(e.slots.shape)[i, c]:+.3f}{where_b(c)}") if morph else ""

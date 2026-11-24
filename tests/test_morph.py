@@ -275,9 +275,9 @@ def test_frames_at_t0_are_plain_z_readouts(b_path):
     """At alpha = 0 a frame decodes from its own Z readout, never against the shared one."""
     e, p = morph(A, AF, b_path, shots=256)
     vals = run_frames(e, p, 3)
+    own = bridge.tilted_angles(e, p, p.seed, 0.0, frames=3)  # the frames share one job
     for i in range(3):
-        own = bridge.tilted_angles(e, p, p.seed + i, 0.0)
-        assert np.array_equal(vals[i], bridge.transition_values(e, own, own, 0.0))
+        assert np.array_equal(vals[i], bridge.transition_values(e, own[i], own[i], 0.0))
 
 
 def test_transition_keeps_the_size_when_a_equals_b(tmp_path):
@@ -447,3 +447,15 @@ def test_front_values_not_yet_reached_are_their_own_z_readout(b_path):
     a_read = bridge.transition_values(e, own, own, 0.0)  # that readout read as A
     assert np.array_equal(got[per == 0], a_read[per == 0])
     assert not np.allclose(got[per > 0], a_read[per > 0])
+
+
+@pytest.mark.parametrize("payload", ["radial", "xyz"])
+def test_drr_stretches_a_frame_towards_its_own_t_not_towards_a(b_path, payload):
+    """At t = 1 the frame is B: DRR against A's range would pull it back towards A."""
+    e, p = morph(A, AF, b_path, payload=payload, shots=65536)
+    raw = decode_raw(e, Params(**{**p.__dict__, "morph_t": 1.0}))
+    want = morph_expected(e, 1.0)
+    plain = mesh_error(want, morph_frame(e, raw, 1.0))
+    assert mesh_error(want, morph_frame(e, raw, 1.0, "mean_std")) < 1.5 * plain
+    against_a = mesh_error(want, bridge.restore(e, raw, "min_max", bridge.morph_dirs(e, 1.0)))  # A's input
+    assert mesh_error(want, morph_frame(e, raw, 1.0, "min_max")) < 0.5 * against_a

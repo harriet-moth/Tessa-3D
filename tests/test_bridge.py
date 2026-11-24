@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -161,3 +163,17 @@ def test_spherical_payload_needs_theta_mode():
 def test_removed_modes_are_rejected(mode):
     with pytest.raises(ValueError, match="unknown mode"):
         encode_mesh(V, F, Params(mode=mode))
+
+
+def test_resources_count_every_run_of_a_batched_mesh():
+    """A mesh read in several runs costs every run's measurement settings."""
+    from tessa_ripple.mesh import load_obj
+    v, f = load_obj(Path(__file__).parent.parent / "tessa_ripple" / "suzanne.obj")
+    e = encode_mesh(v, f, Params(payload="xyz"))
+    assert e.runs > 1
+    assert resources(e)[0]["settings"] == e.runs
+
+
+def test_read_edges_of_a_mesh_without_faces_is_empty():
+    E, measured, exact = read_edges(np.zeros((3, 3)), [], Params())
+    assert E.shape == (0, 2) and measured.size == exact.size == 0
