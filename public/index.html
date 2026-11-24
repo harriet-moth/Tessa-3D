@@ -67,6 +67,7 @@
           <button class="arc-label" role="menuitem" data-panel="compression">Compression</button>
         </div>
         <div id="decodeArc" class="arc decode" role="menu" aria-label="Decode settings">
+          <button class="arc-label" role="menuitem" data-panel="readout">Readout</button>
           <button class="arc-label" role="menuitem" data-panel="drr">DRR</button>
           <button class="arc-label" role="menuitem" data-panel="frames">Frames</button>
           <button class="arc-label" role="menuitem" data-panel="shots">Shots</button>
@@ -158,6 +159,7 @@
     <h2>View</h2>
     <div class="seg" role="radiogroup" aria-label="View"><button data-set="view" data-value="fidelity" class="on">Fidelity</button><button data-set="view" data-value="material">Material</button></div>
     <label><span>Gain <small>(material)</small></span><input id="gain" type="range" min="0" max="10" step="0.1" value="3"><output></output></label>
+    <div class="seg" role="radiogroup" aria-label="Gain by"><button data-set="gain_by" data-value="shots" class="on" title="Fewer shots (shots ÷ gain²): the motion is the readout's own noise. Needs Run">By shots</button><button data-set="gain_by" data-value="×" title="Scale each vertex's deviation: an exaggeration drawn on top">Scaled ×</button></div>
     <div class="seg" role="radiogroup" aria-label="Colour"><button data-set="colour" data-value="glow" class="on">Glow</button><button data-set="colour" data-value="error">Error</button><button data-set="colour" data-value="qubit">Qubit</button><button data-set="colour" data-value="front" title="Morph front: how far each vertex has turned from A (0) to B (1)">Front</button></div>
     <label>In-between<input id="between" type="range" min="0" max="30" step="1" value="8"><output></output></label>
     <label>Speed (fps)<input id="fps" type="range" min="1" max="60" step="1" value="24"><output></output></label>

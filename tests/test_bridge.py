@@ -132,7 +132,7 @@ def test_split_mode_fits_suzanne_xyz_and_reads_back():
     p = Params(payload="xyz", mode="split")
     e = encode_mesh(v, f, p)
     pos = set(zip(e.slots.ravel(), e.fields.ravel()))
-    assert len(pos) == e.slots.size and e.fields.any() and e.enc.mode == "pair"  # every value its own (slot, field)
+    assert len(pos) == e.slots.size and e.fields.any() and e.enc.mode == "pair_full"  # every value its own (slot, field)
     assert mesh_error(v, read_mesh(e, p)) < 0.05
 
 
@@ -231,3 +231,63 @@ def test_scaled_resources_match_a_real_encoding_of_that_size():
     assert (tessa["runs"], tessa["qubits"]) == (big.runs, big.graph.n_qubits)
     assert angle["qubits"] == s["values"] and not angle["fits"]
     assert scaled_resources(encode_mesh(V, F, Params(payload="spectral")), p) is None
+
+
+# --- readouts that lean on Tessa: Bloch direction, snapped constellation, pilot slots ------
+def _mean_error(e, p, n=3, drr="none"):
+    from tessa_ripple.bridge import decode_frames, encoded_shape, restore
+    return np.mean([mesh_error(encoded_shape(e), restore(e, r, drr)) for r in decode_frames(e, p, n)])
+
+
+def test_split_reads_phi_on_the_full_circle_with_less_error_under_noise():
+    V, F = blob(12, 8)
+    half = Params(mode="split", backend="flat noise", shots=6144)
+    e = encode_mesh(V, F, half)
+    assert e.enc.mode == "pair_full" and resources(e)[0]["settings"] == 3
+    assert _mean_error(e, half) < 0.012  # the half circle (Z, X) gave 0.016 here
+
+
+def test_bloch_readout_is_the_same_circuit_read_in_three_bases():
+    V, F = blob(12, 8)
+    z, bloch = Params(backend="flat noise"), Params(backend="flat noise", readout="bloch")
+    ez, eb = encode_mesh(V, F, z), encode_mesh(V, F, bloch)
+    assert ez.circuit == eb.circuit and not eb.pair  # no gate added, still one field
+    assert resources(eb)[0]["settings"] == 3 and resources(ez)[0]["settings"] == 1
+    assert _mean_error(eb, bloch) < 0.8 * _mean_error(ez, z)  # the shrink cancels
+
+
+def test_snap_readout_returns_exact_levels_noiseless():
+    from tessa_ripple.bridge import SNAP_LEVELS, decode_raw
+    V, F = blob(12, 8)
+    p = Params(readout="snap", shots=16384)
+    e = encode_mesh(V, F, p)
+    lo, hi = e.enc.ranges[0]
+    want = lo + (hi - lo) * np.rint((e.prep.reference - lo) / (hi - lo) * (SNAP_LEVELS - 1)) / (SNAP_LEVELS - 1)
+    assert np.mean(np.isclose(decode_raw(e, p), want)) > 0.99
+
+
+def test_pilots_measure_the_noise_shrink_on_the_chip():
+    V, F = blob(12, 8)
+    plain, pil = Params(backend="flat noise", noise_strength=3.0), Params(backend="flat noise", noise_strength=3.0, pilots=True)
+    e = encode_mesh(V, F, pil)
+    assert all(len(s) >= 2 for s, _ in e.pilots)
+    assert _mean_error(e, pil, drr="pilots") < 0.75 * _mean_error(encode_mesh(V, F, plain), plain)
+
+
+@pytest.mark.parametrize("kw, words", [
+    (dict(mode="split", readout="bloch"), "bloch readout reads one θ field"),
+    (dict(payload="spherical", readout="snap"), "snap readout reads one θ field"),
+    (dict(mode="split", pilots=True), "pilot DRR reads one θ field"),
+    (dict(readout="snap", pilots=True), "needs no pilots"),
+    (dict(readout="x"), "unknown readout"),
+])
+def test_readouts_refuse_what_they_cannot_read(kw, words):
+    V, F = blob(8, 6)
+    with pytest.raises(ValueError, match=words):
+        encode_mesh(V, F, Params(**kw))
+
+
+def test_gain_shots_scales_shot_noise():
+    from tessa_ripple.bridge import MAX_SHOTS, MIN_SHOTS, gain_shots
+    assert gain_shots(4096, 2) == 1024 and gain_shots(4096, 1) == 4096
+    assert gain_shots(4096, 0) == MAX_SHOTS and gain_shots(4096, 10) == MIN_SHOTS

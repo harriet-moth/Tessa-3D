@@ -11,8 +11,10 @@ It tells two stories, one per **View**:
   makes Tessa different: many values per qubit, no SWAPs on a real chip, few
   readout outcomes per value, a second field in the phase, and edge lengths read
   straight from the state's coherences.
-- **Material**: the artistic mode. A gain slider exaggerates the readout noise so
-  it reads as a ripple, clearly labelled as exaggeration.
+- **Material**: the artistic mode. A gain slider makes the readout noise larger so
+  it reads as a ripple. By default the readout itself does it: gain g reads with
+  shots ÷ g², so every vertex still sits where the readout put it. *Scaled ×*
+  multiplies the deviations instead, clearly labelled as exaggeration.
 
 Nothing is added to the circuit to make things move. All movement comes from
 variation Tessa's readout already has: **shot noise** and **simulated hardware
@@ -93,7 +95,7 @@ How it works:
 - **Settings:** click (or tap) the object:
   **Encode** and **Decode** tabs appear up and down to its left, each with a leader
   line angled in towards it. Click one to open its arc of options
-  (**load**, **mode**, **vert layout**, **clamps**, **compression**; **DRR**,
+  (**load**, **mode**, **vert layout**, **clamps**, **compression**; **readout**, **DRR**,
   **frames**, **shots**, **chip placement**, **backend**); click anywhere else to
   close. A drag still rotates the object. Each arc sweeps out of the round back
   button on its end, and choosing an option sweeps it back in while that setting's
@@ -628,12 +630,14 @@ it opens exactly as exported.
 **Mode** (shape θ (Z) / shape θ+φ / morph A→B)
 
 What each slot's qubit holds, and which basis reads it. Each slot is a qubit
-state `cos(θ/2)|0⟩ + e^{iφ} sin(θ/2)|1⟩`: θ is read in the Z basis, φ in the X
-basis.
+state `cos(θ/2)|0⟩ + e^{iφ} sin(θ/2)|1⟩`: θ is read in the Z basis, φ from X (and Y).
 - *Shape θ (Z)* (Tessa's `single` mode, the default): one value per slot, in θ,
-  read in Z.
-- *Shape θ+φ* (Tessa's `pair` mode): the mesh itself is packed two values
-  per slot, so twice as many vertices fit on the same qubits.
+  read as **Readout** says (below).
+- *Shape θ+φ* (Tessa's `pair_full` mode): the mesh itself is packed two values
+  per slot, so twice as many vertices fit on the same qubits. φ uses the whole
+  circle, read in Z, X and Y (Tessa's `zxy`): twice the room of the half circle,
+  so under noise about half the error at equal total shots (blob, flat noise:
+  0.016 → 0.0085; Phoenix: 0.0071 → 0.0054).
   - With the mesh layout, each data qubit holding C values per field takes
     2C: its θ field fills first ([x1…xm, y1…] in order), then its φ field.
   - A vertex's x, y and z stay on one data qubit wherever whole vertices fit.
@@ -798,15 +802,43 @@ on the far side.
 
 ### Post-processing and animation (instant, no quantum work)
 
-**DRR** (none / min_max / mean_std / percentile / abs_max / min_avg_max)
+**DRR** (none / min_max / mean_std / percentile / abs_max / min_avg_max; *pilots*: see below)
 - *In practice:* undoes the shrink that hardware noise causes.
 - *In Tessa:* `restore_field(dynamic_range=...)` stretches each decoded frame so a
   few summary statistics match the original values. `mean_std` is the paper's
   choice for hardware.
 
-**Gain (material)** (0–10×; default 3)
+**Readout** (Z / Bloch / snap; *shape θ (Z)*, not the spherical payload; needs a new Run)
+- *Z*: θ read in Z, one measurement setting.
+- *Bloch*: the same circuit (φ = 0, so no gate is added) read in Z, X and Y, θ =
+  atan2(√(⟨X⟩²+⟨Y⟩²), ⟨Z⟩) (Tessa's `pair_full` decode). Depolarising noise shrinks
+  the Bloch vector but not its direction, so the shrink cancels with no statistics
+  of the input: 25–40 % less error than Z on the blob, and on xyz across the whole
+  of Phoenix less than Z with classical DRR (0.034 against 0.041).
+- *Snap*: each value rounded to one of 64 levels, each level a point spread over the
+  Bloch sphere (Tessa's `encode_symbols` constellation, placed at the mesh's own
+  slots), read in Z, X and Y and snapped to the nearest point. Exact while the noise
+  keeps each point nearest its own: on Phoenix the radial blob comes back with only
+  its rounding error (0.0006 against 0.0054 for Z). Noise then shows as an occasional
+  vertex jumping, not a ripple. One value per slot only: two (64² points) sit too close.
+
+**DRR: pilots**
+- *Pilots* (*shape θ (Z)*, not snap; needs a new Run): every spare slot of each run holds a
+  known value (5 % above the bottom or below the top of the range), read with the
+  mesh; the straight line taking their readings back to their values corrects the
+  whole run. The correction is measured on the chip, not taken from the input's
+  statistics. Pilots add no gates on the mesh's own data qubits; a data qubit holding
+  only pilots gains its multiplexer (blob on Phoenix: 344 → 404 CZ), which pays: the
+  mesh's own spare slots alone are too few to fit the line. Close to `mean_std` on the
+  radial blob, better on spectral (Phoenix: 0.0098 against 0.015).
+
+**Gain (material)** (0–10×; default 3) and **Gain by** (shots / scaled ×)
 - *In practice:* how visible the noise is, in the material view only.
-- *In Tessa:* nothing. It is applied as `out = orig + gain · (decoded − orig)`.
+- *By shots* (default; needs a new Run): the run reads at shots ÷ gain² (at least
+  256), so the shot noise really is gain times larger and the mesh shows true decoded
+  positions. Chip gate noise does not scale this way, only shot noise.
+- *Scaled ×*: nothing in Tessa; applied as `out = orig + gain · (decoded − orig)`.
+  On the desktop these are **View** *material* and *material ×*.
 
 **Frames** (2–60)
 - *In practice:* how many readouts **Run frames** collects.

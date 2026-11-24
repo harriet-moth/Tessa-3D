@@ -32,8 +32,8 @@ from PIL import Image
 
 from . import animate as anim
 from . import interfere as interf
-from .bridge import (BACKENDS, DEVICES, DRR_METHODS, MAX_COLS, MAX_ROWS, PAYLOADS, Lattice, Params,
-                     cap_spectral, cells, encode_mesh, encoded_shape, fidelity_curves, front_weights, mesh_error,
+from .bridge import (BACKENDS, DEVICES, DRR_CHOICES, MAX_COLS, MAX_ROWS, PAYLOADS, READOUTS, Lattice, Params,
+                     cap_spectral, gain_shots, cells, encode_mesh, encoded_shape, fidelity_curves, front_weights, mesh_error,
                      morph_clamp, morph_expected, morph_frame, qubit_map, read_edges, resources, restore,
                      vertex_qubits)
 from .bridge import front_source as auto_source
@@ -45,6 +45,9 @@ RES = ("low", "mid", "high")
 DECIMATIONS = {"low": 2, "mid": 1, "high": 0}  # halvings of an uploaded OBJ per Resolution
 FIT_VERTICES = Lattice(MAX_ROWS, MAX_COLS).capacity  # 792: high fits radial on the largest lattice
 COLOURS = ("error", "qubit", "morph Δ", "front", "plain")
+# fidelity: gain 1; material: the gain made by fewer shots (the readout's own noise);
+# material ×: each vertex's deviation scaled (an exaggeration drawn on top)
+VIEWS = ("fidelity", "material", "material ×")
 SPECTRAL_K_MAX = 300  # Spectral k slider's top; any k past one run's cap encodes the cap
 # Mode: what each slot's qubit holds (bridge.MODES)
 MODE_LABELS = {"shape θ (Z)": "theta", "shape θ+φ": "split", "morph A→B": "morph"}
@@ -240,8 +243,9 @@ class App:
         radios(0.50, 0.98, [("Shape", list(PRESETS)), ("Resolution", RES),
                             ("Payload", list(PAYLOADS)), ("Mode", list(MODE_LABELS)),
                             ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS),
-                            ("Placement", ["quality", "graph"]), ("DRR", DRR_METHODS)])
-        y = radios(0.855, 0.98, [("View", ["fidelity", "material"]), ("Colour", COLOURS)])
+                            ("Placement", ["quality", "graph"]), ("DRR", DRR_CHOICES)])
+        # material: the gain made by fewer shots (bridge.gain_shots); material ×: deviations scaled
+        y = radios(0.855, 0.98, [("View", VIEWS), ("Colour", COLOURS), ("Readout", READOUTS)])
         for name, y0, lo, hi, init, step in [
             # tier 1: encoder
             ("Clamp θ (π)", 0.95, 0, 0.45, 0.0, None), ("Clamp φ (π)", 0.92, 0, 0.45, 0.0, None),
@@ -279,7 +283,8 @@ class App:
         self.info = fig.text(0.855, y - 0.06 - len(buttons) * 0.045, "", fontsize=8,
                              family="monospace", va="top")
 
-        for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Placement", "Clamp θ (π)",
+        for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Placement", "Readout", "DRR",
+                     "View", "Gain (material)", "Clamp θ (π)",
                      "Clamp φ (π)", "Compression %", "Quant bits", "Headroom", "Spectral k", "Shots (log2)",
                      "Noise × (flat)", "Seed", "Morph t", "Front width"):
             w = self.w[name]
@@ -410,8 +415,9 @@ class App:
                       headroom=self.val("Headroom"), backend=self.val("Backend"),
                       placement=self.val("Placement"),
                       target=self.b_path if mode == "morph" else None, shared_topology=morph["shared"],
-                      shots=2 ** int(self.val("Shots (log2)")),
+                      shots=self.shots(),
                       noise_strength=self.val("Noise × (flat)"), seed=int(self.val("Seed")),
+                      readout=self.val("Readout"), pilots=self.val("DRR") == "pilots",
                       morph_t=float(self.val("Morph t")),
                       spectral_k=int(self.val("Spectral k")) or None,
                       morph_front=morph["front"] and not morph["interf"] and self.val("Payload") != "spectral",
@@ -632,6 +638,25 @@ class App:
             return (), None
         path = self.objs[shape]  # both cached: the Shape preset already decimated it
         return load_decimated(path, obj_passes(path, res_name))[2], len(load_decimated(path)[0])
+
+    def shots(self) -> int:
+        """Shots per setting: the Shots slider's, or in View material fewer, so the
+        readout's own noise carries the gain (``bridge.gain_shots``).
+
+        Returns:
+            int: Shots.
+        """
+        shots = 2 ** int(self.val("Shots (log2)"))
+        return gain_shots(shots, self.val("Gain (material)")) if self.val("View") == "material" else shots
+
+    @property
+    def scale(self) -> float:
+        """The gain drawn on top of the decoded positions: View material × only.
+
+        Returns:
+            float: The Gain slider in material ×, else 1 (true decoded positions).
+        """
+        return self.val("Gain (material)") if self.val("View") == "material ×" else 1.0
 
     @property
     def fidelity(self):
@@ -1002,10 +1027,10 @@ class App:
             refs = [encoded_shape(e)] * n  # the mesh itself, or spectral's truncated mesh
         self.refs = refs
         self.err = np.mean([mesh_error(ref, d) for ref, d in zip(refs, self.decoded)])
-        if self.fidelity:  # true decoded positions, nothing exaggerated
+        if self.scale == 1.0:  # true decoded positions (material: the shots carry the gain)
             keys = self.decoded
         else:
-            keys = [anim.blend(ref, d, self.val("Gain (material)")) for ref, d in zip(refs, self.decoded)]
+            keys = [anim.blend(ref, d, self.scale) for ref, d in zip(refs, self.decoded)]
         t = self.toggles()
         lead = [refs[0]] if t["orig"] else []
         glide = lambda k: k if len(k) == 1 else anim.timeline(k, int(self.val("In-between")), t["loop"])  # noqa: E731
@@ -1124,8 +1149,10 @@ class App:
         self.src_mark.set_data_3d(*v[[src]].T) if src is not None else self.src_mark.set_data_3d([], [], [])
         if self.fidelity:
             head = "Fidelity · gain 1 (true decoded positions)"
+        elif self.val("View") == "material":
+            head = f"Material · gain {self.val('Gain (material)'):.1f}× by shots ({self.shots():,}: true positions)"
         else:
-            head = f"Material · gain {self.val('Gain (material)'):.1f}× (noise exaggerated)"
+            head = f"Material × · gain {self.val('Gain (material)'):.1f}× (noise scaled)"
         err = f" · mean err {self.err:.4f} of bbox" if self.raw is not None else ""
         if self.morphing:
             if self.raw is None:
@@ -1350,7 +1377,7 @@ class App:
         elif self.encoded.payload == "spectral":  # the truncated mesh a noiseless readout returns
             o, ref = encoded_shape(self.encoded)[i], "modes k "
         fmt = lambda a: "(" + ", ".join(f"{c:+.4f}" for c in a) + ")"  # noqa: E731
-        gain = 1.0 if self.fidelity else self.val("Gain (material)")
+        gain = self.scale
         where = ("on every mode's data qubits" if self.encoded.payload == "spectral"
                  else f"on data qubit {self.vq[i]}")
         self.tip.set_text(f"vertex {i} {where}   (gain {gain:.1f}x, step {self.idx + 1})\n"

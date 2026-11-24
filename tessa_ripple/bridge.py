@@ -25,8 +25,8 @@ from qiskit import ClassicalRegister, QuantumCircuit, transpile
 from qiskit.circuit.library import StatePreparation, UCRYGate
 from tessa import (DYNAMIC_RANGE_METHODS, Lattice, backend_rates, build_average_noise_model,
                    build_local_noise_model, cell_circuit, cell_halo, decode_from_cell_counts, encode,
-                   graph_from_coupling, prepare_field, probe_qubits, rectangular_layout, restore_field,
-                   slot_order, square_lattice_edges)
+                   encode_symbols, graph_from_coupling, prepare_field, probe_qubits, rectangular_layout,
+                   restore_field, slot_order, square_lattice_edges, symbols_from_counts)
 from tessa.backends import device_of
 from tessa.backends.aer import _TWO_QUBIT_GATES, _aer_sampler, topology_device
 from tessa.codec import _check_traceable, _measured, _normalise, _trace_halo
@@ -48,12 +48,29 @@ BACKENDS = ("noiseless", "flat noise", *DEVICES)
 PLACEMENTS = ("graph", "quality")
 QUALITY_FILE = Path(__file__).with_name("quality.json")  # probe_qubits scores per chip snapshot
 # What each slot's qubit holds. One value per slot in theta, read in Z (Tessa's "single"
-# mode). Two values per slot (Tessa's "pair" mode): more geometry (twice the vertices
-# fit). Morph: mesh A in theta, a second mesh B (one matched point per A vertex) in phi,
+# mode; READOUTS for other ways to read it). Split: two values per slot, the second in
+# phi on the full circle, read in Z, X and Y (Tessa's "pair_full" mode): more geometry
+# (twice the vertices fit). Morph: mesh A in theta, a second mesh B (one matched point per A vertex) in phi,
 # in the same slots, read by a basis sweep: at t the data qubits are measured along
 # cos(alpha) Z + sin(alpha) X, alpha = t * pi/2, and Tessa's transition decode divides
 # out sin(theta) with an alpha = 0 (Z) readout (exactly A at t = 0, exactly B at t = 1).
 MODES = ("theta", "split", "morph")
+# How a one-field (Mode θ) encoding is read. "z": θ in Z, one setting. "bloch": the same
+# circuit (φ = 0) read in Z, X and Y, θ = atan2(|<X>, <Y>|, <Z>): depolarising noise
+# shrinks the Bloch vector, not its direction, so the shrink cancels without any
+# statistics of the input. "snap": each value rounded to one of SNAP_LEVELS points spread
+# over the Bloch sphere (tessa.symbols' constellation), read in Z, X and Y and snapped to
+# the nearest: exact while the noise keeps each point nearest its own.
+READOUTS = ("z", "bloch", "snap")
+SNAP_LEVELS = 64
+# Pilots: known values in every spare slot of each run, read with the mesh; the line
+# taking their readings back to their values corrects the whole run (a DRR measured on
+# the chip, not taken from the input). On the mesh's own data qubits they add no gates; a
+# data qubit holding only pilots gains its multiplexer (blob on Phoenix: 344 → 404 CZ),
+# which pays: pilots on the mesh's qubits alone fit worse than no correction there. Each
+# run keeps room for at least PILOT_ROOM of them.
+PILOT_ROOM = 2
+MIN_SHOTS, MAX_SHOTS = 256, 65536
 # meshes too big for one run are read in batches; on a chip each later batch starts
 # on the next-best data qubits, so the best ones are spread across the runs
 BATCH_SEED_STEP = 1000  # batch k of a readout with seed s uses seed s + 1000 k
@@ -61,6 +78,7 @@ BATCH_SEED_STEP = 1000  # batch k of a readout with seed s uses seed s + 1000 k
 # draw: seed s + 2**20, clear of every frame seed (s + i) and batch seed (s + 1000 k)
 REFERENCE_SEED_OFFSET = 1 << 20
 DRR_METHODS = DYNAMIC_RANGE_METHODS  # Tessa's dynamic range recovery methods
+DRR_CHOICES = (*DRR_METHODS, "pilots")  # the apps' DRR menu: "pilots" sets Params.pilots
 SPECTRAL_FRONT = ("The morph front needs one row per vertex; the spectral payload's qubits hold "
                   "modes of the whole surface, not patches of it. Use the uniform sweep or the "
                   "interference readout.")
@@ -107,6 +125,9 @@ class Params:
             diagonal) for the automatic k.
         spectral_band: Spectral: scale each mode to fill [-1, 1] (on by default; off
             shares one range across modes, for the experiments only).
+        readout: One of READOUTS: how a Mode θ encoding is read (not spherical).
+        pilots: Keep known pilot values in spare slots and correct each run by them
+            (Mode θ, not spherical or snap): the DRR menu's "pilots".
 
     Readout settings (changing these re-decodes; a chip backend also changes the graph):
 
@@ -137,6 +158,8 @@ class Params:
     spectral_k: int | None = None
     spectral_tol: float = 0.01
     spectral_band: bool = True
+    readout: str = "z"
+    pilots: bool = False
     # readout (changing these re-decodes; a chip backend also changes the graph)
     backend: str = "noiseless"
     shots: int = 4096
@@ -164,7 +187,8 @@ class Params:
                 self.compression, self.quant_bits, self.headroom, graph,
                 self.placement if graph != "lattice" else "graph",
                 *((self.target, self.shared_topology) if morph else ()),
-                *((self.spectral_k, self.spectral_tol, self.spectral_band) if spec else ()))
+                *((self.spectral_k, self.spectral_tol, self.spectral_band) if spec else ()),
+                self.readout, self.pilots)
 
     @property
     def readout_key(self):
@@ -230,6 +254,8 @@ class Encoded:
         spectral: Spectral: ``k`` (non-constant modes), ``rows`` (encoded modes),
             ``error_a``/``error_b`` (truncation error over the bounding-box diagonal;
             ``error_b`` None outside morph), else None.
+        readout: One of READOUTS.
+        pilots: With ``Params.pilots``: per run, ``(slots, values)`` of its pilots; else ().
         _sweeps: Cache of :func:`sweep_circuit` results per (part, alpha).
         _fronts: Cache of :func:`front_distances` per source vertex.
         _jobs: Cache of :func:`_cell_jobs` per (circuit, device).
@@ -258,6 +284,8 @@ class Encoded:
     scales: np.ndarray | None = None
     basis: np.ndarray | None = None
     spectral: dict | None = None
+    readout: str = "z"
+    pilots: tuple = ()
     _sweeps: dict = dc_field(default_factory=dict, compare=False, repr=False)
     _fronts: dict = dc_field(default_factory=dict, compare=False, repr=False)
     _jobs: dict = dc_field(default_factory=dict, compare=False, repr=False)
@@ -303,10 +331,10 @@ class Encoded:
         """Whether the encoding uses a Tessa pair mode (a second field in φ).
 
         Returns:
-            bool: True for split, morph (``pair``) and the spherical payload
-            (``pair_full``).
+            bool: True for split, morph and the spherical payload. (A Bloch or snap
+            readout reads one field in Tessa's ``pair_full`` mode: not a pair.)
         """
-        return get_mode(self.enc.mode).is_pair
+        return self.mode in ("split", "morph") or self.payload == "spherical"
 
     @property
     def device(self) -> str | None:
@@ -476,10 +504,10 @@ def run_positions(p: Params, per_slot: int = 1) -> int:
         per_slot: Positions per slot: 1, or 2 for split mode.
 
     Returns:
-        int: Capacity of one run in values.
+        int: Capacity of one run in values (less the pilots' room).
     """
     graph = devices.graph(p.backend) if p.backend in DEVICES else Lattice(MAX_ROWS, MAX_COLS)
-    return per_slot * graph.capacity
+    return per_slot * graph.capacity - (PILOT_ROOM if p.pilots else 0)
 
 
 def spectral_cap(n_verts: int, p: Params, positions: int | None = None) -> int:
@@ -951,6 +979,15 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         raise ValueError("The spherical payload fills θ and φ itself; use Mode θ (Z)")
     if spec and p.front is not None:
         raise ValueError(SPECTRAL_FRONT)
+    if p.readout not in READOUTS:
+        raise ValueError(f"unknown readout {p.readout!r}; use one of {READOUTS}")
+    if (p.readout != "z" or p.pilots) and (mode != "theta" or spherical):
+        what = "pilot DRR" if p.readout == "z" else f"The {p.readout} readout"
+        raise ValueError(f"{what} reads one θ field: use Mode θ and a payload other than spherical "
+                         "(spherical already reads its direction in Z, X and Y)")
+    if p.pilots and p.readout == "snap":
+        raise ValueError("Snap readout snaps to its own levels: it needs no pilots (choose another DRR)")
+    room = PILOT_ROOM if p.pilots else 0
     per = 2 if mode == "split" else 1
     verts = np.asarray(verts, dtype=float)
     vals_b = dirs_b = prep_b = match = tgt = sp = None
@@ -996,17 +1033,17 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         quality = chip_quality(p.backend)
     else:
         try:
-            graph = fit_lattice(n, slot_comps, mesh_layout, per)
+            graph = fit_lattice(n + room, slot_comps, mesh_layout, per)  # room: pilots' spare slots
         except ValueError:  # too big for the largest lattice: read it in several runs
             graph = Lattice(MAX_ROWS, MAX_COLS)
         name = f"{graph.rows}x{graph.cols} lattice"
-    k_runs = batches_needed(n, slot_comps, per * graph.capacity)
+    k_runs = batches_needed(n, slot_comps, per * graph.capacity - room)
     groups = split_batches(verts, faces, k_runs) if k_runs > 1 else [np.arange(n)]
     slots, field = np.empty((n, comps), int), np.empty((n, comps), int)
     batch = np.zeros(n, int)
     vals = flat.reshape(n, comps)
     vals_b = None if vals_b is None else flat_b.reshape(n, comps)
-    parts, skip = [], 0
+    parts, skip, pilots = [], 0, []
     for k, idx in enumerate(groups):
         if k_runs == 1:
             v_k, f_k = verts, faces
@@ -1036,8 +1073,10 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         if spherical:
             parts.append(_spherical_circuit(graph, p, s_k, fld_k, vals[idx]))
             continue
+        pil = _pilots(graph, s_k, rng) if p.pilots else None
+        pilots.append(pil)
         parts.append(_circuit(graph, mode, p, s_k, fld_k, vals[idx],
-                              None if vals_b is None else vals_b[idx], rng, clamp, clamp_b))
+                              None if vals_b is None else vals_b[idx], rng, clamp, clamp_b, pil))
     circuit, enc, single_twoq = parts[0]
     return Encoded(verts, faces, graph, name, circuit, enc, prep, slots, p.payload, centre,
                    dirs, single_twoq, quality,
@@ -1046,7 +1085,8 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
                    batch=batch if k_runs > 1 else None,
                    target=None if match is None else tgt,
                    dirs_b=dirs_b, prep_b=prep_b, match=match, scales=scales,
-                   basis=None if sp is None else sp["basis"], spectral=None if sp is None else sp["info"])
+                   basis=None if sp is None else sp["basis"], spectral=None if sp is None else sp["info"],
+                   readout=p.readout, pilots=tuple(pilots) if p.pilots else ())
 
 
 def _spherical_circuit(graph, p: Params, slots, field, vals):
@@ -1078,10 +1118,13 @@ def _spherical_circuit(graph, p: Params, slots, field, vals):
     return circuit, enc, two_qubit(single)
 
 
-def _circuit(graph, mode, p: Params, slots, field, vals, vals_b, rng, clamp, clamp_b):
+def _circuit(graph, mode, p: Params, slots, field, vals, vals_b, rng, clamp, clamp_b, pilots=None):
     """One run's circuit via ``tessa.encode``.
 
-    Split and morph use Tessa's pair mode, a second field in φ.
+    Split uses Tessa's ``pair_full`` mode, a second field in φ on the full circle, read
+    in Z, X and Y (twice the half circle's room: about half the error under noise);
+    morph its ``pair`` mode, φ on the half circle, which the basis sweep reads between
+    Z and X. Mode θ is read as ``p.readout`` says (READOUTS).
 
     Args:
         graph: Tessa ``Lattice`` or ``TessaGraph``.
@@ -1094,24 +1137,158 @@ def _circuit(graph, mode, p: Params, slots, field, vals, vals_b, rng, clamp, cla
         rng: ``(lo, hi)`` value range shared by the geometry fields.
         clamp: θ clamp (ignored for morph's θ-only reference circuit).
         clamp_b: φ clamp.
+        pilots: ``(slots, values)`` of known values for spare slots (:func:`_pilots`), or None.
 
     Returns:
-        tuple: ``(circuit, enc, single_twoq)``: the circuit, its Tessa ``Encoding``, and
-        the two-qubit gates of the θ field alone.
+        tuple: ``(circuit, enc, single_twoq)``: the circuit, its Tessa ``Encoding`` (a
+        :class:`SnapEncoding` for the snap readout), and the two-qubit gates of the θ
+        field alone.
     """
-    a = fill(graph, slots[field == 0], vals[field == 0])
+    if mode == "theta" and p.readout == "snap":
+        circuit, enc = _snap_circuit(graph, slots, vals, rng)
+        return circuit, enc, two_qubit(circuit)
+    s0, v0 = slots[field == 0], vals[field == 0]
+    if pilots is not None:
+        s0, v0 = np.r_[s0, pilots[0]], np.r_[v0, pilots[1]]
+    a = fill(graph, s0, v0)
     kw = dict(value_range=rng, compression=p.compression)
     single, enc = encode(graph, a, clamp=None if mode == "morph" else clamp, **kw)
     single_twoq = two_qubit(single)
     if mode == "theta":
+        if p.readout == "bloch":  # the same circuit (φ = 0), decoded from Z, X and Y
+            enc = replace(enc, mode="pair_full", clamps=(enc.clamps[0], 0.0), ranges=(enc.ranges[0], (0.0, 1.0)))
         return single, enc, single_twoq
-    # Tessa pair mode: a second field in φ on the same scale, read in the X basis
+    # a second field in φ on the same scale
     if mode == "morph":  # B's matching value in the same slot
         b = fill(graph, slots, vals_b)
-    else:  # split: the values placed in φ
+        circuit, enc = encode(graph, a, b, clamp=clamp, clamp_b=clamp_b, value_range_b=rng, **kw)
+    else:  # split: the values placed in φ, on the full circle
         b = fill(graph, slots[field == 1], vals[field == 1])
-    circuit, enc = encode(graph, a, b, clamp=clamp, clamp_b=clamp_b, value_range_b=rng, **kw)
+        circuit, enc = encode(graph, a, b, mode="pair_full", clamp=clamp, clamp_b=clamp_b, value_range_b=rng, **kw)
     return circuit, enc, single_twoq
+
+
+@dataclass(frozen=True)
+class SnapEncoding:
+    """A snap readout's Tessa ``SymbolEncoding``, with the value range its levels span.
+
+    Attributes:
+        symbols: Tessa's ``SymbolEncoding`` (constellation, one symbol per slot).
+        ranges: ``((lo, hi),)``: level 0 is ``lo``, level SNAP_LEVELS - 1 is ``hi``.
+    """
+    symbols: object
+    ranges: tuple
+
+    @property
+    def graph(self):
+        """The graph the symbols sit on.
+
+        Returns:
+            Tessa ``Lattice`` or ``TessaGraph``.
+        """
+        return self.symbols.graph
+
+    @property
+    def mode(self) -> str:
+        """Tessa's mode underneath (``pair_full``: read in Z, X and Y).
+
+        Returns:
+            str: The mode name.
+        """
+        return self.symbols.mode
+
+    def values(self, counts) -> np.ndarray:
+        """The snapped values, from per-cell counts.
+
+        Args:
+            counts: ``{site: {basis: counts}}``, as ``tessa.decode(return_counts=True)``.
+
+        Returns:
+            np.ndarray: (capacity,) values in the encoded units at their slots (0 elsewhere).
+        """
+        lo, hi = self.ranges[0]
+        sym = np.asarray(symbols_from_counts(counts, self.symbols), float).ravel()
+        out = np.zeros(self.graph.capacity)
+        out[self.symbols.slot_index] = lo + (hi - lo) * sym / (SNAP_LEVELS - 1)
+        return out
+
+
+def _snap_circuit(graph, slots, vals, rng):
+    """The snap readout's circuit: Tessa's ``encode_symbols`` constellation at our slots.
+
+    Args:
+        graph: Tessa ``Lattice`` or ``TessaGraph``.
+        slots: (n, comps) capacity slots (one value each).
+        vals: (n, comps) prepared values.
+        rng: ``(lo, hi)`` the levels span.
+
+    Returns:
+        tuple: ``(circuit, SnapEncoding)``.
+    """
+    lo, hi = rng
+    sym = np.rint(np.clip((np.ravel(vals) - lo) / (hi - lo), 0, 1) * (SNAP_LEVELS - 1)).astype(int)
+    circuit, enc = encode_symbols(graph, sym, SNAP_LEVELS, scheme="constellation", per_slot=1,
+                                  slot_order=np.ravel(slots))
+    return circuit, SnapEncoding(enc, (tuple(rng),))
+
+
+def _pilots(graph, slots, rng) -> tuple:
+    """Known values for every spare slot of a run: alternately 5 % above its range's
+    bottom and 5 % below its top. More pilots fit the line better (blob on Phoenix:
+    8 pilots, or the 12 on the mesh's own qubits, add error; all 460 match classical
+    DRR), worth the gates of the data qubits that hold only pilots.
+
+    Args:
+        graph: Tessa ``Lattice`` or ``TessaGraph``.
+        slots: (n, comps) the run's capacity slots.
+        rng: ``(lo, hi)`` value range.
+
+    Returns:
+        tuple: ``(slots, values)``.
+
+    Raises:
+        ValueError: Fewer than two spare slots.
+    """
+    spare = np.setdiff1d(np.arange(graph.capacity), slots)
+    if len(spare) < 2:
+        raise ValueError("Pilot DRR needs two spare slots in every run, and this mesh fills them")
+    lo, hi = rng
+    return spare, np.where(np.arange(len(spare)) % 2, hi - 0.05 * (hi - lo), lo + 0.05 * (hi - lo))
+
+
+def _calibrate(out, pilots) -> np.ndarray:
+    """A run's readout corrected by its pilots: the straight line (least squares) that
+    takes the pilots' readings back to their known values, applied to every slot.
+
+    Args:
+        out: (capacity,) decoded values of one run.
+        pilots: ``(slots, values)`` (:func:`_pilots`).
+
+    Returns:
+        np.ndarray: (capacity,) corrected values.
+    """
+    slots, values = pilots
+    gain, offset = np.polyfit(out[slots], values, 1)
+    return gain * out + offset
+
+
+def gain_shots(shots: int, gain: float) -> int:
+    """Shots whose shot noise is ``gain`` times that of ``shots``.
+
+    Shot noise falls as 1/√shots, so a readout at shots / gain² moves ``gain`` times as
+    far: Material's exaggeration made by the readout itself, not by scaling it. Noise
+    from the chip's gates does not scale this way; only its shot noise does.
+
+    Args:
+        shots: The readout's shots.
+        gain: Wanted noise multiple (0 or less: the most shots).
+
+    Returns:
+        int: Shots, in [MIN_SHOTS, MAX_SHOTS].
+    """
+    if gain <= 0:
+        return MAX_SHOTS
+    return int(np.clip(round(shots / gain ** 2), MIN_SHOTS, MAX_SHOTS))
 
 
 def snapshot_json(device: str) -> dict:
@@ -1383,7 +1560,7 @@ def _decode_frames(e: Encoded, circuit, enc, inner, frames: int, shots: int) -> 
         counts = {}
         for (site, basis), by_frame in zip(keys, per_job):
             counts.setdefault(site, {})[basis] = by_frame[k]
-        out.append(decode_from_cell_counts(counts, enc))
+        out.append(enc.values(counts) if isinstance(enc, SnapEncoding) else decode_from_cell_counts(counts, enc))
     return out
 
 
@@ -1413,7 +1590,7 @@ def _frame_counts(bits, shots: int, frames: int) -> list[dict]:
     return out
 
 
-def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1):
+def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1, pilots=()):
     """``tessa.decode`` every run with its own seed and gather each vertex's values.
 
     Several frames share each run's cached jobs and one simulator job (:func:`_decode_frames`),
@@ -1427,6 +1604,7 @@ def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1):
         seed: The readout's seed; run k uses :func:`batch_seed`.
         runs: One ``(circuit, enc)`` per batch.
         frames: Readouts to take.
+        pilots: Per run, ``(slots, values)`` to correct it by (:func:`_calibrate`), or ().
 
     Returns:
         tuple: ``(a, b)``: (frames, N, comps) first-field values, and (frames, N, comps)
@@ -1442,6 +1620,8 @@ def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1):
             inner = sampler(e.graph, p, batch_seed(seed + i0, k))
             for i, out in enumerate(_decode_frames(e, circuit, enc, inner, n, p.shots), start=i0):
                 oa, ob = out if isinstance(out, tuple) else (out, None)
+                if pilots:
+                    oa = _calibrate(oa, pilots[k])
                 a[i, m] = oa[e.slots[m]]
                 if ob is not None:
                     if b is None:
@@ -1608,7 +1788,7 @@ def decode_frames(e: Encoded, p: Params, n: int, seed: int | None = None, refere
             reference = tilted_angles(e, p, reference_seed(seed), 0.0)
         # alpha = 0 everywhere: each frame is its own Z readout (transition_values)
         return np.array([transition_values(e, a, a if reference is None else reference, alpha) for a in angles])
-    a, b = _read(e, p, seed, e.run_parts, n)
+    a, b = _read(e, p, seed, e.run_parts, n, e.pilots)
     if e.field is not None:  # split mode, spherical payload: each value from its own field
         a = np.where(e.fields == 1, b, a)
     return a.reshape(n, -1)
@@ -1645,7 +1825,7 @@ def restore(e: Encoded, raw, drr: str = "none", dirs=None, reference=None) -> np
     Args:
         e: The encoding.
         raw: (N*comps,) decoded values.
-        drr: One of DRR_METHODS.
+        drr: One of DRR_CHOICES ("pilots": already corrected while reading).
         dirs: (N, 3) radial directions; None uses A's.
         reference: (N*comps,) what DRR stretches the readout towards, in the same
             units as ``raw``; None uses A's input. A morph frame passes its noiseless
@@ -1655,6 +1835,7 @@ def restore(e: Encoded, raw, drr: str = "none", dirs=None, reference=None) -> np
         np.ndarray: (N, 3) positions.
     """
     prep = e.prep if reference is None else replace(e.prep, reference=np.ravel(reference))
+    drr = "none" if drr == "pilots" else drr  # the pilots corrected the readout itself (_read)
     return from_payload(e, _values(e, raw, prep, drr), dirs)
 
 
@@ -2097,7 +2278,10 @@ def resources(e: Encoded, where=None) -> list[dict]:
         slots, fields = e.slots[first], e.fields[first]
         where = [slots, slots] if e.mode == "morph" else [slots[fields == f] for f in ((0, 1) if e.pair else (0,))]
     rand = [fill(e.graph, w, rng.random(w.shape)) for w in where]
-    generic, _ = encode(e.graph, *rand)
+    mode = get_mode(e.enc.mode)  # split, spherical and a snap readout: pair_full; Bloch reads θ's own circuit
+    if isinstance(e.enc, SnapEncoding):
+        rand.append(rng.random(e.graph.capacity))  # every constellation point has a phase
+    generic, _ = encode(e.graph, *rand, **({"mode": mode.name} if len(rand) > 1 else {}))
     if e.device is None:
         tessa = routed(generic, layout=phoenix_layout(e.graph))
     else:

@@ -216,3 +216,11 @@ def test_spectral_morph_runs_and_refuses_the_front():
         assert len(r["refs"]) == len(r["frames"]) == 3
     with pytest.raises(ValueError, match="front"):
         api.run({**base, "morph_front": True})
+
+
+def test_run_reports_readout_shots_and_pilots():
+    r = api.run({"shape": "blob", "readout": "bloch", "drr": "pilots", "shots": 4096, "gain_shots": 2})
+    assert r["readout"] == "bloch" and r["shots"] == 1024  # Material's gain made by shots / gain²
+    assert r["stats"]["values"] == len(r["verts"])
+    with pytest.raises(ValueError, match="unknown readout"):
+        api.params_of({"readout": "y"})

@@ -1572,10 +1572,11 @@ const PANELS = {
   drr: { title: 'DRR', key: 'drr', items: ['none', 'min_max', 'mean_std', 'percentile', 'abs_max', 'min_avg_max'].map((v) => (
     { v, html: v.replace(/_/g, ' '), tip: `Tessa's ${v} dynamic-range restoration (from the input's statistics)` })).concat(
     { v: 'pilots', html: 'pilots', tip: 'known values in every spare slot, read with the mesh: the correction is measured on the chip (mode θ)' }) },
-  readout: { title: 'readout', key: 'readout', items: [
-    { v: 'z', html: 'Z', tip: 'θ read in Z: one setting' },
-    { v: 'bloch', html: 'Bloch', tip: 'θ read in Z, X and Y as a direction: noise shrinks it but not its angle (mode θ)' },
-    { v: 'snap', html: 'snap', tip: '64 levels as points on the Bloch sphere, read back to the nearest: exact while noise allows (mode θ)' }] },
+  // hints: each option's tip also shows in the bottom-left corner on hover, as for load and mode
+  readout: { title: 'readout', key: 'readout', hints: true, items: [
+    { v: 'z', html: 'Z', tip: 'reads θ in Z: one measurement setting' },
+    { v: 'bloch', html: 'Bloch', tip: 'reads θ in Z, X and Y as a direction: noise shrinks it, not its angle (θ mode only)' },
+    { v: 'snap', html: 'snap', tip: '64 points on the Bloch sphere, read back to the nearest: exact while noise allows (θ mode only)' }] },
   frames: { title: 'frames', sliders: [
     { key: 'frames', label: 'frames', min: 2, max: 30, step: 1, fmt: (v) => `${v}` },
     // playback only (no new run needed): steps per second, as in view → speed
@@ -1614,7 +1615,7 @@ function buildPanel(side, key) {
     // a word option starts with a capital (sentence case); graphics and symbols are left alone
     b.innerHTML = !spec.squares && !it.html.includes('<') ? it.html[0].toUpperCase() + it.html.slice(1) : it.html;
     b.setAttribute('aria-label', it.name ? `${it.name}: ${it.tip}` : it.tip); // pictures have no words: name them for screen readers
-    if (spec.squares) b.dataset.tip = it.tip; // a graphic: its name shows on hover
+    if (spec.squares || spec.hints) b.dataset.tip = it.tip; // a graphic (or a hinted word): its tip shows on hover
     b.dataset.v = it.v;
     b.addEventListener('click', () => choose(spec.key, it.v));
     body.appendChild(b);

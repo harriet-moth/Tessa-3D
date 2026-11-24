@@ -39,6 +39,7 @@ OBJ_FILES = {"suzanne": ROOT / "tessa_ripple" / "suzanne.obj",
 # ``shape_b`` / ``obj_b`` (:func:`mesh_path`).
 CHOICES = {"payload": bridge.PAYLOADS, "layout": ("mesh", "naive"),
            "mode": ("theta", "split", "morph"), "backend": bridge.BACKENDS, "placement": bridge.PLACEMENTS,
+           "readout": bridge.READOUTS,
            "clamp": None, "clamp_b": None, "compression": None, "quant_bits": None,
            "headroom": None, "shots": None, "noise_strength": None, "seed": None, "spectral_k": None}
 MAX_FRAMES = 30
@@ -307,7 +308,9 @@ def params_of(req) -> bridge.Params:
     ``morph_front`` true it also reads ``front_width`` (clamped to [0.02, 1], default
     0.15) and ``front_source`` (a vertex index; null = auto, the vertex that moves most).
     ``spectral_k`` (spectral payload: modes to encode) of 0 or less is auto (None); a
-    k past one run's cap is capped later, in :func:`encode_of`.
+    k past one run's cap is capped later, in :func:`encode_of`. ``drr`` "pilots" turns
+    on ``pilots``; ``gain_shots`` (Material's gain made by the readout) divides the
+    shots by its square (``bridge.gain_shots``).
 
     Args:
         req: request dict.
@@ -325,7 +328,7 @@ def params_of(req) -> bridge.Params:
             kw[k] = float(kw[k])
         elif allowed is not None and kw.get(k, allowed[0]) not in allowed:
             raise ValueError(f"unknown {k} {kw[k]!r}; use one of {list(allowed)}")
-    for k, lo, hi in (("shots", 256, 65536), ("compression", 0, 100), ("quant_bits", 1, 16),
+    for k, lo, hi in (("shots", bridge.MIN_SHOTS, bridge.MAX_SHOTS), ("compression", 0, 100), ("quant_bits", 1, 16),
                       ("headroom", 0, 10), ("noise_strength", 0, 10)):
         if k in kw or k == "shots":
             kw[k] = float(np.clip(kw.get(k, 4096), lo, hi))
@@ -334,6 +337,9 @@ def params_of(req) -> bridge.Params:
             kw[k] = int(kw[k])
     if kw.get("spectral_k") is not None and kw["spectral_k"] <= 0:  # 0: auto (the 1 % tolerance)
         del kw["spectral_k"]
+    kw["pilots"] = req.get("drr") == "pilots"  # pilots: known values in spare slots, read with the mesh
+    if req.get("gain_shots") is not None:  # Material: the noise made larger by fewer shots
+        kw["shots"] = bridge.gain_shots(kw["shots"], float(req["gain_shots"]))
     if req.get("morph_front"):  # the morph front: width in [0.02, 1], source a vertex index or auto
         kw["morph_front"] = True
         kw["front_width"] = float(np.clip(float(req.get("front_width") or 0.15), 0.02, 1.0))
@@ -482,7 +488,8 @@ def run(req):
         (bridge.qubit_map); ``stats`` (Encoded.stats); ``split`` (some vertex spans
         several data qubits); ``error`` (mean bridge.mesh_error over frames, against
         each frame's reference); ``seconds``; ``spectral`` (``Encoded.spectral``: k,
-        rows, truncation errors; None for other payloads). For the spectral payload
+        rows, truncation errors; None for other payloads); ``shots`` (per setting, after
+        any ``gain_shots``) and ``readout``. For the spectral payload
         ``qubits`` and ``map`` rows are modes, not vertices, and a θ or split readout
         adds ``refs`` (the truncated mesh, what a noiseless readout returns). A morph adds ``refs`` (noiseless
         positions per frame), ``ts`` (t per frame), ``match`` (B's matching:
@@ -517,7 +524,7 @@ def run(req):
     return {"verts": rounded(verts), "faces": [list(map(int, f)) for f in faces],
             "frames": [rounded(f) for f in frames], "requested": want,
             "qubits": bridge.vertex_qubits(e).tolist(), "map": bridge.qubit_map(e), "stats": e.stats,
-            "split": e.straddles, "spectral": e.spectral,
+            "split": e.straddles, "spectral": e.spectral, "shots": p.shots, "readout": e.readout,
             "error": float(np.mean([bridge.mesh_error(r, f) for r, f in zip(refs, frames)])),
             "seconds": time.time() - t0, **extra}
 
