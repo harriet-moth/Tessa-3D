@@ -1,7 +1,8 @@
 """Vercel Python function: every Tessa computation the web app needs, at POST /api/tessa.
 
-The request body is JSON with an ``action`` (mesh / run / edges / resources / curves) plus
-the mesh and Params settings. The mesh is a named shape or an uploaded OBJ (``obj``);
+The request body is JSON with an ``action`` (mesh / run / edges / resources / curves, and
+ibm_verify / ibm_submit / ibm_status for a real IBM chip) plus the mesh and Params
+settings. The mesh is a named shape or an uploaded OBJ (``obj``);
 a morph names its B mesh the same way (``shape_b`` or ``obj_b``). All quantum work
 goes through tessa_ripple.bridge, the same code the desktop app uses.
 """
@@ -521,6 +522,25 @@ def run(req):
         refs = [bridge.encoded_shape(e)] * len(frames)  # the mesh, or spectral's truncated mesh
         if e.spectral is not None:
             extra["refs"] = [rounded(r) for r in refs]
+    return reply(verts, faces, e, p, frames, refs, want, t0, extra)
+
+
+def reply(verts, faces, e, p, frames, refs, want: int, t0: float, extra: dict) -> dict:
+    """The page's view of a set of readouts (:func:`run`'s return; :func:`ibm_status` too).
+
+    Args:
+        verts, faces: The mesh as loaded.
+        e: The encoding.
+        p: Its settings.
+        frames: Decoded (N, 3) positions per frame.
+        refs: Each frame's reference positions.
+        want: Frames asked for.
+        t0: time.time() the work started.
+        extra: More keys (morph, spectral refs, IBM job).
+
+    Returns:
+        dict: See :func:`run`.
+    """
     return {"verts": rounded(verts), "faces": [list(map(int, f)) for f in faces],
             "frames": [rounded(f) for f in frames], "requested": want,
             "qubits": bridge.vertex_qubits(e).tolist(), "map": bridge.qubit_map(e), "stats": e.stats,
@@ -595,7 +615,151 @@ def curves(req):
     return bridge.fidelity_curves(verts, faces, spectral_capped(req, params_of(req), len(verts)))
 
 
-ACTIONS = {"mesh": mesh, "run": run, "edges": edges, "resources": resources, "curves": curves}
+# --- real IBM chips -------------------------------------------------------------------
+# The page holds the user's IBM token for its session only and sends it in the body of
+# these requests; it is used for the request and never stored, logged or echoed back.
+def ibm_service(req):
+    """An IBM Quantum service for the request's token (Tessa's ``make_service``).
+
+    Only the token in the request is used: never an account saved on the server.
+
+    Args:
+        req: request dict; reads ``ibm_token``.
+
+    Returns:
+        QiskitRuntimeService: Authenticated.
+
+    Raises:
+        ValueError: No token, or IBM refused it.
+    """
+    from tessa.backends.ibm import make_service
+
+    token = str(req.get("ibm_token") or "").strip()
+    if not token:
+        raise ValueError("IBM: enter an IBM authentication token first")
+
+    try:
+        return make_service(token=token)
+    except Exception as err:  # the message may carry IBM's response; never the token
+        raise ValueError(f"IBM did not accept the token ({type(err).__name__})") from None
+
+
+def ibm_chip(req, service) -> tuple[str, str]:
+    """The chip an IBM run uses: Backend's chip if the account has it, else the first it has.
+
+    Args:
+        req: request dict; reads ``backend``.
+        service: :func:`ibm_service`.
+
+    Returns:
+        tuple: ``(chip, backend name)``, e.g. ``("fez", "ibm_fez")``.
+
+    Raises:
+        ValueError: The account reaches neither chip Tessa has a calibration snapshot of.
+    """
+    names = {b.name for b in service.backends()}
+    chips = [c for c in bridge.DEVICES if bridge.snapshot_json(c)["name"] in names]
+    if not chips:
+        raise ValueError("This IBM account has no access to " + " or ".join(
+            bridge.snapshot_json(c)["name"] for c in bridge.DEVICES))
+    chip = req.get("backend") if req.get("backend") in chips else chips[0]
+    return chip, bridge.snapshot_json(chip)["name"]
+
+
+def ibm_verify(req):
+    """Check an IBM token and which chips it reaches.
+
+    Args:
+        req: request dict; reads ``ibm_token``.
+
+    Returns:
+        Dict: ``ok`` and ``chips`` (DEVICES the account can use).
+    """
+    names = {b.name for b in ibm_service(req).backends()}
+    return {"ok": True, "chips": [c for c in bridge.DEVICES if bridge.snapshot_json(c)["name"] in names]}
+
+
+def ibm_encoding(req, chip: str):
+    """The request's mesh encoded on ``chip`` (as :func:`run`, Backend set to the chip).
+
+    Args:
+        req: request dict (mesh and Params keys).
+        chip: One of DEVICES.
+
+    Returns:
+        tuple: ``(verts, faces, e, p, frames)``: frames the job holds (the request's,
+        capped so frames × shots fit ``bridge.HARDWARE_SHOTS``).
+    """
+    not_morph(req, "IBM runs")
+    req = {**req, "backend": chip}
+    verts, faces, logs, full = mesh_of(req)
+    p = params_of(req)
+    e = encode_of(req, verts, faces, logs, full, p)[0]
+    frames = int(np.clip(int(req.get("frames", 1)), 1, min(MAX_FRAMES, bridge.HARDWARE_SHOTS // p.shots)))
+    return verts, faces, e, p, frames
+
+
+def ibm_submit(req):
+    """Submit the request's readouts to a real IBM chip as one job (this uses IBM credits).
+
+    The job runs every whole-chip circuit (``bridge.submit_hardware``) frames × shots
+    times; :func:`ibm_status` collects it.
+
+    Args:
+        req: request dict: the run keys, ``frames`` and ``ibm_token``.
+
+    Returns:
+        Dict: ``job`` (id), ``chip``, ``backend`` (IBM name), ``frames``, ``shots``,
+        ``circuits``, ``swaps`` and ``twoq`` (most two-qubit gates in one circuit).
+    """
+    from tessa.backends.ibm import ibm_sampler
+
+    service = ibm_service(req)
+    chip, name = ibm_chip(req, service)
+    verts, faces, e, p, frames = ibm_encoding(req, chip)
+    device = service.backend(name)
+    job, reports = bridge.submit_hardware(e, ibm_sampler(backend=device), p.shots, frames, device=device)
+    return {"job": job.job_id(), "chip": chip, "backend": name, "frames": frames, "shots": p.shots,
+            "circuits": len(reports), "swaps": sum(r["swaps"] for r in reports),
+            "twoq": max(r["two_qubit_gates"] for r in reports)}
+
+
+def ibm_status(req):
+    """An IBM job's state, and once it is done, its frames decoded as :func:`run` returns them.
+
+    Args:
+        req: request dict: the same run keys as :func:`ibm_submit`, plus ``job`` and
+            ``chip`` from its reply and ``ibm_token``.
+
+    Returns:
+        Dict: ``status`` (IBM's: "QUEUED", "RUNNING", "DONE", ...); when "DONE", also
+        :func:`run`'s keys and ``job``/``backend``.
+
+    Raises:
+        ValueError: The job failed or was cancelled.
+    """
+    t0 = time.time()
+    job = ibm_service(req).job(str(req.get("job") or ""))
+    status = job.status()
+    status = str(getattr(status, "name", status)).upper()
+    if status in ("ERROR", "CANCELLED"):
+        raise ValueError(f"IBM job {job.job_id()} {status.lower()}")
+    if status != "DONE":
+        return {"status": status, "job": job.job_id()}
+    chip = req.get("chip") if req.get("chip") in bridge.DEVICES else "fez"
+    verts, faces, e, p, frames = ibm_encoding(req, chip)
+    counts = bridge.hardware_counts(e, job.result(), p.shots, frames)
+    drr = req.get("drr", "none")
+    decoded = [bridge.restore(e, bridge.values_from_counts(e, c), drr) for c in counts]
+    refs = [bridge.encoded_shape(e)] * len(decoded)
+    extra = {"status": status, "job": job.job_id(), "backend": bridge.snapshot_json(chip)["name"]}
+    if e.spectral is not None:
+        extra["refs"] = [rounded(r) for r in refs]
+    return reply(verts, faces, e, p, decoded, refs, frames, t0, extra)
+
+
+ACTIONS = {"mesh": mesh, "run": run, "edges": edges, "resources": resources, "curves": curves,
+           "ibm_verify": ibm_verify, "ibm_submit": ibm_submit, "ibm_status": ibm_status}
 
 
 def _json_default(x):
@@ -608,6 +772,19 @@ def _json_default(x):
         A JSON-encodable value.
     """
     return x.item() if isinstance(x, np.generic) else str(x)
+
+
+def redact(message: str, token: str) -> str:
+    """An error message with the request's IBM token blanked out, wherever it appears.
+
+    Args:
+        message: The error text.
+        token: The request's ``ibm_token`` ("" for none).
+
+    Returns:
+        str: The message, the token replaced by "•••".
+    """
+    return message.replace(token, "•••") if token else message
 
 
 class handler(BaseHTTPRequestHandler):
@@ -629,15 +806,17 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Run the action the JSON body names and send its result.
 
-        Body: ``{"action": "mesh" | "run" | "edges" | "resources" | "curves", ...}`` plus the
-        action's keys. Sends 200 with the action's dict, 400 with ``{"error": ...}``
-        for an unknown action or a ValueError, KeyError or TypeError from it, and 500
-        with ``{"error": ...}`` for anything else.
+        Body: ``{"action": one of ACTIONS, ...}`` plus the action's keys. Sends 200 with
+        the action's dict, 400 with ``{"error": ...}`` for an unknown action or a
+        ValueError, KeyError or TypeError from it, and 500 with ``{"error": ...}`` for
+        anything else. An IBM token in the body never appears in an error.
         """
+        token = ""
         try:
             global _cold
             arrived = time.time()
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            token = str(req.get("ibm_token") or "")
             # the work must end before Vercel's limit, less the reply's time and, on a
             # cold start, the imports this process has just done
             req["_deadline"] = arrived + FUNCTION_LIMIT - REPLY_MARGIN - (_IMPORT_SECONDS if _cold else 0.0)
@@ -647,9 +826,9 @@ class handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": f"unknown action; use one of {sorted(ACTIONS)}"})
             self._send(200, action(req))
         except (ValueError, KeyError, TypeError) as err:
-            self._send(400, {"error": str(err)})
+            self._send(400, {"error": redact(str(err), token)})
         except Exception as err:  # still JSON, so the page shows the cause
-            self._send(500, {"error": f"{type(err).__name__}: {err}"})
+            self._send(500, {"error": redact(f"{type(err).__name__}: {err}", token)})
 
     def do_GET(self):
         """Health check: sends ``ok``, the ``actions``, ``shapes``, ``backends`` and ``drr`` methods."""

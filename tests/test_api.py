@@ -224,3 +224,86 @@ def test_run_reports_readout_shots_and_pilots():
     assert r["stats"]["values"] == len(r["verts"])
     with pytest.raises(ValueError, match="unknown readout"):
         api.params_of({"readout": "y"})
+
+
+# --- a real IBM chip, with a stand-in for IBM's service (nothing contacts IBM) ----------
+class _Backend:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Job:
+    def __init__(self, status="QUEUED"):
+        self._status = status
+
+    def job_id(self):
+        return "job-123"
+
+    def status(self):
+        return self._status
+
+
+class _Service:
+    """Reaches ibm_fez only; refuses the token "bad"."""
+    submitted = []
+
+    def __init__(self, token):
+        if token == "bad":
+            raise RuntimeError(f"401 Unauthorized for token {token}")
+
+    def backends(self):
+        return [_Backend("ibm_fez"), _Backend("ibm_torino")]
+
+    def backend(self, name):
+        from tessa.hardware import devices
+        return devices.snapshot_backend(name.removeprefix("ibm_"))
+
+    def job(self, job_id):
+        return _Job("RUNNING")
+
+
+class _Sampler:
+    def __init__(self, backend):
+        self.backend = backend
+
+    def run(self, circuits, shots):
+        _Service.submitted.append((len(circuits), shots))
+        return _Job()
+
+
+@pytest.fixture
+def ibm(monkeypatch):
+    import tessa.backends.ibm as tibm
+    monkeypatch.setattr(tibm, "make_service", lambda token=None, instance=None: _Service(token))
+    monkeypatch.setattr(tibm, "ibm_sampler", lambda backend=None, **kw: _Sampler(backend))
+    _Service.submitted.clear()
+
+
+def test_ibm_token_is_verified_and_names_the_chips_it_reaches(ibm):
+    assert api.ibm_verify({"ibm_token": "good"}) == {"ok": True, "chips": ["fez"]}
+    with pytest.raises(ValueError, match="enter an IBM authentication token"):
+        api.ibm_verify({})
+    with pytest.raises(ValueError) as err:
+        api.ibm_verify({"ibm_token": "bad"})
+    assert "bad" not in str(err.value) and "did not accept" in str(err.value)
+
+
+def test_ibm_submit_sends_one_job_of_whole_chip_circuits(ibm):
+    r = api.ibm_submit({"ibm_token": "good", "shape": "cube", "backend": "phoenix", "frames": 3, "shots": 4096,
+                        "readout": "bloch"})
+    assert r["job"] == "job-123" and r["chip"] == "fez" and r["backend"] == "ibm_fez"  # phoenix not reachable
+    assert r["swaps"] == 0 and r["frames"] == 3 and _Service.submitted == [(3, 3 * 4096)]  # Z, X and Y
+    r = api.ibm_submit({"ibm_token": "good", "shape": "cube", "frames": 30, "shots": 65536})
+    assert r["frames"] == 1  # at most 100,000 shots per circuit
+    with pytest.raises(ValueError, match="not available in morph mode"):
+        api.ibm_submit({"ibm_token": "good", "shape": "cube", "mode": "morph", "shape_b": "sphere"})
+
+
+def test_ibm_status_waits_until_the_job_is_done(ibm):
+    assert api.ibm_status({"ibm_token": "good", "job": "job-123", "chip": "fez", "shape": "cube"}) == \
+        {"status": "RUNNING", "job": "job-123"}
+
+
+def test_errors_never_echo_the_token():
+    assert api.redact("failed for abc123 at abc123", "abc123") == "failed for ••• at •••"
+    assert api.redact("no token here", "") == "no token here"

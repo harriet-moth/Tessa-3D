@@ -116,6 +116,28 @@ button:focus-visible { outline: none; }
   width: var(--help-w); height: var(--help-w); border-radius: 50%; border: 1px solid var(--glass-line); color: var(--ink);
   transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 #themeToggle:hover, #themeToggle:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
+/* a real IBM chip: the key, just left of light / dark; its token box slides out to the left.
+   A verified token (this session only) lights a small green dot on the key */
+.ibm { position: absolute; z-index: 3; /* over the resolution row when the box is open on a narrow window */ display: flex; align-items: center; gap: var(--round-gap);
+  right: calc(var(--edge) + 2 * (var(--help-w) + var(--round-gap)));
+  top: calc(var(--top) + var(--logo-w) * 0.3 - var(--help-w) / 2); height: var(--help-w); }
+.ibm-key { position: relative; display: flex; align-items: center; justify-content: center;
+  width: var(--help-w); height: var(--help-w); border-radius: 50%; border: 1px solid var(--glass-line); color: var(--ink);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+.ibm-key:hover, .ibm-key:focus-visible, .ibm[data-state="open"] .ibm-key { background: var(--flip-light); color: var(--black); outline: none; }
+.ibm-dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%;
+  background: #2BAC76; box-shadow: 0 0 0 2px var(--black); } /* Slack's "active" green, ringed in the ground colour */
+.ibm-form { display: flex; overflow: hidden; width: 0; opacity: 0; pointer-events: none;
+  transition: width 320ms var(--ease-ctl), opacity 220ms var(--ease-ctl); }
+.ibm[data-state="open"] .ibm-form, .ibm[data-state="checking"] .ibm-form { width: var(--ibm-w, 260px); opacity: 1; pointer-events: auto; }
+.ibm-form input { width: var(--ibm-w, 260px); height: var(--help-w); padding: 0 14px; border-radius: 999px; border: 1px solid var(--glass-line);
+  background: var(--black); color: var(--ink); font: 400 var(--fs-small)/1 var(--font); }
+.ibm-form input::placeholder { color: rgb(var(--ink-rgb) / 0.5); }
+.ibm-form input:focus { outline: none; border-color: var(--ink); }
+.ibm[data-state="checking"] .ibm-form input { animation: ring 1.2s ease-in-out infinite; }
+#ibmPlay.waiting { animation: ring 1.8s ease-in-out infinite; }
+#app.ibm-crowded .res-row { opacity: 0; pointer-events: none; } /* a narrow window: the token box needs the row's room */
+.res-row { transition: opacity 220ms var(--ease-ctl); }
 .logo:hover, .logo:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
 /* help: a small round "?" in the top right corner, on every screen, centred on the
    logo's height (the logo is 0.6 as tall as wide); its right edge in line with the tools */
@@ -160,11 +182,11 @@ button:focus-visible { outline: none; }
    stage's middle, 512, once .landing-centre's 0.8 scale about y 600 is applied); each shape's drawn part 210px tall (the boxes
    differ because each picture has its own transparent margin). Each slides out from the
    centre by its offset × --spread on wide windows */
-.preset.cube { left: 11px; top: 284.4px; width: 299.1px; height: 415.1px; translate: calc(-550px * var(--spread, 0)) 0; }
-.preset.blob { left: 297.6px; top: 333.7px; width: 294px; height: 331.1px; translate: calc(-275px * var(--spread, 0)) 0; --rise-d: 380ms; }
-.preset.sphere { left: 597.7px; top: 370.3px; width: 246.9px; height: 261.6px; --rise-d: 460ms; }
-.preset.apple { left: 887.5px; top: 370.2px; width: 215px; height: 239.5px; translate: calc(275px * var(--spread, 0)) 0; --rise-d: 540ms; }
-.preset.suzanne { left: 1133.5px; top: 369.5px; width: 273.1px; height: 239.5px; translate: calc(550px * var(--spread, 0)) 0; --rise-d: 620ms; }
+.preset.cube { left: 53.7px; top: 371.6px; width: 234.1px; height: 236.9px; translate: calc(-550px * var(--spread, 0)) 0; }
+.preset.blob { left: 317.3px; top: 370.8px; width: 255.4px; height: 238.5px; translate: calc(-275px * var(--spread, 0)) 0; --rise-d: 380ms; }
+.preset.sphere { left: 606.6px; top: 371.2px; width: 227.1px; height: 237.9px; --rise-d: 460ms; }
+.preset.apple { left: 888.7px; top: 371.6px; width: 213px; height: 236.9px; translate: calc(275px * var(--spread, 0)) 0; --rise-d: 540ms; }
+.preset.suzanne { left: 1132.2px; top: 370.8px; width: 275.6px; height: 236.9px; translate: calc(550px * var(--spread, 0)) 0; --rise-d: 620ms; }
 .preset:hover, .preset:focus-visible { transform: scale(1.06); }
 /* reveals (design guide): a ghost blurs up into focus; a group item fades and rises 16px */
 @keyframes ghost { from { opacity: 0; filter: blur(10px); translate: 0 0.3em; } }
@@ -492,7 +514,7 @@ button:focus-visible { outline: none; }
 html.light { filter: invert(1);
   --black: #040506; --ink-rgb: 255 255 255; --ink-dim: #9D9D9D; --surface: #EFF0F0;
   --orange: #005EA7; --red: #01FFFB; }
-html.light .legends { filter: hue-rotate(180deg); }
+html.light .legends, html.light .ibm-dot { filter: hue-rotate(180deg); } /* with the page's invert: the same hue (the dot stays green) */
 html, .legends { transition: filter 300ms var(--ease-ctl); }
 #stats { margin: 0 0 6px; white-space: pre-wrap; font: inherit; }
 #status { color: var(--ink); } /* the status line: full white, brighter than the stats above it */
@@ -621,11 +643,11 @@ svg text { fill: var(--ink-dim); font-size: var(--fs-small); }
 /* the sentence wraps onto two lines on narrow screens */
 #app.portrait .drop-title { top: calc(300px - var(--T, 0px) / 2); max-width: 560px; height: auto; padding: 8px 28px; white-space: normal; }
 #app.portrait .landing-msg { top: calc(360px - var(--T, 0px) / 2); width: 520px; }
-#app.portrait .preset.cube { left: 346.4px; top: 493.2px; width: 213.7px; height: 296.5px; translate: none; }
-#app.portrait .preset.blob { left: 614.7px; top: 528.4px; width: 210px; height: 236.5px; translate: none; }
-#app.portrait .preset.sphere { left: 892.7px; top: 554.5px; width: 176.4px; height: 186.8px; translate: none; }
-#app.portrait .preset.apple { left: 513.2px; top: calc(794.5px + var(--B, 0px) / 2); width: 153.5px; height: 171.1px; translate: none; }
-#app.portrait .preset.suzanne { left: 752.5px; top: calc(794px + var(--B, 0px) / 2); width: 195px; height: 171.1px; translate: none; }
+#app.portrait .preset.cube { left: 376.9px; top: 555.5px; width: 167.2px; height: 169.2px; translate: none; }
+#app.portrait .preset.blob { left: 628.8px; top: 554.9px; width: 182.4px; height: 170.3px; translate: none; }
+#app.portrait .preset.sphere { left: 899.1px; top: 555.2px; width: 162.3px; height: 170px; translate: none; }
+#app.portrait .preset.apple { left: 514.1px; top: calc(795.5px + var(--B, 0px) / 2); width: 152.1px; height: 169.1px; translate: none; }
+#app.portrait .preset.suzanne { left: 751.6px; top: calc(795px + var(--B, 0px) / 2); width: 196.8px; height: 169.1px; translate: none; }
 #app.portrait .drop-b { left: 478px; top: 700px; width: 484px; height: 190px; }
 #app.portrait .drop-b p { top: 30px; bottom: auto; height: 80px; font-size: var(--fs-heading); }
 #app.portrait .drop-b-presets { bottom: 16px; row-gap: 8px; font-size: var(--fs-control); }

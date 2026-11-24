@@ -5,7 +5,7 @@
   "functions": {
     "api/tessa.py": {
       "maxDuration": 300,
-      "excludeFiles": "{tests/**,public/**,exports/**,.venv/**,.claude/**,dev.py}"
+      "excludeFiles": "{tests/**,public/**,exports/**,.venv/**,.claude/**,dev.py,**/matplotlib/**,**/mpl_toolkits/**,**/PIL/**,**/fontTools/**,**/kiwisolver/**,**/contourpy/**,**/cycler/**,**/pyparsing/**}"
     }
   }
 }

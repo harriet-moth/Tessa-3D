@@ -693,15 +693,7 @@ async function run(frames) {
     // next run, so the run button turns stale rather than claiming them.
     const p = params(), key = runKey(), meshKey = meshKeyNow();
     const d = await call('run', { frames, gain_shots: gainShots() });
-    if (meshKey !== S.meshKey) setMesh(d, meshKey);
-    Object.assign(S, { data: d, run: key, frames: d.frames.map((f) => new Float32Array(f.flat())),
-      refs: d.refs ? d.refs.map((r) => new Float32Array(r.flat())) : [], ts: d.ts || null, step: 0, seed0: p.seed });
-    showInfo(d, p);
-    S.focus = null;
-    rebuild();
-    drawMap();
-    S.playing = d.frames.length > 1;
-    if (!S.playing) { S.step = S.seq.length - 1; draw(); }
+    showRun(d, p, key, meshKey);
     const cut = d.frames.length < d.requested ? ` (fitted to the time limit; asked for ${d.requested})` : '';
     const what = d.ts ? (d.ts.length > 1 ? `morph ${objLabel()} → ${bLabel()}: ${d.frames.length} readouts, t 0 → 1` : `morph at t = ${d.ts[0]}`) : `${d.frames.length} readout(s)`;
     const runs = d.stats.runs > 1 ? ` · too many vertices for one ${d.stats.graph}, so each readout ran in ${d.stats.runs} runs` : '';
@@ -709,6 +701,113 @@ async function run(frames) {
   });
   app.classList.remove('running');
   syncPlay(); syncStale();
+}
+
+/**
+ * Show a run's readouts: load them, colour and play (several) or hold the last (one).
+ *
+ * Args:
+ *   d: the API's run reply (``run``, or ``ibm_status`` once the job is done).
+ *   p: the params() it was read with.
+ *   key: runKey() at the time, for the stale check.
+ *   meshKey: meshKeyNow() at the time.
+ */
+function showRun(d, p, key, meshKey) {
+  if (meshKey !== S.meshKey) setMesh(d, meshKey);
+  Object.assign(S, { data: d, run: key, frames: d.frames.map((f) => new Float32Array(f.flat())),
+    refs: d.refs ? d.refs.map((r) => new Float32Array(r.flat())) : [], ts: d.ts || null, step: 0, seed0: p.seed });
+  showInfo(d, p);
+  S.focus = null;
+  rebuild();
+  drawMap();
+  S.playing = d.frames.length > 1;
+  if (!S.playing) { S.step = S.seq.length - 1; draw(); }
+}
+
+// ---------- a real IBM chip: the token (this session only), the job, its readouts
+// The token lives in this variable alone: never in storage, a URL or the page, and it
+// goes only to this site's own function, in the body of the IBM requests.
+const IBM = { token: null, chips: [], job: null, timer: null };
+function syncIbm() {
+  const ok = !!IBM.token;
+  $('ibmDot').hidden = !ok;
+  $('ibmKey').dataset.tip = ok ? `IBM token verified${IBM.chips.length ? ` · ${IBM.chips.join(', ')}` : ''}` : 'IBM token';
+  $('ibmKey').setAttribute('aria-label', ok ? 'IBM token verified: enter another to replace it' : 'Enter an IBM authentication token');
+  $('ibmPlay').hidden = !ok;
+  $('ibmPlay').textContent = IBM.job ? `IBM job ${IBM.job.status.toLowerCase()}…` : 'Run & play on IBM';
+  $('ibmPlay').classList.toggle('waiting', !!IBM.job);
+  const why = !ok ? '' : IBM.job ? `IBM job ${IBM.job.id} on ${IBM.job.backend}: ${IBM.job.status.toLowerCase()}`
+    : !IBM.chips.length ? 'This IBM account has no access to ibm_fez or ibm_phoenix'
+    : P.mode === 'morph' ? 'IBM runs read a fixed mesh: not in morph mode' : !S.mesh ? 'Load an object first' : '';
+  setTool('ibmPlay', why);
+  if (!why) $('ibmPlay').dataset.tip = '*this will use IBM credits';
+  if (tipFor === $('ibmPlay') || tipFor === $('ibmKey')) showTip(tipFor);
+}
+function setIbmOpen(open) {
+  if (open) { // as wide as the room left of the key allows; too little, and the resolution row steps aside
+    const room = $('ibmKey').getBoundingClientRect().left - $('resRow').getBoundingClientRect().right - 24;
+    app.style.setProperty('--ibm-w', `${room < 160 ? 260 : Math.round(Math.min(260, room))}px`); // crowded: the row is out of the way
+    app.classList.toggle('ibm-crowded', room < 160);
+  } else app.classList.remove('ibm-crowded');
+  $('ibm').dataset.state = open ? 'open' : 'closed';
+  $('ibmKey').setAttribute('aria-expanded', open);
+  if (open) $('ibmToken').focus(); else $('ibmToken').blur();
+}
+$('ibmKey').addEventListener('click', () => setIbmOpen($('ibm').dataset.state !== 'open'));
+$('ibmToken').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); setIbmOpen(false); } });
+$('ibmForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const token = $('ibmToken').value.trim();
+  if (!token) return;
+  $('ibm').dataset.state = 'checking';
+  status('Checking the IBM token…');
+  try {
+    const r = await call('ibm_verify', { ibm_token: token });
+    Object.assign(IBM, { token, chips: r.chips });
+    $('ibmToken').value = '';
+    setIbmOpen(false);
+    status(`IBM token verified for this session${r.chips.length ? `: runs go to ibm_${CHIPS.includes(P.backend) && r.chips.includes(P.backend) ? P.backend : r.chips[0]}` : ', but it has no access to ibm_fez or ibm_phoenix'}`);
+  } catch (err) {
+    $('ibm').dataset.state = 'open';
+    $('ibmToken').select();
+    status(`⚠ ${err.message}`, true);
+  }
+  syncIbm();
+});
+/** Submit the frames to IBM, then check the job until it is done (the page stays usable). */
+async function runIbm() {
+  if (!IBM.token || IBM.job || $('ibmPlay').getAttribute('aria-disabled') === 'true') return; // greyed: its hint says why
+  useErrorColour();
+  const p = params(), key = runKey(), meshKey = meshKeyNow();
+  const body = { frames: P.frames, gain_shots: gainShots(), ibm_token: IBM.token };
+  await busy('Encoding for IBM and submitting the job…', async () => {
+    const r = await call('ibm_submit', body);
+    IBM.job = { id: r.job, chip: r.chip, backend: r.backend, status: 'QUEUED', p, key, meshKey, body: { ...body, chip: r.chip, frames: r.frames }, wait: 5000 };
+    const cut = r.frames < P.frames ? ` (${r.frames} frames: IBM takes at most 100,000 shots per circuit)` : '';
+    status(`IBM job ${r.job} submitted to ${r.backend}: ${r.circuits} circuit${r.circuits === 1 ? '' : 's'} × ${(r.shots * r.frames).toLocaleString()} shots${cut}, no SWAPs. Waiting in IBM's queue (the page stays usable)…`);
+    IBM.timer = setTimeout(pollIbm, IBM.job.wait);
+  });
+  syncIbm();
+}
+async function pollIbm() {
+  const job = IBM.job;
+  if (!job) return;
+  try {
+    const d = await call('ibm_status', { ...job.body, ibm_token: IBM.token, job: job.id });
+    if (d.status !== 'DONE') {
+      job.status = d.status;
+      job.wait = Math.min(job.wait * 1.5, 30000); // check less often the longer it waits
+      IBM.timer = setTimeout(pollIbm, job.wait);
+      return syncIbm();
+    }
+    IBM.job = null;
+    showRun(d, job.p, job.key, job.meshKey);
+    status(`IBM job ${job.id} on ${d.backend}: ${d.frames.length} readout(s) of the real chip`);
+  } catch (err) {
+    IBM.job = null;
+    status(`⚠ IBM job ${job.id}: ${err.message}`, true);
+  }
+  syncIbm(); syncPlay(); syncStale();
 }
 
 function setEdges(r) {
@@ -1488,7 +1587,7 @@ function closeAll() {
 const CLICK_SLOP = 8; // px a press may move and still count as a click
 let press = null; // the pointerdown a click may complete: {id, x, y}
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .line-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #help, #hud, #drawer, #qmap, #info, #resRow, #side, dialog, .logo');
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .line-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #help, #hud, #drawer, #qmap, #info, #resRow, #side, #ibm, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
   const PAD = 16; // a forgiving margin round each tab
@@ -1980,6 +2079,7 @@ for (const b of document.querySelectorAll('#resRow [data-res]')) {
 
 // ---------- run buttons
 $('run').addEventListener('click', () => { useErrorColour(); run(1); });
+$('ibmPlay').addEventListener('click', runIbm);
 // a readout (one, or frames) shows how far each vertex moved, so both run buttons
 // switch the colour to error
 function useErrorColour() {
@@ -2032,6 +2132,7 @@ function syncHud() {
   setTool('glb', S.keys.length >= 2 ? '' : 'Run the object first, then download its readouts as shape keys');
   setTool('qmapOn', S.data ? '' : 'Run the object first to see its qubit map');
   setTool('viewToggle', '');
+  syncIbm();
 }
 // clicks on a tool that can't run are stopped before they reach it
 $('hud').addEventListener('click', (e) => {

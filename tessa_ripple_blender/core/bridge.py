@@ -24,10 +24,11 @@ import numpy as np
 from qiskit import ClassicalRegister, QuantumCircuit, transpile
 from qiskit.circuit.library import StatePreparation, UCRYGate
 from ..tessa import (DYNAMIC_RANGE_METHODS, Lattice, backend_rates, build_average_noise_model,
-                   build_local_noise_model, cell_circuit, cell_halo, decode_from_cell_counts, encode,
-                   encode_symbols, graph_from_coupling, prepare_field, probe_qubits, rectangular_layout,
-                   restore_field, slot_order, square_lattice_edges, symbols_from_counts)
-from ..tessa.backends import device_of
+                   build_local_noise_model, cell_circuit, cell_halo, decode_from_cell_counts,
+                   decode_from_counts, encode, encode_symbols, graph_from_coupling, measurement_circuits,
+                   prepare_field, probe_qubits, rectangular_layout, restore_field, slot_order,
+                   square_lattice_edges, symbols_from_counts, transpile_to_backend)
+from ..tessa.backends import counts_of, device_of
 from ..tessa.backends.aer import _TWO_QUBIT_GATES, _aer_sampler, topology_device
 from ..tessa.codec import _check_traceable, _measured, _normalise, _trace_halo
 from ..tessa.core.mode import DEFAULT_CLAMP, get_mode
@@ -1619,15 +1620,125 @@ def _read(e: Encoded, p: Params, seed: int, runs, frames: int = 1, pilots=()):
             n = min(per_job, frames - i0)
             inner = sampler(e.graph, p, batch_seed(seed + i0, k))
             for i, out in enumerate(_decode_frames(e, circuit, enc, inner, n, p.shots), start=i0):
-                oa, ob = out if isinstance(out, tuple) else (out, None)
-                if pilots:
-                    oa = _calibrate(oa, pilots[k])
+                oa, ob = _fields_of(out, pilots[k] if pilots else None)
                 a[i, m] = oa[e.slots[m]]
                 if ob is not None:
                     if b is None:
                         b = np.empty_like(a)
                     b[i, m] = ob[e.slots[m]]
     return a, b
+
+
+def _fields_of(out, pilots=None) -> tuple:
+    """A run's decoded capacity array(s) as ``(first field, second field or None)``,
+    the first corrected by the run's pilots.
+
+    Args:
+        out: What Tessa's decode returns for one run: an array, or a tuple of two.
+        pilots: The run's ``(slots, values)`` (:func:`_pilots`), or None.
+
+    Returns:
+        tuple: ``(a, b)``: (capacity,) arrays; ``b`` None for one field.
+    """
+    a, b = out if isinstance(out, tuple) else (out, None)
+    return (a if pilots is None else _calibrate(a, pilots)), b
+
+
+def _join(e: Encoded, a, b) -> np.ndarray:
+    """Per-value raw readouts: split mode and the spherical payload take each value from its own field.
+
+    Args:
+        e: The encoding (``fields``).
+        a: (..., N, comps) first-field values.
+        b: (..., N, comps) second-field values, or None.
+
+    Returns:
+        np.ndarray: (..., N*comps) values.
+    """
+    if e.field is not None:
+        a = np.where(e.fields == 1, b, a)
+    return a.reshape(*a.shape[:-2], -1)
+
+
+# --- real hardware: Tessa's whole-chip path ----------------------------------------
+def hardware_circuits(e: Encoded) -> list[tuple]:
+    """Every circuit one readout runs on real hardware: per run, Tessa's
+    ``measurement_circuits`` (the whole chip measured in each basis its mode reads).
+
+    ``tessa.decode(per_group=True)`` (every simulated readout here) cuts the chip into
+    cells; on hardware the whole circuit runs at once, ``per_group=False``, as here.
+
+    Args:
+        e: The encoding (not a morph: its basis sweep reads one t per circuit set).
+
+    Returns:
+        list: ``(run, basis, circuit)`` per circuit, unmeasured qubits on the graph's own
+        indices (a chip graph's are the chip's physical qubits).
+
+    Raises:
+        ValueError: For a morph.
+    """
+    if e.mode == "morph":
+        raise ValueError("Hardware runs read a fixed mesh; a morph's basis sweep is simulated only")
+    return [(k, basis, qc) for k, (circuit, enc) in enumerate(e.run_parts)
+            for basis, qc in measurement_circuits(circuit, enc.symbols.encoding if isinstance(enc, SnapEncoding)
+                                                  else enc).items()]
+
+
+def values_from_counts(e: Encoded, counts) -> np.ndarray:
+    """One readout's raw values from whole-chip counts, as :func:`decode_raw` returns them.
+
+    Tessa's ``decode_from_counts`` (or, for a snap readout, ``symbols_from_counts``),
+    then each run's pilots, gathered by vertex. Counts measured on a chip today can be
+    decoded at any time later against the same encoding (``encode_mesh`` is
+    deterministic for the same mesh and settings).
+
+    Args:
+        e: The encoding the circuits came from.
+        counts: Per run, ``{basis: counts}`` (as :func:`read_hardware` returns).
+
+    Returns:
+        np.ndarray: (N*comps,) raw values, for :func:`restore`.
+    """
+    a, b = np.empty(e.slots.shape), None
+    for k, ((_, enc), by_basis) in enumerate(zip(e.run_parts, counts, strict=True)):
+        out = enc.values(by_basis) if isinstance(enc, SnapEncoding) else decode_from_counts(by_basis, enc)
+        oa, ob = _fields_of(out, e.pilots[k] if e.pilots else None)
+        m = e.batches == k
+        a[m] = oa[e.slots[m]]
+        if ob is not None:
+            b = np.empty_like(a) if b is None else b
+            b[m] = ob[e.slots[m]]
+    return _join(e, a, b)
+
+
+def read_hardware(e: Encoded, sampler, shots: int, device=None, optimization_level: int = 1):
+    """One readout on a device: every :func:`hardware_circuits` circuit transpiled onto it
+    with the identity layout (Tessa's ``transpile_to_backend``: no SWAPs), all in one
+    job, decoded with :func:`values_from_counts`.
+
+    Nothing here decides to spend hardware time: the caller passes the sampler (e.g.
+    ``tessa.ibm_sampler``), and running it submits the job.
+
+    Args:
+        e: The encoding (a chip graph for a chip; a lattice runs on a simulator).
+        sampler: A SamplerV2-like ``run(circuits, shots=...)``.
+        shots: Shots per circuit.
+        device: The backend to transpile for; None asks ``sampler`` (Tessa's ``device_of``).
+        optimization_level: Transpiler optimisation.
+
+    Returns:
+        tuple: ``(raw, counts, reports)``: (N*comps,) values, per run ``{basis: counts}``,
+        and Tessa's transpile report per circuit (depths, SWAPs, two-qubit gates).
+    """
+    jobs = hardware_circuits(e)
+    target = sampler if device is None else device
+    transpiled, reports = zip(*(transpile_to_backend(qc, target, optimization_level) for _, _, qc in jobs))
+    result = sampler.run(list(transpiled), shots=shots).result()
+    counts = [{} for _ in range(e.runs)]
+    for i, (k, basis, _) in enumerate(jobs):
+        counts[k][basis] = counts_of(result, i)
+    return values_from_counts(e, counts), counts, list(reports)
 
 
 def _alpha_grid(e: Encoded, alpha) -> np.ndarray:
@@ -1788,14 +1899,15 @@ def decode_frames(e: Encoded, p: Params, n: int, seed: int | None = None, refere
             reference = tilted_angles(e, p, reference_seed(seed), 0.0)
         # alpha = 0 everywhere: each frame is its own Z readout (transition_values)
         return np.array([transition_values(e, a, a if reference is None else reference, alpha) for a in angles])
-    a, b = _read(e, p, seed, e.run_parts, n, e.pilots)
-    if e.field is not None:  # split mode, spherical payload: each value from its own field
-        a = np.where(e.fields == 1, b, a)
-    return a.reshape(n, -1)
+    return _join(e, *_read(e, p, seed, e.run_parts, n, e.pilots))
 
 
 def _values(e: Encoded, raw, prep, drr: str) -> np.ndarray:
     """Tessa's ``restore_field`` (DRR, un-quantise) on raw decoded values.
+
+    ``clip``: a stretch then clips to the reference's range, as Tessa recommends: every
+    true value lies inside it, so no value moves further from its target (1-3 % less
+    error on the blob and Suzanne, never more).
 
     The spherical payload restores polar, azimuth and radius each against its own
     reference, and leaves the azimuth out of DRR: it is a phase round the whole
@@ -1814,9 +1926,9 @@ def _values(e: Encoded, raw, prep, drr: str) -> np.ndarray:
     if e.payload == "spherical" and drr != "none":
         raw, ref = np.reshape(raw, e.slots.shape), prep.reference.reshape(e.slots.shape)
         return np.stack([restore_field(raw[:, c], replace(prep, reference=ref[:, c]),
-                                       dynamic_range="none" if c == 1 else drr)
+                                       dynamic_range="none" if c == 1 else drr, clip=True)
                          for c in range(raw.shape[1])], axis=1)
-    return restore_field(raw, prep, dynamic_range=drr).reshape(e.slots.shape)
+    return restore_field(raw, prep, dynamic_range=drr, clip=True).reshape(e.slots.shape)
 
 
 def restore(e: Encoded, raw, drr: str = "none", dirs=None, reference=None) -> np.ndarray:

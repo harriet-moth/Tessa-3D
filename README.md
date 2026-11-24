@@ -25,8 +25,9 @@ measurement basis, not movement.
 ## Install and run
 
 Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/). Tessa is not on PyPI, so it
-is pinned to a git commit in `pyproject.toml`. No IBM account or `ibm` extra is
-needed: the chip backends use calibration snapshots that ship with Tessa.
+is pinned to a git commit in `pyproject.toml`. No IBM account is needed: the chip
+backends use calibration snapshots that ship with Tessa (an account is only for
+running on a real chip, below).
 
 ```bash
 uv venv --python 3.13 && uv pip install -e ".[dev]"
@@ -39,6 +40,28 @@ uv venv --python 3.13 && uv pip install -e ".[dev]"
 ```bash
 .venv/bin/python -m pytest
 ```
+
+### Real hardware
+
+Every app simulates; `python -m tessa_ripple.hardware` (or `tessa-ripple-hw`) reads a
+mesh on a real IBM chip with Tessa's whole-chip path. On hardware the encoded circuit
+runs whole, measured in each basis its mode reads (Tessa's `measurement_circuits`,
+transpiled with `transpile_to_backend`'s identity layout: no SWAPs), and the counts
+decode with `decode_from_counts` (snap: `symbols_from_counts`). Every payload, Mode θ
+and θ+φ, every **Readout** and **DRR** (pilots included) work as in the apps; morph
+is simulated only.
+
+```bash
+.venv/bin/python -m tessa_ripple.hardware plan tessa_ripple/suzanne.obj --chip fez --readout bloch
+```
+
+`plan` transpiles onto the chip's stored calibration snapshot and reports the job
+(circuits, qubits, SWAPs, depth); it contacts nobody. `run MESH --out DIR` submits one
+job through Tessa's `ibm_sampler` (`qiskit-ibm-runtime` is a dependency; the token comes from
+`$QISKIT_IBM_TOKEN` or your saved account, and is never written to DIR), waits, and
+saves `counts.json`, `decoded.obj` and a report. `run --simulate` runs the same
+whole-chip circuits on Aer for a small lattice. `decode DIR` decodes the saved counts
+again offline (re-encoding is deterministic), for example with another DRR.
 
 To add your own meshes, pass OBJ files on the command line; each becomes a **Shape**
 option. OBJ files are read as Y-up (the OBJ and Blender convention) and exported
@@ -90,6 +113,19 @@ How it works:
   gently curved between vertices (hard edges stay sharp) and every edge as a faint thin
   line. The dots sit on the decoded vertex positions, so they move only as the readout
   does; they keep a steady size and brightness, and shimmer only while a run is working.
+- **Real IBM chip:** the key left of the light/dark button opens a box for an **IBM
+  authentication token**. Once IBM accepts it, a green dot lights on the key and a third
+  run button appears, **Run & play on IBM** (its hint: *this will use IBM credits). It
+  submits one job of Tessa's whole-chip circuits (see *Real hardware*) to ibm_fez or
+  ibm_phoenix, whichever the account reaches (**Backend**'s chip first), and the page
+  checks the job until it is done; the page stays usable meanwhile. At most 100,000
+  shots per circuit, so frames × shots is capped. Not in morph mode. The token is kept
+  in the page's memory for this visit only (never in storage or a URL) and sent only to
+  this site's own function, which uses it for that request and never stores or logs it.
+  IBM's `qiskit-ibm-runtime` is bundled (about 52 MB on Linux) and imported only when a
+  token arrives. To pay for it, the function leaves out matplotlib, pillow, fonttools and
+  their helpers (`vercel.json` `excludeFiles`, about 76 MB): Tessa depends on matplotlib,
+  but the web never imports any of them.
 - **Run buttons:** the gear ▶ encodes and reads once; ▶|| runs **Frames** readouts,
   then plays and pauses them. Both switch the colour to **error**. The gear glows while the settings differ from the last run.
 - **Settings:** click (or tap) the object:
@@ -804,9 +840,10 @@ on the far side.
 
 **DRR** (none / min_max / mean_std / percentile / abs_max / min_avg_max; *pilots*: see below)
 - *In practice:* undoes the shrink that hardware noise causes.
-- *In Tessa:* `restore_field(dynamic_range=...)` stretches each decoded frame so a
-  few summary statistics match the original values. `mean_std` is the paper's
-  choice for hardware.
+- *In Tessa:* `restore_field(dynamic_range=..., clip=True)` stretches each decoded frame
+  so a few summary statistics match the original values, then clips to their range
+  (Tessa's recommendation: no value moves further from its target; 1–3 % less error).
+  `mean_std` is the paper's choice for hardware.
 
 **Readout** (Z / Bloch / snap; *shape θ (Z)*, not the spherical payload; needs a new Run)
 - *Z*: θ read in Z, one measurement setting.
@@ -951,8 +988,8 @@ map with `bridge.qubit_map(e)`.
   a lower-noise backend to read on a chip.
 - **Batching for the other modes.** It is built generic in `encode_mesh` but only
   switched on for morph (`can_batch`).
-- **Real hardware.** Tessa would run whole circuits there with
-  `decode(..., per_group=False)`, and that needs its `ibm` extra.
+- **Real hardware.** Now supported: the web's **Run & play on IBM** and
+  `python -m tessa_ripple.hardware` run Tessa's whole circuits (`per_group=False`).
 
 ## Code layout
 
