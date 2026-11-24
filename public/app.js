@@ -1599,7 +1599,8 @@ function closeAll() {
 }
 
 // ---------- layer 1: click (or tap) the object to open the Encode and Decode tabs; click
-// a tab to open its arc, anywhere else to close. A drag rotates the object instead.
+// a tab to open its arc; with any menu layer open, a click on the object's right (where no menu
+// items are) closes the menu. A drag rotates the object instead.
 const CLICK_SLOP = 8; // px a press may move and still count as a click
 let press = null; // the pointerdown a click may complete: {id, x, y}
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
@@ -1629,7 +1630,9 @@ addEventListener('pointerup', (e) => {
     const side = pillAt(sx, sy); // a tab opens its arc
     if (side) openArc(side);
   }
-  // an open menu (any layer) stays open on a click elsewhere: only the back button (or Escape) steps back
+  // click away: on the object's right, where no menu items are, an open menu (any layer) closes
+  if (st !== 'closed' && sx > CX + shift[0]) closeAll();
+  // a click elsewhere (the left, where the menu items are) leaves it open: the back button (or Escape) steps back
 });
 addEventListener('pointercancel', () => { press = null; });
 // with the tabs open, light the one under the pointer
