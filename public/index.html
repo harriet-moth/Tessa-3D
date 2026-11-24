@@ -195,8 +195,8 @@
     </div>
   </div>
   <div class="legends"><div class="legend" id="faceLegend" hidden></div><div class="legend" id="edgeLegend" hidden></div></div>
-  <!-- the qubit map: a window over a dimmed page, like the dialogs (closes on × or Escape) -->
-  <div id="qmap" hidden><div class="qmap-card" role="dialog" aria-modal="true" aria-labelledby="qmapTitle">
+  <!-- the qubit map: a panel beside the object (closes on × or Escape) -->
+  <div id="qmap" hidden><div class="qmap-card" role="region" aria-labelledby="qmapTitle">
     <button id="qmapClose" class="close" aria-label="Close" data-tip="close"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></button>
     <h2 id="qmapTitle">Qubit Map</h2><canvas id="qcanvas"></canvas><div id="qtext"></div></div></div>
   <div id="dropOverlay" hidden><p>Drop to load</p></div>

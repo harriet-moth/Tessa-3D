@@ -228,7 +228,8 @@ const discTexture = (fill, ring, width) => {
   return t;
 };
 const mateGeom = new THREE.BufferGeometry();
-const mates = new THREE.Points(mateGeom, themed(new THREE.PointsMaterial({ map: discTexture('#FFA158', '#100F0F', 12), alphaTest: 0.5, size: 0.08 })));
+const mates = new THREE.Points(mateGeom, themed(new THREE.PointsMaterial({ map: discTexture('#FFA158', '#100F0F', 10), alphaTest: 0.5, size: 0.1, depthTest: false, depthWrite: false, transparent: true })));
+mates.renderOrder = 10; // drawn over the surface, so a lit vertex is never hidden behind it
 // the morph front's source vertex
 const srcGeom = new THREE.BufferGeometry();
 srcGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
@@ -327,8 +328,16 @@ function setLog(open) {
   $('logToggle').setAttribute('aria-expanded', open);
   $('logToggle').setAttribute('aria-label', open ? 'Hide the log' : 'Show the log');
 }
-$('logToggle').addEventListener('click', () => setLog(!$('info').classList.contains('open')));
+$('logToggle').addEventListener('click', () => { logChosen = true; setLog(!$('info').classList.contains('open')); });
 setLog(true);
+// While a settings menu is up the log starts folded, so it doesn't crowd the web; opening it
+// (its button, or a message about a blocked option) is never overridden. Closing the menu puts
+// the log back as it was, unless the user chose its state meanwhile.
+let logChosen = false, logBeforeMenu = true;
+function logForMenu(wasOpen, isOpen) {
+  if (!wasOpen && isOpen) { logBeforeMenu = $('info').classList.contains('open'); logChosen = false; setLog(false); }
+  else if (wasOpen && !isOpen && !logChosen) setLog(logBeforeMenu);
+}
 // light mode (the default): inverts the whole page (CSS on <html>); a choice is remembered in this browser
 const tipEl = $('tip'); // the shared hover label (see showTip)
 let tipFor = null;
@@ -454,7 +463,7 @@ function buildCloud(d) {
   cloudMat.uniforms.uR.value = objRadius;
   S.tris = tris;
   [cloudMat.uniforms.uZ0.value, cloudMat.uniforms.uZ1.value] = extent(V.map((p) => p[2]));
-  mates.material.size = spacing * 2.5;
+  mates.material.size = spacing * 4; // big enough to read as lit, beside the cloud's dots
   srcMark.material.size = spacing * 4;
   cloud.visible = wire.visible = true;
   frameCamera();
@@ -1248,6 +1257,7 @@ function mapGeometry() {
 
 function drawMap() {
   $('qmap').hidden = !mapOn();
+  syncShift(); // the object makes room while the map shows
   if (!mapOn()) return;
   const { m, step, w, h, pos } = mapGeometry(), c = $('qcanvas'), dpr = devicePixelRatio || 1;
   c.width = w * dpr; c.height = h * dpr; c.style.width = `${w}px`; c.style.height = `${h}px`;
@@ -1345,6 +1355,8 @@ function setShift(x, y) { app.style.setProperty('--ox', `${x}px`); app.style.set
 let shift = [0, 0];
 // the morph box sits right of the object (design) or, in portrait, below it
 const MORPH_SHIFT = () => (portrait ? [0, -100] : [-240, 10]);
+// the qubit map sits left of the object (landscape) or below it (portrait): the object moves clear of it
+const MAP_SHIFT = () => (portrait ? [0, -150] : [230, 0]);
 const morphBoxOpen = () => !panelEl.hidden && panelEl.dataset.key === 'mode' && P.mode === 'morph';
 // On a phone the menus' webs need the left of the screen, so while one is open (layers 2
 // and 3) the object slides right, partly off the edge.
@@ -1358,6 +1370,7 @@ const PORTRAIT_MENU_SHIFT = 230;
  */
 function syncShift(layer = +home.dataset.layer) {
   shift = morphBoxOpen() ? MORPH_SHIFT() : [0, 0];
+  if (mapOn()) shift = [shift[0] + MAP_SHIFT()[0], shift[1] + MAP_SHIFT()[1]]; // make room for the qubit map
   if (portrait && layer >= 2) shift = [shift[0] + PORTRAIT_MENU_SHIFT, shift[1]];
   setShift(...shift);
 }
@@ -1509,7 +1522,9 @@ function relayoutMenus() {
 // menu state: closed | open (layer 1) | encode / decode (layer 2) | panel (layer 3)
 function setMenu(state) {
   menuEl.dataset.state = state;
+  const was = +app.dataset.layer > 0;
   home.dataset.layer = app.dataset.layer = { closed: 0, open: 1, encode: 2, decode: 2, panel: 3 }[state]; // the page frame reads it too
+  logForMenu(was, +app.dataset.layer > 0);
   if (state !== 'open') hotPill(null);
   syncShift();
 }
@@ -1714,7 +1729,7 @@ function buildPanel(side, key) {
     // a word option starts with a capital (sentence case); graphics and symbols are left alone
     b.innerHTML = !spec.squares && !it.html.includes('<') ? it.html[0].toUpperCase() + it.html.slice(1) : it.html;
     b.setAttribute('aria-label', it.name ? `${it.name}: ${it.tip}` : it.tip); // pictures have no words: name them for screen readers
-    if (spec.squares || spec.hints) b.dataset.tip = it.tip; // a graphic (or a hinted word): its tip shows on hover
+    if (spec.squares || spec.hints) b.dataset.tip = b.dataset.baseTip = it.tip; // a graphic (or a hinted word): its tip shows on hover
     b.dataset.v = it.v;
     b.addEventListener('click', () => choose(spec.key, it.v));
     body.appendChild(b);
@@ -1757,25 +1772,77 @@ function syncPanel() {
     const on = String(P[spec.key]) === b.dataset.v;
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', on);
+    // an option that clashes with another setting stays greyed; its reason shows on hover
+    // (bottom right) and in the log on a click
+    const why = on ? '' : conflict(spec.key, b.dataset.v);
+    b.setAttribute('aria-disabled', !!why);
+    if (why) b.dataset.tip = why; else if (b.dataset.baseTip) b.dataset.tip = b.dataset.baseTip; else delete b.dataset.tip;
   }
   for (const el of $('panelBody').querySelectorAll('.slider-wrap')) el.sync();
   layoutPanel(); // a slider may have shown or hidden (backend: the noise strength)
 }
 
+/**
+ * Why an option can't be chosen with the other settings as they are.
+ *
+ * These mirror what the server refuses (bridge.encode_mesh and api/tessa.py), so a
+ * combination that would fail is greyed out before it can be picked. Each reason says what
+ * to change first. Only the pairs below conflict; nothing is switched behind the user's back.
+ *
+ * Args:
+ *   key: the setting, 'payload', 'mode', 'readout', 'drr' or 'backend'.
+ *   v: the option's value.
+ *
+ * Returns:
+ *   The reason (a sentence for the log and the hover label), or '' if it can be chosen.
+ */
+function conflict(key, v) {
+  const one = 'reads one θ field'; // bloch, snap and pilots all read a single θ per slot
+  if (key === 'payload') {
+    if (v === 'spherical') {
+      if (P.mode !== 'theta') return 'Spherical fills θ and φ itself, so it needs mode θ: set the mode to θ first';
+      if (P.readout !== 'z') return `Spherical already reads its direction in Z, X and Y: set the readout to Z first (the ${P.readout} readout ${one})`;
+      if (P.drr === 'pilots') return `Spherical can't use pilot DRR (pilots ${one}): choose another DRR first`;
+    }
+    if (v === 'spectral' && P.morph_front) return 'The morph front needs one row per vertex, so not with the spectral load: turn the front off first (Mode → Morph → Front)';
+  } else if (key === 'mode' && v !== 'theta') {
+    if (P.payload === 'spherical') return 'θ+φ and morph need a radial, xyz or spectral load (spherical fills θ and φ itself): change the load first';
+    if (P.readout !== 'z') return `The ${P.readout} readout ${one}, so it needs mode θ: set the readout to Z first`;
+    if (P.drr === 'pilots') return `Pilot DRR ${one}, so it needs mode θ: choose another DRR first`;
+  } else if (key === 'readout' && v !== 'z') {
+    if (P.mode !== 'theta') return `The ${v} readout ${one}, so it needs mode θ: set the mode to θ first`;
+    if (P.payload === 'spherical') return `The ${v} readout can't be used with the spherical load (it already reads Z, X and Y): change the load first`;
+    if (v === 'snap' && P.drr === 'pilots') return 'Snap readout snaps to its own levels and needs no pilots: choose another DRR first';
+  } else if (key === 'drr' && v === 'pilots') {
+    if (P.mode !== 'theta') return `Pilot DRR ${one}, so it needs mode θ: set the mode to θ first`;
+    if (P.payload === 'spherical') return 'Pilot DRR can\'t be used with the spherical load (it already reads Z, X and Y): change the load first';
+    if (P.readout === 'snap') return 'Pilots aren\'t needed with the snap readout (it snaps to its own levels): choose another readout first';
+  } else if (key === 'backend' && v !== 'noiseless' && P.interference) {
+    return 'Interference readout needs the noiseless backend on the web (noise takes minutes per frame): turn it off first (Mode → Morph → Interference readout)';
+  }
+  return '';
+}
+
+/**
+ * Tell the user why something can't be used: the reason goes in the log, which opens so it
+ * is seen even while a menu is up.
+ *
+ * Args:
+ *   reason: the sentence to log.
+ */
+function blocked(reason) {
+  status(reason);
+  setLog(true);
+}
+
 function choose(key, v) {
+  const why = conflict(key, v);
+  if (why) return blocked(why);
   P[key] = v;
-  // the spherical payload fills θ and φ itself, so it only pairs with mode θ
-  if (key === 'payload' && v === 'spherical' && P.mode !== 'theta') { P.mode = 'theta'; status('spherical fills θ and φ itself: mode set to θ'); }
-  if (key === 'mode' && v !== 'theta' && P.payload === 'spherical') { P.payload = 'radial'; status('θ+φ modes need a radial or xyz load: load set to radial'); }
-  // the spectral load's qubits hold modes of the whole surface, so there is no patch for a front to turn
-  if (key === 'payload' && v === 'spectral' && P.morph_front) { P.morph_front = false; status('the morph front needs one row per vertex: front turned off for the spectral load'); }
   if (key === 'payload') syncMorphBox();
   if (key === 'mode' && v === 'morph') P.clamp_b = P.clamp; // one clamp for both fields
   if (key === 'mode') { syncMorphBox(); syncHud(); }
-  if (key === 'backend') {
-    if (v !== 'noiseless' && P.interference) { P.interference = false; status('interference readout needs the noiseless backend on the web: turned it off'); }
-    syncMorphBox(); syncHud();
-  }
+  if (key === 'backend') { syncMorphBox(); syncHud(); }
   syncPanel(); syncStale();
 }
 
@@ -1931,7 +1998,7 @@ function syncMorphBox() {
   layoutPanel();
 }
 for (const c of document.querySelectorAll('#morphOpts .chip')) {
-  c.addEventListener('click', () => { if (c.getAttribute('aria-disabled') === 'true') return; P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
+  c.addEventListener('click', () => { if (c.getAttribute('aria-disabled') === 'true') return blocked(c.dataset.tip); P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
 }
 $('morph_t').addEventListener('input', () => { P.morph_t = +$('morph_t').value; syncMorphBox(); syncStale(); });
 $('front_width').addEventListener('input', () => { P.front_width = +$('front_width').value; syncMorphBox(); syncStale(); });

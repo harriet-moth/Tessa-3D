@@ -313,6 +313,10 @@ button:focus-visible { outline: none; }
 .orb .qicon { width: 40px; height: 40px; display: block; } /* the Load options' line icons */
 .orb.square.label { font-size: var(--fs-control); } /* words in a circle (Morph, (x,y,z)): control size, to fit */
 .orb.disabled { opacity: 0.35 !important; pointer-events: none; }
+/* an option that clashes with another setting: greyed, its reason on hover and in the log on a click */
+#panel .orb[aria-disabled="true"] { opacity: 0.35; cursor: default; }
+#panel .orb[aria-disabled="true"]:hover, #panel .orb[aria-disabled="true"]:focus-visible { background: none; color: rgb(var(--ink-rgb) / 0.6); border-color: var(--orb-line); }
+#panel .orb.square[aria-disabled="true"]:hover, #panel .orb.square[aria-disabled="true"]:focus-visible { background: var(--black); }
 
 /* sliders: the web's line bends at an elbow and runs straight left as the track, with
    end ticks; a small square knob, the name above and the value at the far end */
@@ -489,8 +493,7 @@ button:focus-visible { outline: none; }
   opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity 250ms var(--ease-ctl), transform 300ms var(--ease-ctl); }
 #info.open #logBody { opacity: 1; transform: none; pointer-events: auto; }
 #info:not(.open) #logBody { visibility: hidden; transition: opacity 250ms var(--ease-ctl), transform 300ms var(--ease-ctl), visibility 0s 300ms; }
-/* the settings menu fans out over the bottom-left: the open log steps aside while it is up */
-#app:not([data-layer="0"]) #info.open #logBody { opacity: 0; transform: translateY(8px); pointer-events: none; }
+/* the settings menu folds the log by default (app.js), but an open log stays visible whatever the menu */
 /* no hints on the landing page: the log waits for home, unless it holds an error (a bad upload) */
 #app[data-screen="landing"] #info.open #logBody:not(:has(#status.err)) { opacity: 0; transform: translateY(8px); pointer-events: none; }
 #app:not([data-layer="0"]) #info { pointer-events: none; } /* its box would still catch clicks... */
@@ -527,10 +530,13 @@ html, .legends { transition: filter 300ms var(--ease-ctl); }
 .legend .swatches { display: flex; flex-wrap: wrap; gap: 2px; margin: 3px 0; }
 .legend .swatches i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
-/* the qubit map: centred over the page, which dims behind it as it does for the dialogs */
-#qmap { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); }
-.qmap-card { max-width: min(360px, calc(100vw - 32px)); padding: 18px 22px; border: 1px solid var(--glass-line); border-radius: 22px;
-  background: rgba(16, 15, 15, 0.92); color: var(--ink); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+/* the qubit map: a panel beside the object (which slides over to make room), not a window over it;
+   the page behind stays undimmed so the lit vertices show on the object as you hover the map */
+#qmap { position: fixed; z-index: 20; left: max(var(--edge, 24px), 24px); top: 84px; pointer-events: none; } /* high, clear of the log bottom left */
+.qmap-card { width: min(320px, calc(100vw - 48px)); box-sizing: border-box; padding: 18px 22px; border: 1px solid var(--glass-line); border-radius: 22px;
+  background: rgba(16, 15, 15, 0.92); color: var(--ink); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: auto; }
+/* portrait: along the bottom, the object slides up */
+@media (orientation: portrait) { #qmap { left: 50%; top: auto; bottom: 16px; transform: translateX(-50%); } }
 #qmap[hidden] { display: none; }
 #qmap canvas { display: block; margin: 0 auto 6px; cursor: crosshair; }
 #qtext { font: var(--fs-body)/1.45 var(--font); color: var(--ink-dim); white-space: pre-wrap; } /* as the help text */
