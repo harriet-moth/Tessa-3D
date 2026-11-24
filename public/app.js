@@ -17,10 +17,12 @@ const P = {
   clamp: 0, clamp_b: 0, compression: 0, quant_bits: 0, headroom: 0.1,
   spectral_k: 0, // spectral load: modes to encode, 0 = auto (1 % truncation); past one run's cap = the cap
   backend: 'noiseless', placement: 'quality', shots: 12, noise_strength: 1, seed: 0, drr: 'none',
+  readout: 'z', // how θ is read: z, bloch (Z, X and Y: noise's shrink cancels) or snap (64 Bloch-sphere levels)
   frames: 12, morph_t: 0.5, shapeB: null,
   hold_t: false, interference: false, shared_topology: false, a_dirs: false, // morph options
   morph_front: false, front_width: 0.15, front_source: null, // the morph front (null source: auto)
   view: 'fidelity', colour: 'glow', gain: 3, between: 8, fps: 24, loop: true, orig: true, spin: true,
+  gain_by: 'shots', // Material: the gain made by fewer shots (the readout's own noise), or by scaling (×)
 };
 // S: what the page has loaded and is showing
 const S = { mesh: null, meshKey: null, data: null, run: null, orig: null, frames: [], refs: [], ts: null,
@@ -281,7 +283,7 @@ function params() {
     clamp: P.clamp * Math.PI || null, clamp_b: P.clamp_b * Math.PI || null,
     compression: P.compression, quant_bits: P.quant_bits || null, headroom: P.headroom,
     backend: P.backend, placement: P.placement, shots: 2 ** P.shots, noise_strength: P.noise_strength,
-    seed: P.seed, drr: P.drr, morph_t: P.morph_t,
+    seed: P.seed, drr: P.drr, morph_t: P.morph_t, readout: P.readout,
   };
   if (P.payload === 'spectral') p.spectral_k = P.spectral_k || null; // null: auto
   if (S.objText) p.obj = S.objText; else p.shape = P.shape;
@@ -293,8 +295,11 @@ function params() {
   }
   return p;
 }
+// Material's gain by shots: the run reads at shots / gain² (bridge.gain_shots), so the
+// motion is the readout's own; null when the gain is a classical scale (or Fidelity)
+const gainShots = () => (P.view === 'material' && P.gain_by === 'shots' ? P.gain : null);
 // The same settings with uploads named instead of inlined: what "settings changed" compares.
-const runKey = () => JSON.stringify({ ...params(), obj: S.objName, obj_b: S.objNameB });
+const runKey = () => JSON.stringify({ ...params(), obj: S.objName, obj_b: S.objNameB, gain_shots: gainShots() });
 const meshKeyNow = () => `${S.objName ? `upload:${S.objName}` : P.shape}/${P.resolution}`;
 const objLabel = () => S.objName || P.shape;
 const bLabel = () => S.objNameB || P.shapeB;
@@ -477,7 +482,7 @@ function rebuild() {
   if (!S.orig) return;
   const n = S.orig.length / 3, refs = S.refs.length ? S.refs : S.frames.map(() => S.orig);
   let keys = S.frames;
-  if (P.view === 'material') {
+  if (P.view === 'material' && P.gain_by === '×') { // by shots, the frames already carry the gain
     keys = S.frames.map((f, k) => {
       const o = new Float32Array(f.length), r = refs[k];
       for (let j = 0; j < f.length; j++) o[j] = r[j] + P.gain * (f[j] - r[j]);
@@ -655,6 +660,7 @@ addEventListener('pointerup', (e) => {
   status(`Front source: vertex ${i}. Press Run & play to morph from there.`);
 }, true);
 
+const READOUT_NAMES = { z: 'in Z', bloch: 'as a Bloch direction (Z, X, Y)', snap: 'by snapping to 64 Bloch-sphere levels' };
 function showInfo(d, p) {
   const s = d.stats;
   $('stats').textContent = capLines([
@@ -668,7 +674,9 @@ function showInfo(d, p) {
     `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`
       + (s.runs > 1 ? ` · ${s.runs} runs of ${s.values_per_run.join(' / ')} values` : ''),
     `depth ${s.depth} · 2q gates ${s.twoq}` + (s.twoq_single !== s.twoq ? ` (θ alone ${s.twoq_single})` : ''),
-    `mean error ${(d.error).toFixed(4)} of bbox${P.view === 'material' ? ` · material gain ${P.gain}×` : ' · true positions'}`,
+    `${d.shots.toLocaleString()} shots · read ${READOUT_NAMES[d.readout]}${P.drr === 'pilots' ? ' · pilot DRR' : ''}`,
+    `mean error ${(d.error).toFixed(4)} of bbox${P.view !== 'material' ? ' · true positions'
+      : P.gain_by === 'shots' ? ` · material gain ${P.gain}× by shots (true positions)` : ` · material gain ${P.gain}× scaled`}`,
   ].join('\n'));
 }
 
@@ -684,7 +692,7 @@ async function run(frames) {
     // The settings are read before the request: ones changed while it runs belong to the
     // next run, so the run button turns stale rather than claiming them.
     const p = params(), key = runKey(), meshKey = meshKeyNow();
-    const d = await call('run', { frames });
+    const d = await call('run', { frames, gain_shots: gainShots() });
     if (meshKey !== S.meshKey) setMesh(d, meshKey);
     Object.assign(S, { data: d, run: key, frames: d.frames.map((f) => new Float32Array(f.flat())),
       refs: d.refs ? d.refs.map((r) => new Float32Array(r.flat())) : [], ts: d.ts || null, step: 0, seed0: p.seed });
@@ -1366,9 +1374,11 @@ function layoutArc(side) {
 /** Lay out layer 1's tabs where layer 2's top and bottom words go, with lines from the hub. */
 function layoutTabs() {
   const h = 18 * 1.2 + 16; // padded like "Click for settings" (8px × 20px, 1.2-line text)
-  const sides = ['encode', 'decode'], dy = 2 * WEB.vstep2; // layer 2 has five words: the outer two sit 2 steps out
+  const sides = ['encode', 'decode'];
+  // each tab sits where its web's outer word goes: (words - 1) / 2 steps out (encode up, decode down)
+  const dy = sides.map((side) => (($(`${side}Arc`).querySelectorAll('.arc-label').length - 1) / 2) * WEB.vstep2);
   const boxes = sides.map((side) => ({ w: $(`${side}Pill`).offsetWidth + 40, h, r: WEB.r2, gap: WEB.gap }));
-  const angles = [-dy, dy].map((d) => 180 + THREE.MathUtils.radToDeg(Math.asin(d / WEB.r2)));
+  const angles = [-dy[0], dy[1]].map((d) => 180 + THREE.MathUtils.radToDeg(Math.asin(d / WEB.r2)));
   const { hub, at } = fanLayout(boxes, angles);
   sides.forEach((side, i) => {
     const [x, y] = at[i].c, { w } = boxes[i], r = h / 2;
@@ -1560,7 +1570,12 @@ const PANELS = {
     { key: 'compression', label: 'compression', min: 0, max: 100, step: 1, fmt: (v) => `${v}%` },
     { key: 'quant_bits', label: 'quant bits', min: 0, max: 8, step: 1, fmt: (v) => (v ? `${v} bit${v > 1 ? 's' : ''}` : 'off') }] },
   drr: { title: 'DRR', key: 'drr', items: ['none', 'min_max', 'mean_std', 'percentile', 'abs_max', 'min_avg_max'].map((v) => (
-    { v, html: v.replace(/_/g, ' '), tip: `Tessa's ${v} dynamic-range restoration` })) },
+    { v, html: v.replace(/_/g, ' '), tip: `Tessa's ${v} dynamic-range restoration (from the input's statistics)` })).concat(
+    { v: 'pilots', html: 'pilots', tip: 'known values in every spare slot, read with the mesh: the correction is measured on the chip (mode θ)' }) },
+  readout: { title: 'readout', key: 'readout', items: [
+    { v: 'z', html: 'Z', tip: 'θ read in Z: one setting' },
+    { v: 'bloch', html: 'Bloch', tip: 'θ read in Z, X and Y as a direction: noise shrinks it but not its angle (mode θ)' },
+    { v: 'snap', html: 'snap', tip: '64 levels as points on the Bloch sphere, read back to the nearest: exact while noise allows (mode θ)' }] },
   frames: { title: 'frames', sliders: [
     { key: 'frames', label: 'frames', min: 2, max: 30, step: 1, fmt: (v) => `${v}` },
     // playback only (no new run needed): steps per second, as in view → speed
@@ -1881,12 +1896,12 @@ function showTip(el) {
   tipFor = el;
   const tip = el.dataset.tip;
   const greyed = el.getAttribute('aria-disabled') === 'true'; // its label is the reason it can't be used
-  const beside = !greyed && el.matches('.orb'); // a setting's option circle: the label sits to its left
-  // sentence case; beside a circle, a label breaks after a colon and before a bracketed aside
+  const corner = !greyed && el.matches('.orb'); // a setting's option circle: the label goes in the bottom-left corner
+  // sentence case; in the corner, a label breaks after a colon and before a bracketed aside
   const text = tip[0].toUpperCase() + tip.slice(1);
-  tipEl.textContent = beside ? text.replace(': ', ':\n').replace(' (', '\n(') : text;
+  tipEl.textContent = corner ? text.replace(': ', ':\n').replace(' (', '\n(') : text;
   const c = (el.getBoundingClientRect().left + el.getBoundingClientRect().right) / 2;
-  tipEl.style.textAlign = beside || greyed ? 'right' : c < innerWidth / 3 ? 'right' : c > (2 * innerWidth) / 3 ? 'left' : 'center'; // before measuring
+  tipEl.style.textAlign = corner ? 'left' : greyed ? 'right' : c < innerWidth / 3 ? 'right' : c > (2 * innerWidth) / 3 ? 'left' : 'center'; // before measuring
   if (!tipEl.matches(':popover-open')) tipEl.showPopover();
   const t = tipEl.getBoundingClientRect(), gap = 6;
   const r = el.getBoundingClientRect();
@@ -1897,8 +1912,10 @@ function showTip(el) {
     const keys = [...document.querySelectorAll('.legend:not([hidden])')].map((l) => l.getBoundingClientRect().top);
     x0 = innerWidth - edge - t.width;
     y = (keys.length ? Math.min(...keys) - 2 * gap : innerHeight - bottom) - t.height;
-  } else if (beside) { // left of the circle, centred on its middle
-    [x0, y] = [r.left - 3 * gap - t.width, (r.top + r.bottom) / 2 - t.height / 2];
+  } else if (corner) { // bottom-left, just above the Log button and in line with its left edge (and the name's)
+    const log = $('logToggle').getBoundingClientRect();
+    x0 = log.left;
+    y = (log.height ? log.top : innerHeight - (parseFloat(getComputedStyle(app).getPropertyValue('--bottom')) || 24)) - 2 * gap - t.height;
   } else {
     y = r.top - gap - t.height >= 4 ? r.top - gap - t.height : r.bottom + gap; // above, or below if no room
     // grow away from the middle of the window, where the object sits: a button on the
@@ -2075,6 +2092,7 @@ for (const b of document.querySelectorAll('#drawer [data-set]')) {
     syncDrawer();
     rebuild();
     if (S.data) showInfo(S.data, params());
+    syncStale(); // view and gain by shots change what a run reads
   });
 }
 
