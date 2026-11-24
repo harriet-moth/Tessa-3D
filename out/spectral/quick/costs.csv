@@ -1,0 +1,33 @@
+mesh,backend,config,graph,k,values,runs,twoq,depth
+apple,noiseless,xyz,10x12 lattice,,741,1,792,34
+apple,noiseless,radial,6x8 lattice,,247,1,252,34
+apple,noiseless,spectral k16,3x5 lattice,16,48,1,60,34
+apple,noiseless,spectral k32,4x6 lattice,32,96,1,116,34
+apple,noiseless,spectral k64,6x7 lattice,64,192,1,216,34
+apple,noiseless,spectral auto,5x7 lattice,56,168,1,192,34
+apple,noiseless,spectral max,10x12 lattice,246,738,1,792,34
+apple,noiseless,"spectral auto, one range",5x7 lattice,56,168,1,192,34
+apple,flat noise,xyz,10x12 lattice,,741,1,792,34
+apple,flat noise,radial,6x8 lattice,,247,1,252,34
+apple,flat noise,spectral k16,3x5 lattice,16,48,1,60,34
+apple,flat noise,spectral k32,4x6 lattice,32,96,1,116,34
+apple,flat noise,spectral k64,6x7 lattice,64,192,1,216,34
+apple,flat noise,spectral auto,5x7 lattice,56,168,1,192,34
+apple,flat noise,spectral max,10x12 lattice,246,738,1,792,34
+apple,flat noise,"spectral auto, one range",5x7 lattice,56,168,1,192,34
+suzanne,noiseless,xyz,10x12 lattice,,1521,2,792,34
+suzanne,noiseless,radial,9x9 lattice,,507,1,508,34
+suzanne,noiseless,spectral k16,3x5 lattice,16,48,1,60,34
+suzanne,noiseless,spectral k32,4x6 lattice,32,96,1,116,34
+suzanne,noiseless,spectral k64,6x7 lattice,64,192,1,216,34
+suzanne,noiseless,spectral auto,8x9 lattice,119,357,1,406,34
+suzanne,noiseless,spectral max,10x12 lattice,264,792,1,792,34
+suzanne,noiseless,"spectral auto, one range",8x9 lattice,119,357,1,406,34
+suzanne,flat noise,xyz,10x12 lattice,,1521,2,792,34
+suzanne,flat noise,radial,9x9 lattice,,507,1,508,34
+suzanne,flat noise,spectral k16,3x5 lattice,16,48,1,60,34
+suzanne,flat noise,spectral k32,4x6 lattice,32,96,1,116,34
+suzanne,flat noise,spectral k64,6x7 lattice,64,192,1,216,34
+suzanne,flat noise,spectral auto,8x9 lattice,119,357,1,406,34
+suzanne,flat noise,spectral max,10x12 lattice,264,792,1,792,34
+suzanne,flat noise,"spectral auto, one range",8x9 lattice,119,357,1,406,34

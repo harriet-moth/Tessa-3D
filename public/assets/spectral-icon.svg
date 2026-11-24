@@ -1,0 +1,14 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="55" height="55" viewBox="0 0 55 55" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Spectral">
+<circle id="Ellipse 1" cx="27.5" cy="27.5" r="27.5" fill="url(#paint0_linear_spectral)"/>
+<path id="Mode low" d="M6 27.5C11.4 17.2 16.8 17.2 22.2 27.5C27.6 37.8 33 37.8 38.4 27.5C43.8 17.2 46.5 17.2 49 22" stroke="#DDFF35" stroke-width="1.6" stroke-linecap="round"/>
+<path id="Mode high" d="M6 30.5C8.7 25.5 11.4 25.5 14.1 30.5C16.8 35.5 19.5 35.5 22.2 30.5C24.9 25.5 27.6 25.5 30.3 30.5C33 35.5 35.7 35.5 38.4 30.5C41.1 25.5 43.8 25.5 46.5 30.5" stroke="#35DAFF" stroke-width="1.6" stroke-linecap="round"/>
+<circle id="Coefficient" cx="49" cy="22" r="3.2" fill="#DDFF35"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_spectral" x1="27.5" y1="0" x2="27.5" y2="55" gradientUnits="userSpaceOnUse">
+<stop stop-color="white"/>
+<stop offset="1" stop-color="#999999"/>
+</linearGradient>
+</defs>
+</svg>

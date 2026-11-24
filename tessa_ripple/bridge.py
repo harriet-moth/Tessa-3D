@@ -33,10 +33,12 @@ from tessa.hardware import devices
 from tessa.hardware.pipeline import _angle_readout, _tilted, _transition_frames, ideal_frames
 from tessa.symbols import _slot_ranges
 
+from . import spectral
 from .mesh import bfs_order, edge_lengths, edges, grow_patches
 from .morph import correspond, front_alpha, geodesic, slerp
 
 MAX_ROWS, MAX_COLS = 10, 12  # largest lattice: the whole ibm_phoenix chip, turned on its side
+PAYLOADS = ("radial", "xyz", "spherical", "spectral")
 PHOENIX_ROWS, PHOENIX_COLS = 12, 10  # ibm_phoenix: 12 rows of 10 qubits, row-major
 DEVICES = ("phoenix", "fez")  # Tessa's offline calibration snapshots
 BACKENDS = ("noiseless", "flat noise", *DEVICES)
@@ -57,6 +59,9 @@ BATCH_SEED_STEP = 1000  # batch k of a readout with seed s uses seed s + 1000 k
 # draw: seed s + 2**20, clear of every frame seed (s + i) and batch seed (s + 1000 k)
 REFERENCE_SEED_OFFSET = 1 << 20
 DRR_METHODS = DYNAMIC_RANGE_METHODS  # Tessa's dynamic range recovery methods
+SPECTRAL_FRONT = ("The morph front needs one row per vertex; the spectral payload's qubits hold "
+                  "modes of the whole surface, not patches of it. Use the uniform sweep or the "
+                  "interference readout.")
 
 
 class _NoCalibration(dict):
@@ -80,8 +85,10 @@ class Params:
 
     Attributes:
         payload: "radial" (one radius per vertex from the centroid; directions kept
-            classically), "xyz" (three coordinates per vertex) or "spherical" (direction
-            as θ, φ of one slot read in Z, X and Y, radius in a second slot; Mode θ only).
+            classically), "xyz" (three coordinates per vertex), "spherical" (direction
+            as θ, φ of one slot read in Z, X and Y, radius in a second slot; Mode θ only)
+            or "spectral" (xyz coefficients of A's first k Laplacian modes, one row per
+            mode; always one run; no morph front).
         layout: "mesh" (BFS neighbourhood patches per cell) or "naive" (axis-major).
         mode: One of MODES: θ (Z), shape over θ and φ, or morph A→B.
         clamp: θ clamp in radians; None for Tessa's default.
@@ -92,6 +99,12 @@ class Params:
         placement: Chips only: one of PLACEMENTS.
         target: Morph: mesh B's OBJ path.
         shared_topology: Morph: pair B with A by vertex index (else closest point).
+        spectral_k: Spectral: modes to encode; None picks the smallest k whose
+            truncation error meets ``spectral_tol`` for A (and B), capped at one run.
+        spectral_tol: Spectral: largest truncation error (RMS over the bounding-box
+            diagonal) for the automatic k.
+        spectral_band: Spectral: scale each mode to fill [-1, 1] (on by default; off
+            shares one range across modes, for the experiments only).
 
     Readout settings (changing these re-decodes; a chip backend also changes the graph):
 
@@ -119,6 +132,9 @@ class Params:
     placement: str = "quality"
     target: str | None = None
     shared_topology: bool = False
+    spectral_k: int | None = None
+    spectral_tol: float = 0.01
+    spectral_band: bool = True
     # readout (changing these re-decodes; a chip backend also changes the graph)
     backend: str = "noiseless"
     shots: int = 4096
@@ -133,18 +149,20 @@ class Params:
     def encoder_key(self):
         """Cache key of everything that changes the encoded circuit.
 
-        Morph-only and chip-only settings join the key only when they apply, so
-        toggling an unused setting never re-encodes.
+        Morph-only, chip-only and spectral-only settings join the key only when they
+        apply, so toggling an unused setting never re-encodes.
 
         Returns:
             tuple: Hashable key; equal keys give the same ``encode_mesh`` result.
         """
         graph = self.backend if self.backend in DEVICES else "lattice"
         morph = self.mode == "morph"
+        spec = self.payload == "spectral"
         return (self.payload, self.layout, self.mode, self.clamp, self.clamp_b,
                 self.compression, self.quant_bits, self.headroom, graph,
                 self.placement if graph != "lattice" else "graph",
-                *((self.target, self.shared_topology) if morph else ()))
+                *((self.target, self.shared_topology) if morph else ()),
+                *((self.spectral_k, self.spectral_tol, self.spectral_band) if spec else ()))
 
     @property
     def readout_key(self):
@@ -184,10 +202,12 @@ class Encoded:
         circuit: The (first run's) encoding circuit.
         enc: The (first run's) Tessa ``Encoding``.
         prep: Tessa ``FieldPrep`` of the main field (quantisation, DRR reference).
-        slots: (N, comps) capacity slot of every encoded value.
-        payload: "radial", "xyz" or "spherical".
-        centre: (3,) centre radial and spherical values (and morph xyz) are measured
-            from, or None.
+        slots: (N, comps) capacity slot of every encoded value. Spectral: (rows, 3),
+            one row per mode, not per vertex (so are ``groups_of``, ``fields`` and
+            every other per-row array).
+        payload: One of PAYLOADS.
+        centre: (3,) centre radial, spherical and spectral values (and morph xyz) are
+            measured from, or None.
         dirs: (N, 3) unit directions from ``centre`` (radial), or None.
         single_twoq: Two-qubit gates of the θ-only circuit.
         quality: Chip only: ``probe_qubits`` score per data qubit, else None.
@@ -202,7 +222,12 @@ class Encoded:
         prep_b: Morph: Tessa ``FieldPrep`` of B's field.
         match: Morph: the :func:`morph.correspond` dict (method, coverage, B mesh).
         scales: Spherical: (3,) units of one encoded fraction (π polar, 2π azimuth,
-            the radius range), else None.
+            the radius range). Spectral: (rows,) each mode's band scale. Else None.
+        basis: Spectral: (N, rows) A's Laplacian modes (the constant first in a
+            morph), else None.
+        spectral: Spectral: ``k`` (non-constant modes), ``rows`` (encoded modes),
+            ``error_a``/``error_b`` (truncation error over the bounding-box diagonal;
+            ``error_b`` None outside morph), else None.
         _sweeps: Cache of :func:`sweep_circuit` results per (part, alpha).
         _fronts: Cache of :func:`front_distances` per source vertex.
     """
@@ -228,6 +253,8 @@ class Encoded:
     prep_b: object = None
     match: dict | None = None
     scales: np.ndarray | None = None
+    basis: np.ndarray | None = None
+    spectral: dict | None = None
     _sweeps: dict = dc_field(default_factory=dict, compare=False, repr=False)
     _fronts: dict = dc_field(default_factory=dict, compare=False, repr=False)
 
@@ -388,13 +415,19 @@ def to_payload(verts, payload):
 
     Args:
         verts: (N, 3) vertex positions.
-        payload: "radial", "xyz" or "spherical".
+        payload: "radial", "xyz" or "spherical" (spectral needs faces and a capacity:
+            :func:`spectral_payload`).
 
     Returns:
         tuple: ``(values, centre, dirs)``: values (N, comps) (comps 1 radial, 3 xyz,
         3 spherical: polar, azimuth in [0, 2π), radius), the centroid (3,) and unit
         directions (N, 3); centre is None for xyz, dirs None for xyz and spherical.
+
+    Raises:
+        ValueError: For the spectral payload.
     """
+    if payload == "spectral":
+        raise ValueError("The spectral payload needs the mesh's faces: use spectral_payload")
     if payload == "xyz":
         return verts.copy(), None, None
     centre = verts.mean(0)
@@ -410,15 +443,18 @@ def from_payload(e: Encoded, vals, dirs=None) -> np.ndarray:
     """Vertex positions from (decoded) payload values.
 
     Args:
-        e: The encoding (payload, centre, A's directions).
-        vals: (N, comps) values in payload units.
+        e: The encoding (payload, centre, A's directions, spectral basis).
+        vals: (N, comps) values in payload units; spectral: (rows, 3) band-scaled
+            coefficients.
         dirs: (N, 3) unit directions for radial values; None uses ``e.dirs``.
-            Ignored for spherical, whose directions are decoded.
+            Ignored for spherical and spectral, whose directions are decoded.
 
     Returns:
         np.ndarray: (N, 3) positions. Xyz is offset by ``e.centre`` when set (morph
         centres xyz on A's centroid; the other modes do not).
     """
+    if e.payload == "spectral":  # V = centre + Φ (s ⊙ C')
+        return spectral.reconstruct(np.asarray(vals, float) * e.scales[:, None], e.centre, e.basis)
     if e.payload == "spherical":  # fractions of (π, 2π, radius range)
         polar, azimuth, r = (vals * e.scales).T
         s = np.sin(polar)
@@ -426,6 +462,109 @@ def from_payload(e: Encoded, vals, dirs=None) -> np.ndarray:
     if e.payload == "xyz":  # morph centres xyz on A's centroid; the other modes do not
         return vals if e.centre is None else e.centre + vals
     return e.centre + vals[:, :1] * (e.dirs if dirs is None else dirs)
+
+
+def run_positions(p: Params, per_slot: int = 1) -> int:
+    """Values one run can hold: the chip's whole capacity, or the largest lattice's.
+
+    Args:
+        p: Settings (backend).
+        per_slot: Positions per slot: 1, or 2 for split mode.
+
+    Returns:
+        int: Capacity of one run in values.
+    """
+    graph = devices.graph(p.backend) if p.backend in DEVICES else Lattice(MAX_ROWS, MAX_COLS)
+    return per_slot * graph.capacity
+
+
+def spectral_cap(n_verts: int, p: Params, positions: int | None = None) -> int:
+    """The most non-constant modes a spectral encoding can hold: one run, and N - 1.
+
+    Args:
+        n_verts: Vertices of A.
+        p: Settings (backend, mode; a morph spends one row on the constant mode).
+        positions: Values one run holds; None uses :func:`run_positions` (the
+            interference morph passes its half capacity, ``interfere.spectral_positions``).
+
+    Returns:
+        int: The cap on ``Params.spectral_k``.
+    """
+    if positions is None:
+        positions = run_positions(p, 2 if p.mode == "split" else 1)
+    return int(min(positions // 3 - (p.mode == "morph"), n_verts - 1))
+
+
+def spectral_payload(verts, faces, p: Params, positions: int, target=None) -> dict:
+    """The spectral payload's values: A's (and B's) band-scaled coefficients.
+
+    k is ``p.spectral_k`` or :func:`spectral.choose_k` at ``p.spectral_tol``, capped
+    so every mode fits one run. A morph adds the constant mode as row 0 (B's centroid
+    shift; A's coefficient there is 0).
+
+    Args:
+        verts: (N, 3) A's vertices.
+        faces: A's polygons.
+        p: Settings (spectral_k, spectral_tol, spectral_band, headroom).
+        positions: Values one run holds (:func:`run_positions`, or the interference
+            morph's half capacity).
+        target: (N, 3) B on A's vertices for a morph, or None.
+
+    Returns:
+        dict: ``vals`` (rows, 3) A's coefficients over ``scales`` (in [-1, 1]),
+        ``vals_b`` likewise for B or None, ``centre`` (3,), ``basis`` (N, rows),
+        ``scales`` (rows,) and ``info`` (``Encoded.spectral``).
+
+    Raises:
+        ValueError: If ``p.spectral_k`` does not fit one run or the mesh.
+    """
+    morph = target is not None
+    k_cap = min(positions // 3 - morph, len(verts) - 1)  # spectral_cap, for whatever target says
+    if p.spectral_k is None:
+        k = spectral.choose_k(verts, target, faces, p.spectral_tol, k_cap)
+    else:
+        k = int(p.spectral_k)
+        if k > k_cap:
+            raise ValueError(f"Spectral k = {k} does not fit: one run holds {positions} values, "
+                             f"so k ≤ {k_cap} here")
+    phi, _, mass = spectral.basis(verts, faces, k, constant=morph)
+    centre = spectral.centroid(verts, mass)
+    ca = spectral.coefficients(verts, centre, phi, mass)
+    cb = None if target is None else spectral.coefficients(target, centre, phi, mass)
+    if p.spectral_band:
+        s = spectral.band_scales(ca, cb, p.headroom)
+    else:  # one shared range for every mode (experiments only)
+        top = max(np.abs(ca).max(), 0.0 if cb is None else np.abs(cb).max()) or 1.0
+        s = np.full(len(ca), top * (1 + p.headroom))
+    diag = spectral.diagonal(verts)
+
+    def err(v, c):
+        """RMS distance of the truncated shape from ``v``, over A's bounding-box diagonal."""
+        return float(np.sqrt(((spectral.reconstruct(c, centre, phi) - v) ** 2).sum(1).mean()) / diag)
+
+    info = {"k": k, "rows": len(ca), "error_a": err(verts, ca),
+            "error_b": None if cb is None else err(target, cb)}
+    return {"vals": ca / s[:, None], "vals_b": None if cb is None else cb / s[:, None],
+            "centre": centre, "basis": phi, "scales": s, "info": info}
+
+
+def encoded_shape(e: Encoded, which: str = "a") -> np.ndarray:
+    """The positions a noiseless readout returns: A (or B) as encoded.
+
+    The original vertices for every payload except spectral, where it is the mesh
+    truncated to the encoded modes (and quantised, with ``quant_bits``).
+
+    Args:
+        e: The encoding.
+        which: "a", or "b" for a morph's B.
+
+    Returns:
+        np.ndarray: (N, 3) positions.
+    """
+    if e.payload != "spectral":
+        return e.verts if which == "a" else e.target
+    prep = e.prep if which == "a" else e.prep_b
+    return from_payload(e, prep.reference.reshape(e.slots.shape))
 
 
 # --- where it goes on the chip ---------------------------------------------------
@@ -591,11 +730,15 @@ def fit_lattice(n: int, comps: int = 1, mesh: bool = True, per_slot: int = 1) ->
 def vertex_qubits(e: Encoded) -> np.ndarray:
     """Data qubit holding each vertex's first value.
 
+    Spectral: each mode's (its x coefficient), since a vertex is spread over every
+    mode; rows then are modes, not vertices.
+
     Args:
         e: The encoding.
 
     Returns:
-        np.ndarray: (N,) qubit indices (physical on a chip).
+        np.ndarray: (rows,) qubit indices (physical on a chip); rows = N vertices, or
+        the modes of a spectral encoding.
     """
     return np.array([e.graph.groups[i].data_qubit for i in e.groups_of[:, 0]])
 
@@ -613,6 +756,7 @@ def qubit_map(e: Encoded) -> dict:
         field]``: value ``c`` of vertex ``i`` is in that group's slot whose address
         qubit ``groups[g].addresses[j]`` reads bit ``j`` of ``address`` (the bit order
         Tessa's decoder uses), in ``field`` 0 (θ) or 1 (φ: split mode, spherical payload).
+        Spectral: ``i`` is a mode (low frequency first), ``c`` its x, y or z coefficient.
     """
     g = e.graph
     if e.device is None:
@@ -648,17 +792,20 @@ def morph_range(flat, flat_b, payload: str, headroom: float) -> tuple[float, flo
 
     Xyz: symmetric about 0, out to the largest |coordinate| of either mesh. Radial:
     centred on A's mean radius, a narrower range than (0, r_max), so the same readout
-    noise is a smaller share of each radius.
+    noise is a smaller share of each radius. Spectral: (-1, 1), the band scales already
+    hold the headroom.
 
     Args:
         flat: A's prepared values (``prepare_field`` output), flat.
         flat_b: B's prepared values, same length.
-        payload: "radial" or "xyz".
+        payload: "radial", "xyz" or "spectral".
         headroom: Fractional padding on the range.
 
     Returns:
         tuple: ``(lo, hi)`` for ``tessa.encode``'s ``value_range`` and ``value_range_b``.
     """
+    if payload == "spectral":
+        return (-1.0, 1.0)
     if payload == "xyz":
         top = max(float(np.abs(flat).max() or 1.0), float(np.abs(flat_b).max())) * (1 + headroom)
         return (-top, top)
@@ -746,7 +893,9 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
 
     Meshes too large for one run (on the largest lattice, or on a chip) are split into
     connected batches, one circuit each; on a chip each later batch starts on the
-    next-best data qubits.
+    next-best data qubits. The spectral payload is always one run: its rows are modes,
+    low frequency first, each mode's x, y, z on one data qubit, so with quality
+    placement the modes that move the shape most land on the best qubits.
 
     Args:
         verts: (N, 3) vertex positions.
@@ -759,18 +908,22 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
         Encoded: The encoding and everything needed to decode it.
 
     Raises:
-        ValueError: For an unknown mode, a morph without B, or a mesh that does not fit.
+        ValueError: For an unknown mode or payload, a morph without B, a spectral
+            morph front, or a mesh that does not fit.
     """
     mode = p.mode
     if mode not in MODES:
         raise ValueError(f"unknown mode {p.mode!r}; use one of {MODES}")
-    spherical = p.payload == "spherical"
+    if p.payload not in PAYLOADS:
+        raise ValueError(f"unknown payload {p.payload!r}; use one of {PAYLOADS}")
+    spherical, spec = p.payload == "spherical", p.payload == "spectral"
     if spherical and mode != "theta":
         raise ValueError("The spherical payload fills θ and φ itself; use Mode θ (Z)")
+    if spec and p.front is not None:
+        raise ValueError(SPECTRAL_FRONT)
     per = 2 if mode == "split" else 1
     verts = np.asarray(verts, dtype=float)
-    vals, centre, dirs = to_payload(verts, p.payload)
-    vals_b = dirs_b = prep_b = match = None
+    vals_b = dirs_b = prep_b = match = tgt = sp = None
     clamp, clamp_b = p.clamp, p.clamp_b
     if mode == "morph":
         if target is None:
@@ -779,13 +932,19 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
             target = correspond(verts, faces, p.target, p.shared_topology)
         match = target
         tgt = np.asarray(match["target"], float)
-        centre = verts.mean(0)
-        if p.payload == "xyz":
-            vals, vals_b = verts - centre, tgt - centre
-        else:
-            vals_b, dirs_b = radial(tgt, centre)
         clamp = clamp_b = morph_clamp(p)
-    scales = None
+    if spec:  # one row per mode; the centre (A's M-weighted centroid) stays classical
+        sp = spectral_payload(verts, faces, p, run_positions(p, per), tgt)
+        vals, vals_b, centre, dirs = sp["vals"], sp["vals_b"], sp["centre"], None
+    else:
+        vals, centre, dirs = to_payload(verts, p.payload)
+        if mode == "morph":
+            centre = verts.mean(0)
+            if p.payload == "xyz":
+                vals, vals_b = verts - centre, tgt - centre
+            else:
+                vals_b, dirs_b = radial(tgt, centre)
+    scales = None if sp is None else sp["scales"]
     if spherical:  # encode fractions: polar of π, azimuth of 2π, radius of its padded max
         scales = np.array([np.pi, 2 * np.pi, (vals[:, 2].max() or 1.0) * (1 + p.headroom)])
         vals = vals / scales
@@ -795,10 +954,12 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
     if vals_b is not None:
         flat_b, prep_b = prepare_field(vals_b.ravel(), quant_bits=p.quant_bits)
         rng = morph_range(flat, flat_b, p.payload, p.headroom)
+    elif spec:  # the band scales already hold the headroom
+        rng = (-1.0, 1.0)
     else:
         top = float(np.abs(flat).max() or 1.0) * (1 + p.headroom)
         rng = (-top, top) if p.payload == "xyz" else (0.0, top)
-    mesh_layout = p.layout == "mesh"
+    mesh_layout = p.layout == "mesh" or spec  # spectral: whole modes per cell, in mode order
     quality = None
     if p.backend in DEVICES:
         graph, name = devices.graph(p.backend), f"ibm_{p.backend} (whole chip)"
@@ -821,8 +982,11 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
             v_k, f_k = verts, faces
         else:
             v_k, f_k = verts[idx], submesh(faces, idx)
-        order = bfs_order(len(idx), f_k) if mesh_layout else None
-        grow = (lambda sizes, v=v_k, f=f_k, o=order: grow_patches(v, f, sizes, o)) if mesh_layout else None
+        if spec:  # modes low first, a mode's x, y, z on one data qubit (BFS patches mean nothing here)
+            order, grow = np.arange(len(idx)), None
+        else:
+            order = bfs_order(len(idx), f_k) if mesh_layout else None
+            grow = (lambda sizes, v=v_k, f=f_k, o=order: grow_patches(v, f, sizes, o)) if mesh_layout else None
         q_k = None
         if p.placement == "quality" and quality is not None:  # later batches: next-best qubits
             q_k = rotated_quality(quality, skip) if skip else quality
@@ -845,7 +1009,8 @@ def encode_mesh(verts, faces, p: Params, target=None) -> Encoded:
                    parts=tuple((c, e) for c, e, _ in parts) if k_runs > 1 else (),
                    batch=batch if k_runs > 1 else None,
                    target=None if match is None else tgt,
-                   dirs_b=dirs_b, prep_b=prep_b, match=match, scales=scales)
+                   dirs_b=dirs_b, prep_b=prep_b, match=match, scales=scales,
+                   basis=None if sp is None else sp["basis"], spectral=None if sp is None else sp["info"])
 
 
 def _spherical_circuit(graph, p: Params, slots, field, vals):
@@ -1354,9 +1519,14 @@ def morph_alpha(e: Encoded, t: float, front=None):
     Returns:
         float | np.ndarray: ``t * pi/2``, or the front's (e.runs, groups) angles
         (:func:`morph.front_alpha` of :func:`front_distances`).
+
+    Raises:
+        ValueError: For a front on the spectral payload.
     """
     if front is None:
         return t * np.pi / 2
+    if e.payload == "spectral":
+        raise ValueError(SPECTRAL_FRONT)
     width, source = front
     return front_alpha(front_distances(e, source)[2], t, width)
 
@@ -1394,9 +1564,9 @@ def morph_dirs(e: Encoded, t: float, a_dirs_only: bool = False, alpha=None):
         alpha: None for the uniform sweep, or (N*comps,) angles per value.
 
     Returns:
-        np.ndarray | None: (N, 3) unit directions, or None for xyz.
+        np.ndarray | None: (N, 3) unit directions, or None for every payload but radial.
     """
-    if e.payload == "xyz":
+    if e.payload != "radial":
         return None
     if a_dirs_only:
         return e.dirs

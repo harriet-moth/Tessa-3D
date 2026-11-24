@@ -1,6 +1,9 @@
 # Tessa Ripple — Interference morph: prototype
 
-Status: **prototype done, no UI.** Code: `tessa_ripple/interfere.py`, tests:
+Status: **implemented.** In both apps: Morph options → **Interference readout** (the web
+version refuses it with noise, which takes minutes per frame). The diagnostics (dephased
+control `read(..., dephase=True)`, `coherence`, the `pure` and `incoherent` references)
+have no UI; only `ideal` is used, for the error colour. Code: `tessa_ripple/interfere.py`, tests:
 `tests/test_interfere.py`, experiments: `dev_interfere.py` → `out/interfere/`
 (`noiseless.csv`, `chips.csv`, `costs.csv`, `summary.json`, `progress.png`, `strip.png`).
 

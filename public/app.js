@@ -9,21 +9,24 @@ const $ = (id) => document.getElementById(id);
 const app = $('app'), home = $('home'), menuEl = $('menu'), panelEl = $('panel');
 const W_STAGE = 1440, H_STAGE = 1024, CX = 720, CY = 512;
 const HOVER = matchMedia('(hover: hover)').matches;
-const OBJ_R = 270; // stage px: holding inside this radius of the object opens the menu
+const OBJ_R = 270; // stage px: a click inside this radius of the object opens the menu
 
 // ---------- settings: everything a run or the view reads
 const P = {
-  shape: 'blob', resolution: 1, payload: 'radial', // resolution: 0 low (decimated), 1 medium (as is), 2 high (subdivided) mode: 'theta', layout: 'mesh',
+  shape: 'blob', resolution: 1, payload: 'radial', mode: 'theta', layout: 'mesh', // resolution: 0 low (decimated), 1 medium (as is), 2 high (subdivided)
   clamp: 0, clamp_b: 0, compression: 0, quant_bits: 0, headroom: 0.1,
+  spectral_k: 0, // spectral load: modes to encode, 0 = auto (1 % truncation); past one run's cap = the cap
   backend: 'noiseless', placement: 'quality', shots: 12, noise_strength: 1, seed: 0, drr: 'none',
   frames: 12, morph_t: 0.5, shapeB: null,
   hold_t: false, interference: false, shared_topology: false, a_dirs: false, // morph options
+  morph_front: false, front_width: 0.15, front_source: null, // the morph front (null source: auto)
   view: 'fidelity', colour: 'glow', gain: 3, between: 8, fps: 24, loop: true, orig: true, spin: true,
 };
 // S: what the page has loaded and is showing
 const S = { mesh: null, meshKey: null, data: null, run: null, orig: null, frames: [], refs: [], ts: null,
   seq: [], step: 0, playing: false, acc: 0, edges: null, focus: null, busy: false,
-  objText: null, objName: null, objTextB: null, objNameB: null };
+  objText: null, objName: null, objTextB: null, objNameB: null,
+  front: null, picking: false }; // front: per-step weights of the last run's morph front
 
 // ---------- stage scaling: the Figma frame (1440 × 1024) fitted to the window
 // The design's content sits in the middle ~1100 px of the frame, so narrow windows crop
@@ -214,8 +217,12 @@ const discTexture = (fill, ring, width) => {
 };
 const mateGeom = new THREE.BufferGeometry();
 const mates = new THREE.Points(mateGeom, themed(new THREE.PointsMaterial({ map: discTexture('#FFA158', '#100F0F', 12), alphaTest: 0.5, size: 0.08 })));
-edgeLines.visible = mates.visible = cloud.visible = wire.visible = false;
-scene.add(wire, cloud, edgeLines, mates);
+// the morph front's source vertex
+const srcGeom = new THREE.BufferGeometry();
+srcGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+const srcMark = new THREE.Points(srcGeom, themed(new THREE.PointsMaterial({ map: discTexture('#FDE725', '#100F0F', 12), alphaTest: 0.5, size: 0.12 })));
+edgeLines.visible = mates.visible = cloud.visible = wire.visible = srcMark.visible = false;
+scene.add(wire, cloud, edgeLines, mates, srcMark);
 
 function resize() {
   const w = viewer.clientWidth || innerWidth, h = viewer.clientHeight || innerHeight;
@@ -265,10 +272,12 @@ function params() {
     backend: P.backend, placement: P.placement, shots: 2 ** P.shots, noise_strength: P.noise_strength,
     seed: P.seed, drr: P.drr, morph_t: P.morph_t,
   };
+  if (P.payload === 'spectral') p.spectral_k = P.spectral_k || null; // null: auto
   if (S.objText) p.obj = S.objText; else p.shape = P.shape;
   if (P.mode === 'morph') {
     if (S.objTextB) p.obj_b = S.objTextB; else if (P.shapeB) p.shape_b = P.shapeB;
     for (const k of MORPH_OPTS) p[k] = P[k];
+    if (P.morph_front) { p.morph_front = true; p.front_width = P.front_width; p.front_source = P.front_source; }
     p.clamp_b = p.clamp; // morph uses one clamp for both fields (bridge.morph_clamp)
   }
   return p;
@@ -346,6 +355,7 @@ async function loadMesh() {
 }
 
 function setMesh(d, key) {
+  if (key !== S.meshKey) P.front_source = null; // a picked source belongs to its mesh
   S.mesh = d; S.meshKey = key; S.data = null; S.run = null; S.edges = null; S.focus = null;
   setEdges(null);
   S.orig = new Float32Array(d.verts.flat());
@@ -428,6 +438,7 @@ function buildCloud(d) {
   const zs = V.map((p) => p[2]);
   cloudMat.uniforms.uZ0.value = Math.min(...zs); cloudMat.uniforms.uZ1.value = Math.max(...zs);
   mates.material.size = spacing * 2.5;
+  srcMark.material.size = spacing * 4;
   cloud.visible = wire.visible = true;
   frameCamera();
 }
@@ -474,6 +485,13 @@ function rebuild() {
     return e;
   });
   S.errTop = Math.max(...S.err.map((e) => Math.max(...e))) || 1;
+  // front weights follow the same timeline (the original leads in at 0: all A)
+  const fr = S.data?.front;
+  if (fr && fr.weights.length === S.frames.length) {
+    const z = new Float32Array(n), w = fr.weights.map((x) => Float32Array.from(x)), sm = fr.smooth.map((x) => Float32Array.from(x));
+    const lw = lead.length ? [z] : [];
+    S.front = { w: glide(lw.concat(w)), smooth: glide(lw.concat(sm)) };
+  } else S.front = null;
   colourise();
   draw();
 }
@@ -487,6 +505,17 @@ function colourise(stepOnly = false) {
     const err = S.err[S.step];
     for (let i = 0; i < n; i++) set(i, ramp(ERROR, err[i] / S.errTop));
     if (!stepOnly) legend('faceLegend', ERROR_GLOW_HEX, '0', S.errTop.toFixed(4), `vertex error at this step (distance${S.ts ? ' from the noiseless morph' : ''}, mesh units)`);
+  } else if (P.colour === 'front' && S.front) {
+    const w = S.front.w[S.step], sm = S.front.smooth[S.step];
+    let gap = 0;
+    for (let i = 0; i < n; i++) { set(i, ramp(EDGE, w[i])); gap += Math.abs(w[i] - sm[i]); }
+    if (!stepOnly) legend('faceLegend', EDGE_HEX, '0 = A', '1 = B', `front: share of the way to B · source vertex ${S.data.front.source}`);
+    $('faceLegend').querySelector('.gap')?.remove();
+    $('faceLegend').insertAdjacentHTML('beforeend', `<div class="gap">patch steps: ${(gap / n).toFixed(3)} from a smooth front</div>`);
+  } else if (P.colour === 'qubit' && S.data?.spectral) { // rows are modes: no qubit of a vertex's own
+    mix = 0;
+    $('faceLegend').hidden = false;
+    $('faceLegend').innerHTML = 'qubit: the spectral load spreads every vertex over all modes (see the qubit map)';
   } else if (P.colour === 'qubit' && S.data) {
     const d = S.data, used = [...new Set(d.qubits)].sort((a, b) => a - b), rank = new Map(used.map((q, r) => [q, r]));
     for (let i = 0; i < n; i++) set(i, hsl(rank.get(d.qubits[i]) * GOLDEN, 0.8, 0.6));
@@ -513,7 +542,7 @@ function copyEnds(target, pairs, v) {
 
 function draw() {
   if (!S.seq.length || !posTex) return;
-  if (P.colour === 'error' && S.frames.length) colourise(true);
+  if ((P.colour === 'error' && S.frames.length) || (P.colour === 'front' && S.front)) colourise(true);
   const v = S.seq[S.step], pos = posTex.image.data, nrm = nrmTex.image.data;
   for (let i = 0; i < v.length / 3; i++) {
     pos[4 * i] = v[3 * i]; pos[4 * i + 1] = v[3 * i + 1]; pos[4 * i + 2] = v[3 * i + 2];
@@ -549,14 +578,69 @@ function draw() {
   edgeLines.visible = !!S.edges;
   wire.visible = cloud.visible && !S.edges; // the read-edges overlay replaces the thin edges
   placeMates();
+  placeSource();
 }
+
+// the front's source: the picked vertex, else the one the last run resolved (auto)
+const frontSource = () => (P.front_source ?? (S.data?.front ? S.data.front.source : null));
+function placeSource() {
+  const i = frontSource();
+  srcMark.visible = P.mode === 'morph' && P.morph_front && i != null && cloud.visible && !!(S.seq.length || S.orig);
+  if (!srcMark.visible) return;
+  const v = S.seq[S.step] || S.orig;
+  srcGeom.attributes.position.array.set(v.subarray(3 * i, 3 * i + 3));
+  srcGeom.attributes.position.needsUpdate = true;
+  srcGeom.computeBoundingSphere();
+}
+
+// pick the front's source: the vertex nearest the click on screen, front-most if several
+function pickVertex(cx, cy) {
+  const v = S.seq[S.step] || S.orig;
+  if (!v) return null;
+  const r = renderer.domElement.getBoundingClientRect(), p = new THREE.Vector3();
+  let best = null, bestZ = Infinity;
+  for (let i = 0; i < v.length / 3; i++) {
+    p.set(v[3 * i], v[3 * i + 1], v[3 * i + 2]).project(camera);
+    const x = r.left + (p.x + 1) / 2 * r.width, y = r.top + (1 - p.y) / 2 * r.height;
+    const d = Math.hypot(x - cx, y - cy);
+    if (d < 22 && p.z < bestZ - 0.002) { best = i; bestZ = p.z; } else if (d < 22 && Math.abs(p.z - bestZ) <= 0.002 && best != null) {
+      // same depth: keep the closer one on screen
+      p.set(v[3 * best], v[3 * best + 1], v[3 * best + 2]).project(camera);
+      if (Math.hypot(r.left + (p.x + 1) / 2 * r.width - cx, r.top + (1 - p.y) / 2 * r.height - cy) > d) best = i;
+    }
+  }
+  return best;
+}
+function setPicking(on) {
+  S.picking = on;
+  app.classList.toggle('picking', on);
+  syncMorphBox();
+}
+let pickDown = null;
+addEventListener('pointerdown', (e) => { pickDown = S.picking && !insideUi(e.target) ? [e.clientX, e.clientY] : null; }, true);
+addEventListener('pointerup', (e) => {
+  if (!pickDown || !S.picking) return;
+  const moved = Math.hypot(e.clientX - pickDown[0], e.clientY - pickDown[1]);
+  pickDown = null;
+  if (moved > 6) return; // a drag rotates the view
+  const i = pickVertex(e.clientX, e.clientY);
+  if (i == null) return status('Front: no vertex there. Click on a vertex of the object (or press pick source again to cancel).', true);
+  P.front_source = i;
+  setPicking(false);
+  placeSource();
+  syncStale();
+  status(`Front source: vertex ${i}. Press ▶ to morph from there.`);
+}, true);
 
 function showInfo(d, p) {
   const s = d.stats;
   $('stats').textContent = [
-    `${objLabel()}${d.ts ? ` → ${bLabel()} (morph, ${d.match.method}, ${(100 * d.match.coverage).toFixed(0)}% of B covered)` : ''} · ${d.verts.length} verts · ${p.payload}, ${p.layout} layout`,
+    `${objLabel()}${d.ts ? ` → ${bLabel()} (morph, ${d.match.method}, ${(100 * d.match.coverage).toFixed(0)}% of B covered)` : ''} · ${d.verts.length} verts · ${p.payload}${d.spectral ? ', modes low first' : `, ${p.layout} layout`}`,
     ...(d.ts ? [`${d.options.interference ? `interference readout · selector 0 = A, 1 = B${d.kept ? ` · decoded from ${(100 * d.kept.reduce((a, b) => a + b, 0) / d.kept.length).toFixed(0)}% of shots` : ''}` : 'basis sweep · θ = A, φ = B'} · clamp ${d.clamp.toFixed(2)}π (θ and φ)`
-      + `${d.options.hold_t ? ` · held at t = ${d.ts[0]}` : ''}${d.options.a_dirs ? " · A's directions" : ''}`] : []),
+      + `${d.options.hold_t ? ` · held at t = ${d.ts[0]}` : ''}${d.options.a_dirs ? " · A's directions" : ''}`
+      + `${d.front ? ` · front from vertex ${d.front.source}, width ${d.front.width.toFixed(2)}` : ''}`] : []),
+    ...(d.spectral ? [`spectral: ${d.spectral.k} modes${d.spectral.rows > d.spectral.k ? ' + constant' : ''} × xyz${P.spectral_k ? '' : ' (auto)'}`
+      + ` · truncation A ${(100 * d.spectral.error_a).toFixed(2)}%${d.spectral.error_b != null ? `, B ${(100 * d.spectral.error_b).toFixed(2)}%` : ''} of diag`] : []),
     s.graph + (s.quality != null ? ` · data-qubit quality ${s.quality.toFixed(2)}` : ''),
     `${s.values} values on ${s.qubits} qubits${s.qubits < s.graph_qubits ? ` (of ${s.graph_qubits})` : ''} = ${s.ratio.toFixed(2)} / qubit`
       + (s.runs > 1 ? ` · ${s.runs} runs of ${s.values_per_run.join(' / ')} values` : ''),
@@ -721,6 +805,8 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
 let qmapOn = false;
 const mapOn = () => qmapOn && !!S.data;
 const comps = () => (S.data.map.vertices[0].length === 1 ? ['r'] : P.payload === 'spherical' ? ['polar', 'azimuth', 'r'] : ['x', 'y', 'z']);
+// spectral: map rows are modes, low frequency first (a morph's row 0 is the constant)
+const modeName = (r) => { const sp = S.data.spectral, lead = sp.rows - sp.k; return r < lead ? 'constant' : String(r - lead + 1); };
 
 function mapGeometry() {
   const m = S.data.map, xs = m.coords.map((c) => c[0]), ys = m.coords.map((c) => c[1]);
@@ -767,9 +853,14 @@ function drawMap() {
 
 function focusText() {
   const f = S.focus, m = S.data.map;
-  if (!f) return 'Hover a data qubit to light its vertices on the object.';
+  if (!f) return S.data.spectral ? 'Hover a data qubit to see its modes: spectral qubits hold modes of the whole surface, not vertices.'
+    : 'Hover a data qubit to light its vertices on the object.';
   const qs = (g) => m.groups[g].addresses.map((q) => `q${q}`).join(' ');
   const g = f.groups[0], held = m.vertices.flat().filter((v) => v[0] === g).length;
+  if (S.data.spectral) {
+    return `data q${m.groups[g].data} · address ${qs(g)}\n${2 ** m.groups[g].addresses.length} slots, ${held} values (x, y, z of whole-surface modes)\n`
+      + (f.modes.length ? `modes ${f.modes.map(modeName).join(', ')}` : 'no modes on it (padding)');
+  }
   return `data q${m.groups[g].data} · address ${qs(g)}\n${2 ** m.groups[g].addresses.length} slots, ${held} values of this mesh (${comps().join(', ')})\n${f.mates.length} vertices on it (orange on the object)`;
 }
 
@@ -777,9 +868,10 @@ function setFocus(group = null) {
   if (!mapOn() || group === null) S.focus = null;
   else {
     if (S.focus && S.focus.groups[0] === group) return;
-    const mates = [];
-    S.data.map.vertices.forEach((vs, i) => { if (vs.some((v) => v[0] === group)) mates.push(i); });
-    S.focus = { groups: [group], mates };
+    const rows = [];
+    S.data.map.vertices.forEach((vs, i) => { if (vs.some((v) => v[0] === group)) rows.push(i); });
+    // spectral rows are modes, not vertices: nothing to light on the object
+    S.focus = S.data.spectral ? { groups: [group], mates: [], modes: rows } : { groups: [group], mates: rows };
   }
   placeMates();
   drawMap();
@@ -804,9 +896,9 @@ $('qcanvas').addEventListener('pointermove', (e) => {
 $('qcanvas').addEventListener('pointerleave', () => setFocus(null));
 
 // ====================================================================================
-// Game UI: screens, the click-and-hold menu, and the settings panels
+// Game UI: screens, the click-to-open menu, and the settings panels
 //   layer 0  home: the object and the run buttons
-//   layer 1  while held: Encode and Decode tabs; releasing on one opens its web
+//   layer 1  after a click on the object: Encode and Decode tabs; clicking one opens its web
 //   layer 2  a web of words on the left, every line from one hub beside the object
 //   layer 3  one setting's own web: outlined squares, bare words, or sliders
 // ====================================================================================
@@ -969,6 +1061,7 @@ const setHead = (title) => { $('menuTitle').textContent = title; };
 function setMenu(state) {
   menuEl.dataset.state = state;
   home.dataset.layer = app.dataset.layer = { closed: 0, open: 1, encode: 2, decode: 2, panel: 3 }[state]; // the page frame reads it too
+  if (state !== 'open') hotPill(null);
   syncShift();
 }
 let menuGen = 0; // bumped by every transition, so a superseded animation stops quietly
@@ -1041,10 +1134,10 @@ function closeAll() {
   setMenu('closed');
 }
 
-// ---------- layer 1: click (or right-click, or touch) and hold the object; release on
-// a pill to open its arc, anywhere else to cancel. A drag before the hold rotates the object.
-const HOLD_MS = 220;
-let hold = null;
+// ---------- layer 1: click (or tap) the object to open the Encode and Decode tabs; click
+// a tab to open its arc, anywhere else to close. A drag rotates the object instead.
+const CLICK_SLOP = 8; // px a press may move and still count as a click
+let press = null; // the pointerdown a click may complete: {id, x, y}
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
 const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #menuHead, .orb, .knob, .line-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #help, #hud, #drawer, #qmap, #info, #resRow, #side, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
@@ -1059,45 +1152,29 @@ function pillAt(sx, sy) {
 function hotPill(side) { for (const s of ['encode', 'decode']) { $(`${s}PillBand`).classList.toggle('hot', s === side); $(`${s}Pill`).classList.toggle('hot', s === side); } }
 
 addEventListener('pointerdown', (e) => {
-  if (app.dataset.screen !== 'home' || insideUi(e.target)) return;
-  const [sx, sy] = toStage(e.clientX, e.clientY), d = objDist(sx, sy), st = menuEl.dataset.state;
-  if (st === 'closed' && d < OBJ_R && (e.button === 0 || e.button === 2)) {
-    const h = { id: e.pointerId, x: e.clientX, y: e.clientY, open: false };
-    h.timer = setTimeout(() => {
-      h.open = true;
-      controls.enabled = false; // the hold is for the menu now, not for rotating
-      setMenu('open');
-      hotPill(pillAt(...toStage(h.x, h.y)));
-    }, HOLD_MS);
-    hold = h;
-  } else if ((st === 'encode' || st === 'decode' || st === 'panel') && d > OBJ_R) {
-    // a click well away from the object and the menu goes home
+  press = app.dataset.screen === 'home' && e.button === 0 && !insideUi(e.target) ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
+});
+addEventListener('pointerup', (e) => {
+  const p = press;
+  press = null;
+  if (!p || e.pointerId !== p.id || Math.hypot(e.clientX - p.x, e.clientY - p.y) > CLICK_SLOP) return; // a drag: it rotated
+  const [sx, sy] = toStage(e.clientX, e.clientY), st = menuEl.dataset.state;
+  if (st === 'closed') {
+    if (objDist(sx, sy) < OBJ_R) setMenu('open');
+  } else if (st === 'open') {
+    // a tab opens its arc; a click anywhere else (the object too) closes the menu
+    const side = pillAt(sx, sy);
+    if (side) openArc(side); else setMenu('closed');
+  } else if (objDist(sx, sy) > OBJ_R) {
+    // layers 2 and 3: a click well away from the object and the menu goes home
     if (st === 'panel') { closePanel(); ++menuGen; setMenu('closed'); } else closeArc();
   }
 });
+addEventListener('pointercancel', () => { press = null; });
+// with the tabs open, light the one under the pointer
 addEventListener('pointermove', (e) => {
-  if (!hold || e.pointerId !== hold.id) return;
-  if (!hold.open) {
-    if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) { clearTimeout(hold.timer); hold = null; } // a drag: rotate instead
-    return;
-  }
-  hotPill(pillAt(...toStage(e.clientX, e.clientY)));
+  if (menuEl.dataset.state === 'open' && e.pointerType === 'mouse') hotPill(pillAt(...toStage(e.clientX, e.clientY)));
 });
-function endHold(e, cancelled) {
-  if (!hold || e.pointerId !== hold.id) return;
-  clearTimeout(hold.timer);
-  const opened = hold.open;
-  hold = null;
-  controls.enabled = true;
-  hotPill(null);
-  if (!opened) return;
-  const side = cancelled ? null : pillAt(...toStage(e.clientX, e.clientY));
-  if (side) openArc(side); else setMenu('closed');
-}
-addEventListener('pointerup', (e) => endHold(e, false));
-addEventListener('pointercancel', (e) => endHold(e, true));
-// the browser's own menu would interrupt a right-click hold
-addEventListener('contextmenu', (e) => { if (app.dataset.screen === 'home' && !e.target.closest('#hud, #drawer, dialog, #qmap, input')) e.preventDefault(); });
 
 // keyboard (and a plain click on the hint): open layer 1, then pick a pill
 $('hint').addEventListener('click', () => { if (menuEl.dataset.state === 'closed') { setMenu('open'); $('encodePill').focus(); } });
@@ -1116,7 +1193,10 @@ const PANELS = {
   load: { title: 'load', key: 'payload', squares: true, items: [
     { v: 'xyz', html: '(x,y,z)', tip: 'xyz: three values per vertex' },
     { v: 'radial', html: icon('radial-icon.svg', 'r55'), tip: 'radial: one value per vertex (distance from the centre)' },
-    { v: 'spherical', html: icon('spherical-icon.svg'), tip: 'spherical: direction in θ and φ, radius in θ' }] },
+    { v: 'spherical', html: icon('spherical-icon.svg'), tip: 'spherical: direction in θ and φ, radius in θ' },
+    { v: 'spectral', html: icon('spectral-icon.svg'), tip: 'spectral: xyz of the mesh\'s first k surface modes (smooth noise, one run)' }],
+  sliders: [{ key: 'spectral_k', label: 'modes k', min: 0, max: 300, step: 1, fmt: (v) => (v ? `${v}` : 'auto'),
+    show: () => P.payload === 'spectral' }] },
   mode: { title: 'mode', key: 'mode', squares: true, items: [
     { v: 'theta', html: 'θ', cls: 'greek', tip: 'shape in θ, read in Z' },
     { v: 'split', html: 'θ+φ', cls: 'greek', tip: 'shape over θ and φ: two values per slot' },
@@ -1218,6 +1298,9 @@ function choose(key, v) {
   // the spherical payload fills θ and φ itself, so it only pairs with mode θ
   if (key === 'payload' && v === 'spherical' && P.mode !== 'theta') { P.mode = 'theta'; status('spherical fills θ and φ itself: mode set to θ'); }
   if (key === 'mode' && v !== 'theta' && P.payload === 'spherical') { P.payload = 'radial'; status('θ+φ modes need a radial or xyz load: load set to radial'); }
+  // the spectral load's qubits hold modes of the whole surface, so there is no patch for a front to turn
+  if (key === 'payload' && v === 'spectral' && P.morph_front) { P.morph_front = false; status('the morph front needs one row per vertex: front turned off for the spectral load'); }
+  if (key === 'payload') syncMorphBox();
   if (key === 'mode' && v === 'morph') P.clamp_b = P.clamp; // one clamp for both fields
   if (key === 'mode') { syncMorphBox(); syncHud(); }
   if (key === 'backend') {
@@ -1319,15 +1402,31 @@ function syncMorphBox() {
   if (on) { opts.hidden = false; requestAnimationFrame(() => opts.classList.add('shown')); } else opts.classList.remove('shown');
   for (const c of opts.querySelectorAll('.chip')) c.setAttribute('aria-pressed', P[c.dataset.opt]);
   const interf = opts.querySelector('[data-opt="interference"]');
-  interf.disabled = noisy();
+  interf.disabled = noisy() || P.morph_front;
   interf.title = noisy() ? `Interference readout with ${P.backend} noise takes minutes per frame on the web: noiseless backend only (or the desktop app)`
+    : P.morph_front ? 'Interference readout: turn the front off first (the front turns the basis sweep)'
     : 'Read by turning selector qubits from A (0) to B (1), instead of the basis sweep';
+  const front = opts.querySelector('[data-opt="morph_front"]');
+  front.disabled = P.interference || P.payload === 'spectral';
+  front.title = P.interference ? 'Front: basis sweep only; turn interference readout off first'
+    : P.payload === 'spectral' ? 'Front: not with the spectral load (its qubits hold modes of the whole surface, not patches)'
+    : 'Each data qubit turns at its own t, by its distance over the surface from a source: B spreads over A patch by patch';
+  $('frontRow').hidden = !P.morph_front;
+  $('front_width').value = P.front_width;
+  $('front_width').nextElementSibling.textContent = P.front_width.toFixed(2);
+  $('srcAuto').setAttribute('aria-pressed', P.front_source == null && !S.picking);
+  $('srcPick').setAttribute('aria-pressed', S.picking || P.front_source != null);
+  $('srcPick').textContent = S.picking ? 'click a vertex…' : P.front_source != null ? `source: vertex ${P.front_source}` : 'pick source';
+  if (!P.morph_front && S.picking) { S.picking = false; app.classList.remove('picking'); }
+  placeSource();
   const aDirs = opts.querySelector('[data-opt="a_dirs"]');
   aDirs.disabled = P.payload !== 'radial';
   aDirs.title = P.payload === 'radial' ? "Radial load: keep A's directions; only the radii morph" : "A's directions only: radial load only";
   $('morph_t').value = P.morph_t;
   $('morph_t').nextElementSibling.textContent = P.morph_t.toFixed(2);
-  $('morphNote').textContent = (P.interference ? 'Interference: t turns the selector qubits from A (0) to B (1).' : 'Basis sweep: t turns the readout from Z (A) to X (B).')
+  $('morphNote').textContent = (P.interference ? 'Interference: t turns the selector qubits from A (0) to B (1).'
+    : P.morph_front ? 'Front: each qubit turns from A to B at its own t, by its distance from the source.'
+    : 'Basis sweep: t turns the readout from Z (A) to X (B).')
     + (P.hold_t ? ` Every frame reads at t = ${P.morph_t.toFixed(2)}.` : ` Frames run t 0 → 1; one ▶ reads at t = ${P.morph_t.toFixed(2)}.`);
   $('dropBText').textContent = bLabel() ? `B: ${bLabel()} ✓ — press ▶ to morph (drop to replace)` : 'drop second mesh (.obj)';
   for (const b of box.querySelectorAll('[data-shape-b]')) b.classList.toggle('on', !S.objTextB && b.dataset.shapeB === P.shapeB);
@@ -1338,6 +1437,13 @@ for (const c of document.querySelectorAll('#morphOpts .chip')) {
   c.addEventListener('click', () => { P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
 }
 $('morph_t').addEventListener('input', () => { P.morph_t = +$('morph_t').value; syncMorphBox(); syncStale(); });
+$('front_width').addEventListener('input', () => { P.front_width = +$('front_width').value; syncMorphBox(); syncStale(); });
+$('srcAuto').addEventListener('click', () => { P.front_source = null; S.picking = false; app.classList.remove('picking'); syncMorphBox(); syncStale(); });
+$('srcPick').addEventListener('click', () => {
+  if (!S.orig) return status('Load a mesh first, then pick the front\'s source on it.', true);
+  setPicking(!S.picking);
+  if (S.picking) status('Click a vertex on the object to start the front there (drag still rotates).');
+});
 $('dropB').addEventListener('click', (e) => {
   const b = e.target.closest('[data-shape-b]');
   if (b) { e.stopPropagation(); P.shapeB = b.dataset.shapeB; S.objTextB = S.objNameB = null; syncMorphBox(); syncStale(); return; }
@@ -1379,7 +1485,7 @@ async function enterHome() {
   try {
     status(`Loading ${objLabel()}…`);
     await loadMesh();
-    status(`${objLabel()} ready. Press ▶ to encode and read it, or ${HOVER ? 'click' : 'press'} and hold it for settings.`);
+    status(`${objLabel()} ready. Press ▶ to encode and read it, or ${HOVER ? 'click' : 'tap'} it for settings.`);
   } catch (err) { status(`⚠ ${err.message}`, true); } finally { S.loading = false; }
 }
 for (const b of document.querySelectorAll('[data-shape]')) b.addEventListener('click', () => chooseShape(b.dataset.shape));
@@ -1476,8 +1582,9 @@ $('run').addEventListener('click', () => { useErrorColour(); run(1); });
 // a readout (one, or frames) shows how far each vertex moved, so both run buttons
 // switch the colour to error
 function useErrorColour() {
-  if (P.colour === 'error') return;
-  P.colour = 'error';
+  const want = P.mode === 'morph' && P.morph_front ? 'front' : 'error'; // a front run shows the front
+  if (P.colour === want) return;
+  P.colour = want;
   syncDrawer();
   rebuild();
 }
@@ -1589,7 +1696,7 @@ function frame(now) {
 }
 
 // touch screens have no hover: say "tap" instead
-if (!HOVER) $('hint').textContent = 'press and hold';
+if (!HOVER) $('hint').textContent = 'tap for settings';
 
 window.tessa3d = { state: S, settings: P }; // read-only handle for debugging in the console
 fitStage();

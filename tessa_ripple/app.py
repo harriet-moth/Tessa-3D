@@ -32,9 +32,11 @@ from PIL import Image
 
 from . import animate as anim
 from . import interfere as interf
-from .bridge import (BACKENDS, DEVICES, DRR_METHODS, MAX_COLS, MAX_ROWS, Lattice, Params, cells, encode_mesh,
-                     fidelity_curves, mesh_error, morph_clamp, morph_expected, morph_frame, qubit_map,
-                     read_edges, resources, restore, vertex_qubits)
+from .bridge import (BACKENDS, DEVICES, DRR_METHODS, MAX_COLS, MAX_ROWS, PAYLOADS, Lattice, Params, _per_value,
+                     cells, encode_mesh, encoded_shape, fidelity_curves, front_smooth_alpha, mesh_error,
+                     morph_alpha, morph_clamp, morph_expected, morph_frame, qubit_map, read_edges, resources,
+                     restore, spectral_cap, vertex_qubits)
+from .bridge import front_source as auto_source
 from .mesh import PRESETS, load_decimated
 from .morph import correspond
 
@@ -42,7 +44,8 @@ OUT = Path("exports")
 RES = ("low", "mid", "high")
 DECIMATIONS = {"low": 2, "mid": 1, "high": 0}  # halvings of an uploaded OBJ per Resolution
 FIT_VERTICES = Lattice(MAX_ROWS, MAX_COLS).capacity  # 792: high fits radial on the largest lattice
-COLOURS = ("error", "qubit", "morph Δ", "plain")
+COLOURS = ("error", "qubit", "morph Δ", "front", "plain")
+SPECTRAL_K_MAX = 300  # Spectral k slider's top; any k past one run's cap encodes the cap
 # Mode: what each slot's qubit holds (bridge.MODES)
 MODE_LABELS = {"shape θ (Z)": "theta", "shape θ+φ": "split", "morph A→B": "morph"}
 DELTA_CMAP = colormaps["viridis"]
@@ -53,6 +56,8 @@ PLAIN = np.array(colormaps["Blues"](0.45))
 ERROR_CMAP = LinearSegmentedColormap.from_list(
     "error", ["#fcfdbf", "#fd9668", "#cf4070", "#752181", "#1a1042"])
 EDGE_CMAP = colormaps["viridis"]
+FRONT_CMAP = colormaps["viridis"]  # morph front: 0 = A (purple) to 1 = B (yellow), as the web version
+SOURCE_COLOUR = "#FDE725"  # the front's source vertex marker
 GOLDEN = 0.618034
 
 
@@ -204,6 +209,10 @@ class App:
         self.error = None  # status message of the last failed encode (e.g. an unreadable OBJ)
         self.ie, self.ideal_cache = None, {}  # interference morph: its encoding, ideal frames per t
         self.kept = None  # interference: share of shots each frame was decoded from
+        # morph front: picked source (None = auto), the mesh it belongs to, picking mode,
+        # the front the cached frames were read with, per-step weights for the colour
+        self.front_source, self.src_mesh, self.picking, self.press_xy = None, None, False, None
+        self.raw_front, self.front_seq = None, None
         self.fig = fig = plt.figure("Tessa Ripple", figsize=(15, 9))
         self.ax = fig.add_axes([0.0, 0.07, 0.49, 0.88], projection="3d")
         self.encoded = self.raw = self.raw_key = self.edge_data = None
@@ -229,7 +238,7 @@ class App:
             return y
 
         radios(0.50, 0.98, [("Shape", list(PRESETS)), ("Resolution", RES),
-                            ("Payload", ["radial", "xyz", "spherical"]), ("Mode", list(MODE_LABELS)),
+                            ("Payload", list(PAYLOADS)), ("Mode", list(MODE_LABELS)),
                             ("Layout", ["mesh", "naive"]), ("Backend", BACKENDS),
                             ("Placement", ["quality", "graph"]), ("DRR", DRR_METHODS)])
         y = radios(0.855, 0.98, [("View", ["fidelity", "material"]), ("Colour", COLOURS)])
@@ -238,13 +247,15 @@ class App:
             ("Clamp θ (π)", 0.95, 0, 0.45, 0.0, None), ("Clamp φ (π)", 0.92, 0, 0.45, 0.0, None),
             ("Compression %", 0.89, 0, 100, 0, 1), ("Quant bits", 0.86, 0, 8, 0, [0, 2, 3, 4, 5, 6, 7, 8]),
             ("Headroom", 0.83, 0, 0.5, 0.1, None),
+            # spectral payload: modes to encode, 0 = auto (1 % truncation); past one run's cap = the cap
+            ("Spectral k", 0.80, 0, SPECTRAL_K_MAX, 0, 1),
             # tier 2: readout
-            ("Shots (log2)", 0.79, 8, 16, 12, 1), ("Noise × (flat)", 0.76, 0, 3, 1, None),
-            ("Seed", 0.73, 0, 999, 0, 1),
+            ("Shots (log2)", 0.76, 8, 16, 12, 1), ("Noise × (flat)", 0.73, 0, 3, 1, None),
+            ("Seed", 0.70, 0, 999, 0, 1),
             # tier 3: post + animation
-            ("Gain (material)", 0.69, 0, 10, 3, None),
-            ("Frames", 0.65, 2, 60, 12, 1), ("In-between", 0.62, 0, 30, 8, 1),
-            ("Speed (fps)", 0.59, 1, 60, 24, 1),
+            ("Gain (material)", 0.66, 0, 10, 3, None),
+            ("Frames", 0.62, 2, 60, 12, 1), ("In-between", 0.59, 0, 30, 8, 1),
+            ("Speed (fps)", 0.56, 1, 60, 24, 1),
         ]:
             self.w[name] = s = Slider(fig.add_axes([0.665, y0, 0.12, 0.02]), name, lo, hi,
                                       valinit=init, valstep=step)
@@ -269,17 +280,21 @@ class App:
                              family="monospace", va="top")
 
         for name in ("Shape", "Resolution", "Payload", "Mode", "Layout", "Backend", "Placement", "Clamp θ (π)",
-                     "Clamp φ (π)", "Compression %", "Quant bits", "Headroom", "Shots (log2)",
-                     "Noise × (flat)", "Seed", "Morph t"):
+                     "Clamp φ (π)", "Compression %", "Quant bits", "Headroom", "Spectral k", "Shots (log2)",
+                     "Noise × (flat)", "Seed", "Morph t", "Front width"):
             w = self.w[name]
             (w.on_clicked if isinstance(w, RadioButtons) else w.on_changed)(self.quantum_changed)
         self.w["Morph"].on_clicked(self.quantum_changed)
         self.w["Upload B"].on_clicked(self.upload_b)
+        self.w["Auto source"].on_clicked(self.auto_front_source)
+        self.w["Pick source"].on_clicked(self.toggle_picking)
         for name in ("DRR", "View", "Colour", "Gain (material)", "In-between", "Toggles"):
             w = self.w[name]
             (w.on_clicked if hasattr(w, "on_clicked") else w.on_changed)(self.redraw)
         self.w["Speed (fps)"].on_changed(self.set_speed)
         fig.canvas.mpl_connect("motion_notify_event", self.hover)
+        fig.canvas.mpl_connect("button_press_event", self.on_press)
+        fig.canvas.mpl_connect("button_release_event", self.on_release)
 
         self.cax = fig.add_axes([0.04, 0.085, 0.19, 0.012])  # face colour legend
         self.eax = fig.add_axes([0.27, 0.085, 0.19, 0.012])  # edge colour legend
@@ -288,6 +303,7 @@ class App:
         self.ax.add_collection3d(self.coll)
         self.ax.add_collection3d(self.edge_coll, autolim=False)
         self.mates, = self.ax.plot([], [], [], "o", ms=8, mfc=HOT, mec="#14161e", mew=1.5, zorder=10)
+        self.src_mark, = self.ax.plot([], [], [], "o", ms=11, mfc=SOURCE_COLOUR, mec="#14161e", mew=1.5, zorder=11)
         lim = 1.4
         self.ax.set(xlim=(-lim, lim), ylim=(-lim, lim), zlim=(-lim, lim), box_aspect=(1, 1, 1))
         self.ax.set_axis_off()
@@ -303,27 +319,37 @@ class App:
         """The Morph options inset (lower left of the 3D view, above the colour legends),
         shown only while Mode is morph.
 
-        Adds the Morph, Upload B and Morph t widgets to ``self.w`` and sets
-        ``self.morph_artists``, all hidden.
+        Adds the Morph, Upload B, Morph t, Front width, Auto source and Pick source
+        widgets to ``self.w`` and sets ``self.morph_artists``, all hidden.
         """
         fig, x0, y0 = self.fig, 0.008, 0.11
-        box = fig.add_axes([x0, y0 + 0.07, 0.215, 0.2], facecolor="#f4f2ec")
+        box = fig.add_axes([x0, y0 + 0.07, 0.215, 0.29], facecolor="#f4f2ec")
         box.set_xticks([])
         box.set_yticks([])
-        box.text(0.03, 0.96, "Morph options", transform=box.transAxes, fontsize=8, weight="bold", va="top")
-        self.morph_note = box.text(0.03, 0.87, "", transform=box.transAxes, fontsize=7, va="top")
-        self.w["Morph"] = CheckButtons(fig.add_axes([x0 + 0.004, y0 + 0.152, 0.2, 0.07]),
+        box.text(0.03, 0.97, "Morph options", transform=box.transAxes, fontsize=8, weight="bold", va="top")
+        self.morph_note = box.text(0.03, 0.915, "", transform=box.transAxes, fontsize=7, va="top")
+        self.w["Morph"] = CheckButtons(fig.add_axes([x0 + 0.004, y0 + 0.232, 0.2, 0.09]),
                                        ["Shared topology", "Hold t", "A's directions only",
-                                        "Interference readout"],
-                                       [False, False, False, False])
-        self.w["Upload B"] = Button(fig.add_axes([x0 + 0.006, y0 + 0.118, 0.07, 0.03]), "Upload B (.obj)")
-        self.b_label = fig.text(x0 + 0.082, y0 + 0.133, "no B yet", fontsize=7, family="monospace", va="center")
-        self.w["Morph t"] = Slider(fig.add_axes([x0 + 0.05, y0 + 0.085, 0.13, 0.02]), "Morph t", 0, 1, valinit=0)
+                                        "Interference readout", "Front"],
+                                       [False, False, False, False, False])
+        self.w["Upload B"] = Button(fig.add_axes([x0 + 0.006, y0 + 0.196, 0.07, 0.03]), "Upload B (.obj)")
+        self.b_label = fig.text(x0 + 0.082, y0 + 0.211, "no B yet", fontsize=7, family="monospace", va="center")
+        self.w["Morph t"] = Slider(fig.add_axes([x0 + 0.05, y0 + 0.163, 0.13, 0.02]), "Morph t", 0, 1, valinit=0)
+        # the morph front (basis sweep only): edge width and source
+        self.w["Front width"] = Slider(fig.add_axes([x0 + 0.05, y0 + 0.133, 0.13, 0.02]), "Front width",
+                                       0.05, 0.6, valinit=0.15, valstep=0.05)
+        self.w["Auto source"] = Button(fig.add_axes([x0 + 0.006, y0 + 0.093, 0.06, 0.03]), "Auto source")
+        self.w["Pick source"] = Button(fig.add_axes([x0 + 0.07, y0 + 0.093, 0.06, 0.03]), "Pick source")
+        self.src_label = fig.text(x0 + 0.135, y0 + 0.108, "", fontsize=7, family="monospace", va="center")
         for t in self.w["Morph"].labels:
             t.set_fontsize(7.5)
-        self.w["Upload B"].label.set_fontsize(7.5)
+        for k in ("Upload B", "Auto source", "Pick source"):
+            self.w[k].label.set_fontsize(7.5)
         self.w["Morph t"].label.set_fontsize(8)
-        self.morph_artists = [box, self.b_label, *(self.w[k].ax for k in ("Morph", "Upload B", "Morph t"))]
+        self.w["Front width"].label.set_fontsize(7.5)
+        self.morph_artists = [box, self.b_label, self.src_label,
+                              *(self.w[k].ax for k in ("Morph", "Upload B", "Morph t", "Front width",
+                                                       "Auto source", "Pick source"))]
         for a in self.morph_artists:
             a.set_visible(False)
 
@@ -368,7 +394,10 @@ class App:
 
         Returns:
             Params: Encoder and readout settings. Clamp sliders at 0 mean Tessa's default
-            (None); in morph, clamp_b follows Clamp θ.
+            (None); in morph, clamp_b follows Clamp θ. The front is on only with Front
+            ticked, Interference readout off (it turns the basis sweep) and a payload
+            other than spectral. Spectral k 0 is None (auto); the slider's k is passed
+            as is and capped to one run in :meth:`quantum_changed` (:meth:`spectral_params`).
         """
         qb = int(self.val("Quant bits"))
         clamp = lambda name: self.val(name) * np.pi or None  # noqa: E731  0 = Tessa default
@@ -383,7 +412,26 @@ class App:
                       target=self.b_path if mode == "morph" else None, shared_topology=morph["shared"],
                       shots=2 ** int(self.val("Shots (log2)")),
                       noise_strength=self.val("Noise × (flat)"), seed=int(self.val("Seed")),
-                      morph_t=float(self.val("Morph t")))
+                      morph_t=float(self.val("Morph t")),
+                      spectral_k=int(self.val("Spectral k")) or None,
+                      morph_front=morph["front"] and not morph["interf"] and self.val("Payload") != "spectral",
+                      front_width=round(float(self.val("Front width")), 2), front_source=self.front_source)
+
+    def spectral_params(self, p, n_verts: int, interference: bool):
+        """``p`` with Spectral k capped to what one run holds (a k past the cap encodes the cap).
+
+        Args:
+            p: Settings from :meth:`params`.
+            n_verts: Vertices of A.
+            interference: The interference readout, whose run holds half as many values.
+
+        Returns:
+            Params: ``p``, with ``spectral_k`` at most :func:`bridge.spectral_cap`.
+        """
+        if p.payload != "spectral" or p.spectral_k is None:
+            return p
+        cap = spectral_cap(n_verts, p, interf.spectral_positions(p) if interference else None)
+        return replace(p, spectral_k=min(p.spectral_k, cap))
 
     def toggles(self):
         """The Toggles check boxes.
@@ -398,9 +446,133 @@ class App:
 
         Returns:
             dict: "shared" (shared topology), "hold" (hold t), "a_dirs" (A's directions only),
-            "interf" (interference readout, :mod:`~tessa_ripple.interfere`) -> bool.
+            "interf" (interference readout, :mod:`~tessa_ripple.interfere`), "front" (the
+            morph front, ``bridge.morph_alpha``) -> bool.
         """
-        return dict(zip(["shared", "hold", "a_dirs", "interf"], self.w["Morph"].get_status()))
+        return dict(zip(["shared", "hold", "a_dirs", "interf", "front"], self.w["Morph"].get_status()))
+
+    # --- morph front -----------------------------------------------------------
+    def current_source(self):
+        """The front's source vertex: the picked one, else the automatic one (the
+        vertex that moves most, ``bridge.front_source``).
+
+        Returns:
+            int | None: Vertex index, or None without a morph encoding.
+        """
+        if self.front_source is not None:
+            return self.front_source
+        return auto_source(self.encoded) if self.morphing and self.encoded.target is not None else None
+
+    def front_weights(self, t, front, smooth=False):
+        """How far each vertex has turned from A (0) to B (1) at t.
+
+        Args:
+            t: Morph parameter.
+            front: ``(width, source)`` (``Params.front``).
+            smooth: The smooth reference (each vertex's own distance), which no circuit
+                can make, instead of its data qubits' angle.
+
+        Returns:
+            np.ndarray: (N,) weights, averaged over each vertex's components.
+        """
+        e = self.encoded
+        a = front_smooth_alpha(e, t, front) if smooth else _per_value(e, morph_alpha(e, t, front))
+        return np.asarray(a, float).reshape(len(e.verts), -1).mean(1) / (np.pi / 2)
+
+    def sync_front_controls(self):
+        """Grey out the front's width and source while the front is off (or Interference
+        readout is on), and name the source."""
+        opts = self.morph_opts()
+        spectral = self.val("Payload") == "spectral"
+        usable = opts["front"] and not opts["interf"] and not spectral
+        if not usable:
+            self.picking = False
+        w = self.w["Front width"]
+        w.set_active(usable)
+        grey = "black" if usable else "#a8a8a8"
+        w.label.set_color(grey)
+        w.valtext.set_color(grey)
+        w.poly.set_alpha(1.0 if usable else 0.3)
+        for k in ("Auto source", "Pick source"):
+            self.w[k].label.set_color(grey)
+        self.w["Pick source"].label.set_text("Cancel" if self.picking else "Pick source")
+        src = self.current_source()
+        if not usable:
+            text = ("front: not with spectral (qubits hold modes)" if spectral and opts["front"]
+                    else "front: basis sweep only" if opts["front"] else "")
+        elif self.picking:
+            text = "click a vertex"
+        else:
+            text = "" if src is None else f"vertex {src}" + (" (auto)" if self.front_source is None else "")
+        self.src_label.set_text(text)
+
+    def auto_front_source(self, *_):
+        """Auto source button: start the front at the vertex that moves most.
+
+        Args:
+            *_: Ignored button callback arguments.
+        """
+        if not self.params().front:
+            return
+        self.front_source, self.picking = None, False
+        self.quantum_changed()
+
+    def toggle_picking(self, *_):
+        """Pick source button: the next click on a vertex sets the front's source (again: cancel).
+
+        Args:
+            *_: Ignored button callback arguments.
+        """
+        if not self.params().front:
+            return
+        self.picking = not self.picking
+        self.sync_front_controls()
+        self.say("Front: click a vertex on the mesh to start the front there (drag still rotates)"
+                 if self.picking else "Front: picking cancelled")
+
+    def on_press(self, event):
+        """Remember where a click in the 3D view started (to tell a click from a rotation).
+
+        Args:
+            event: Matplotlib MouseEvent.
+        """
+        self.press_xy = (event.x, event.y) if self.picking and event.inaxes is self.ax else None
+
+    def on_release(self, event):
+        """While picking, a click (not a drag) on a vertex makes it the front's source.
+
+        Args:
+            event: Matplotlib MouseEvent.
+        """
+        if not self.picking or self.press_xy is None or event.inaxes is not self.ax:
+            return
+        moved = np.hypot(event.x - self.press_xy[0], event.y - self.press_xy[1])
+        self.press_xy = None
+        if moved > 5:  # a drag rotates the view
+            return
+        i = self.nearest_vertex(event)
+        if i is None:
+            return self.say("Front: no vertex there; click on a vertex (or Cancel)")
+        self.front_source, self.picking = i, False
+        self.quantum_changed()
+        self.say(f"Front source: vertex {i}. Press Run frames to morph from there.")
+
+    def nearest_vertex(self, event, within=12):
+        """The vertex nearest the mouse on screen, in the current step's positions.
+
+        Args:
+            event: Matplotlib MouseEvent in the 3D view.
+            within: Largest distance, in display pixels.
+
+        Returns:
+            int | None: Vertex index, or None if none is that close.
+        """
+        v = self.seq[self.idx]
+        xs, ys, _ = proj3d.proj_transform(*v.T, self.ax.get_proj())
+        pix = self.ax.transData.transform(np.column_stack([xs, ys]))
+        dist = np.hypot(*(pix - (event.x, event.y)).T)
+        i = int(dist.argmin())
+        return i if dist[i] <= within else None
 
     @property
     def morphing(self):
@@ -444,6 +616,17 @@ class App:
         w.eventson = False
         w.set_active(value) if isinstance(w, RadioButtons) else w.set_val(value)
         w.eventson = True
+
+    def sync_spectral_controls(self):
+        """Grey out Spectral k unless Payload is spectral."""
+        on = self.val("Payload") == "spectral"
+        w = self.w["Spectral k"]
+        w.set_active(on)
+        grey = "black" if on else "#a8a8a8"
+        w.label.set_color(grey)
+        w.valtext.set_color(grey)
+        w.valtext.set_text("auto" if not int(w.val) else str(int(w.val)))
+        w.poly.set_alpha(1.0 if on else 0.3)
 
     def sync_morph_controls(self, mode):
         """Mode morph: payload to xyz on entry, Clamp φ greyed out and following Clamp θ.
@@ -513,12 +696,16 @@ class App:
             None (early returns only report a status message).
         """
         self.sync_morph_controls(MODE_LABELS[self.val("Mode")])
+        self.sync_spectral_controls()
         p, shape = self.params(), self.val("Shape")
         if shape != self.shape and shape in self.objs:  # an uploaded mesh opens at its own size
             self.set_resolution("high")
         self.shape = shape
         presets = list(PRESETS[shape].items())
         name, make = presets[min(RES.index(self.val("Resolution")), len(presets) - 1)]
+        if (shape, name) != self.src_mesh:  # a picked front source belongs to its mesh
+            self.front_source, self.src_mesh, self.picking = None, (shape, name), False
+            p = self.params()
         interf_on = p.mode == "morph" and self.morph_opts()["interf"]
         key = (shape, name, p.encoder_key, interf_on)
         self.b_label.set_text(f"{Path(self.b_path).name}" if self.b_path else "no B yet")
@@ -529,6 +716,7 @@ class App:
         if self.encoded is None or key != self.enc_key:
             try:
                 verts, faces = make()
+                p = self.spectral_params(p, len(verts), interf_on)
                 target = None
                 if p.mode == "morph":
                     mkey = (shape, name, p.target, p.shared_topology)
@@ -562,14 +750,23 @@ class App:
         s = self.encoded.stats
         self.show_morph_box(self.morphing)
         self.morph_note.set_text("Interference: t turns the selectors from A (0) to B (1)" if self.interfering
-                                 else "Basis sweep: t turns the readout from Z (A) to X (B)")
-        lines = [f"{shape} {name}: {len(self.verts)} verts", f"payload {p.payload}, {p.layout} layout",
+                                 else "Front: qubits turn A → B in order of distance from the source"
+                                 if p.front else "Basis sweep: t turns the readout from Z (A) to X (B)")
+        self.sync_front_controls()
+        lines = [f"{shape} {name}: {len(self.verts)} verts", f"payload {p.payload}, " + ("modes low first" if p.payload == "spectral" else f"{p.layout} layout"),
                  s["graph"], *([f"data-qubit quality {s['quality']:.2f}"] if s["quality"] is not None else []),
                  f"{s['values']} values on {s['qubits']} qubits"
                  + (f" (of {s['graph_qubits']})" if s["qubits"] < s["graph_qubits"] else ""),
                  f"= {s['ratio']:.2f} values / qubit", f"(angle encoding: {s['values']} qubits)",
                  f"capacity used {s['values']}/{s['capacity']}",
                  f"depth {s['depth']}, 2q gates {s['twoq']}"]
+        sp = self.encoded.spectral
+        if sp is not None:  # rows are modes; the truncation is what a noiseless readout already loses
+            at = next(k for k, line in enumerate(lines) if " values on " in line)
+            lines.insert(at, f"spectral: {sp['k']} modes" + (" + constant" if sp["rows"] > sp["k"] else "")
+                         + f" × xyz" + (" (auto)" if p.spectral_k is None else ""))
+            lines.insert(at + 1, f"truncation A {sp['error_a']:.2%}"
+                         + ("" if sp["error_b"] is None else f", B {sp['error_b']:.2%}") + " of diag")
         if self.encoded.pair:  # a second field in φ costs gates (see README Findings)
             lines.append(f"θ field alone: {s['twoq_single']} 2q")
         if self.encoded.mode == "split":
@@ -594,6 +791,9 @@ class App:
                 lines += [f"{c['stars']} stars: selector 0 = A, 1 = B", f"clamp {morph_clamp(p) / np.pi:.2f}π"]
             else:
                 lines.append(f"θ = A, φ = B, clamp {morph_clamp(p) / np.pi:.2f}π")
+                if p.front:
+                    lines.append(f"front: vertex {self.current_source()}"
+                                 + (" (auto)" if p.front_source is None else "") + f", width {p.front_width:.2f}")
         self.info.set_text("\n".join(lines))
         if self.toggles()["auto"]:
             return self.run()
@@ -650,6 +850,9 @@ class App:
             self.raw, self.kept = anim.run_frames(self.encoded, p, n, progress=prog, ts=ts), None
         self.raw_ts = ts
         self.raw_key = self.decode_key(p, n)
+        self.raw_front = p.front if self.morphing and not self.interfering else None
+        if self.raw_front is not None:  # a front run shows the front, as the web version does
+            self.set_quiet("Colour", COLOURS.index("front"))
         self.sec_per_frame = (time.time() - t0) / n
         self.sec_per_run[p.backend] = self.sec_per_frame / runs
         self.idx = 0
@@ -780,11 +983,12 @@ class App:
         self.say("Fidelity curves opened")
 
     # --- classical layer -----------------------------------------------------
-    def morph_refs(self, ts):
+    def morph_refs(self, ts, front=None):
         """Noiseless morph positions at each t: what each frame is compared against.
 
         Args:
             ts: Morph t per frame.
+            front: None, or the front ``(width, source)`` the frames were read with.
 
         Returns:
             list[np.ndarray]: (N, 3) expected positions per t.
@@ -793,7 +997,7 @@ class App:
         if self.interfering:  # exact noiseless frame (star statevectors), cached per t
             ideal = [self.ideal_cache.setdefault(float(t), interf.ideal(self.ie, float(t))) for t in ts]
             return [interf.frame(self.ie, x, t, "none", a_dirs) for x, t in zip(ideal, ts)]
-        return [morph_expected(self.encoded, t, a_dirs) for t in ts]
+        return [morph_expected(self.encoded, t, a_dirs, front) for t in ts]
 
     def positions(self):
         """Playback positions. Every frame has its own reference (the original mesh, or
@@ -804,24 +1008,31 @@ class App:
             list[np.ndarray]: (N, 3) positions per playback step, including in-betweens and
             the optional leading reference.
 
-        Updates self.decoded, self.refs, self.err, self.ref_seq, self.err_seq, self.err_top.
+        Updates self.decoded, self.refs, self.err, self.ref_seq, self.err_seq, self.err_top
+        and, for a morph front, self.front_seq and self.front_smooth.
         """
+        self.front_seq = None
         if self.raw is None:
             self.decoded, self.err_seq, self.refs = [], None, None
             if self.morphing:  # classical preview of the morph at the slider's t
-                return self.morph_refs([float(self.val("Morph t"))])
-            return [self.verts]
+                t, front = float(self.val("Morph t")), (None if self.interfering else self.params().front)
+                if front is not None:
+                    self.front_seq = [self.front_weights(t, front)]
+                    self.front_smooth = [self.front_weights(t, front, smooth=True)]
+                return self.morph_refs([t], front)
+            return [encoded_shape(self.encoded) if self.encoded is not None else self.verts]
         e, drr, n = self.encoded, self.val("DRR"), len(self.raw)
         if self.morphing:
             a_dirs = self.morph_opts()["a_dirs"]
             if self.interfering:
                 self.decoded = [interf.frame(self.ie, r, t, drr, a_dirs) for r, t in zip(self.raw, self.raw_ts)]
             else:
-                self.decoded = [morph_frame(e, r, t, drr, a_dirs) for r, t in zip(self.raw, self.raw_ts)]
-            refs = self.morph_refs(self.raw_ts)
+                self.decoded = [morph_frame(e, r, t, drr, a_dirs, self.raw_front)
+                                for r, t in zip(self.raw, self.raw_ts)]
+            refs = self.morph_refs(self.raw_ts, None if self.interfering else self.raw_front)
         else:
             self.decoded = [restore(e, r, drr) for r in self.raw]
-            refs = [self.verts] * n
+            refs = [encoded_shape(e)] * n  # the mesh itself, or spectral's truncated mesh
         self.refs = refs
         self.err = np.mean([mesh_error(ref, d) for ref, d in zip(refs, self.decoded)])
         if self.fidelity:  # true decoded positions, nothing exaggerated
@@ -837,6 +1048,11 @@ class App:
         self.err_seq = np.array([np.linalg.norm(v - r, axis=1)
                                  for v, r in zip(glide(lead + self.decoded), self.ref_seq)])
         self.err_top = self.err_seq.max() or 1.0
+        if self.morphing and self.raw_front is not None:  # front weights follow the same timeline
+            zero = [np.zeros(len(self.verts))] if t["orig"] else []
+            self.front_seq = glide(zero + [self.front_weights(x, self.raw_front) for x in self.raw_ts])
+            self.front_smooth = glide(zero + [self.front_weights(x, self.raw_front, smooth=True)
+                                              for x in self.raw_ts])
         return glide(lead + list(keys))
 
     def vertex_rgba(self):
@@ -851,6 +1067,9 @@ class App:
             return (ERROR_CMAP(self.err_seq[self.idx] / self.err_top),
                     f"error per vertex at this step (scale: largest over {n} readout{'s' * (n > 1)})",
                     (ERROR_CMAP, 0, self.err_top, "vertex error at this step (distance, mesh units)"))
+        if mode == "qubit" and e.payload == "spectral":
+            return (np.tile(PLAIN, (len(self.verts), 1)),
+                    "plain (qubit: spectral spreads every vertex over all modes; see the qubit map)", None)
         if mode == "qubit":
             # naive xyz puts x, y, z on different qubits
             what = "data qubit holding each vertex's x (naive layout splits x, y, z)" if e.straddles \
@@ -861,7 +1080,14 @@ class App:
             top = d.max() or 1.0
             return (DELTA_CMAP(d / top), "morph Δ: |B − A| per vertex after alignment",
                     (DELTA_CMAP, 0, top, "|B − A| (mesh units)"))
-        why = {"error": " (run to see error)", "morph Δ": " (Mode morph only)"}.get(mode, "")
+        if mode == "front" and self.front_seq is not None:
+            w = self.front_seq[self.idx]
+            gap = float(np.mean(np.abs(w - self.front_smooth[self.idx])))
+            return (FRONT_CMAP(w), f"front: share of the way to B · source vertex {self.current_source()}"
+                    f" (yellow) · patch steps {gap:.3f} from a smooth front",
+                    (FRONT_CMAP, 0, 1, "front: 0 = A, 1 = B"))
+        why = {"error": " (run to see error)", "morph Δ": " (Mode morph only)",
+               "front": " (Mode morph with Front on)"}.get(mode, "")
         return np.tile(PLAIN, (len(self.verts), 1)), "plain" + why, None
 
     def legend(self, ax, spec):
@@ -912,6 +1138,9 @@ class App:
         self.coll.set_verts([v[f] for f in self.faces])
         if self.val("Colour") == "error" and self.decoded:  # recolour for this step
             self.face_rgba = self.face_mean @ ERROR_CMAP(self.err_seq[self.idx] / self.err_top)
+        elif self.val("Colour") == "front" and self.front_seq is not None:
+            rgba, self.colour_label, _ = self.vertex_rgba()
+            self.face_rgba = self.face_mean @ rgba
         rgba = self.face_rgba.copy()
         rgba[:, 3] = 0.35 if self.edge_data else 1.0
         self.coll.set_facecolor(rgba)
@@ -924,6 +1153,8 @@ class App:
         self.edge_coll.set_visible(bool(self.edge_data))
         mates = self.focus["mates"] if self.focus else []
         self.mates.set_data_3d(*v[mates].T) if len(mates) else self.mates.set_data_3d([], [], [])
+        src = self.current_source() if self.morphing and not self.interfering and self.params().front else None
+        self.src_mark.set_data_3d(*v[[src]].T) if src is not None else self.src_mark.set_data_3d([], [], [])
         if self.fidelity:
             head = "Fidelity · gain 1 (true decoded positions)"
         else:
@@ -934,6 +1165,7 @@ class App:
                 head = f"Morph · noiseless preview at t = {self.val('Morph t'):.2f} (press Run)"
             else:
                 head = ("Morph interference (selectors) · " if self.interfering
+                        else "Morph front (per-qubit sweep) · " if self.raw_front is not None
                         else "Morph basis sweep (transition decode) · ") + head
         self.ax.set_title(f"{head}{err}\nstep {self.idx + 1}/{len(self.seq)} · colour: "
                           f"{self.colour_label}{edge_txt}", fontsize=9)
@@ -1001,11 +1233,15 @@ class App:
         Updates self.focus (only with the qubit map on) and redraws if it changed.
         """
         focus = None
+        if self.encoded is not None and self.encoded.payload == "spectral" and vertex is not None:
+            vertex = None  # every vertex is a sum over all modes: no qubit of its own
         if self.toggles()["map"] and (vertex is not None or group is not None):
             vs = self.qmap["vertices"]
             groups = sorted({g for g, *_ in vs[vertex]}) if vertex is not None else [group]
-            focus = {"vertex": vertex, "groups": groups,
-                     "mates": [i for i, v in enumerate(vs) if any(g in groups for g, *_ in v)]}
+            rows = [i for i, v in enumerate(vs) if any(g in groups for g, *_ in v)]
+            spectral = self.encoded.payload == "spectral"  # rows are modes, not vertices
+            focus = {"vertex": vertex, "groups": groups, "mates": [] if spectral else rows,
+                     "modes": rows if spectral else []}
         if focus == self.focus:
             return
         self.focus = focus
@@ -1066,9 +1302,20 @@ class App:
             pair = " (direction in θ and φ, radius in θ; read in Z, X, Y)"
         if self.interfering:
             pair = " (A at selector 0, B at selector 1)"
+        sp = self.encoded.spectral
+        if sp is not None:
+            pair = " (spectral: x, y, z of whole-surface modes)"
         if not f:
-            return "Hover a vertex on the mesh, or a data qubit here."
+            return ("Hover a data qubit here: spectral qubits hold modes of the whole surface, not vertices."
+                    if sp is not None else "Hover a vertex on the mesh, or a data qubit here.")
         addrs = lambda g: m["groups"][g]["addresses"]  # noqa: E731
+        if sp is not None:  # rows are modes, low frequency first (a morph's row 0 is the constant)
+            g = f["groups"][0]
+            lead = sp["rows"] - sp["k"]
+            names = ["constant" if r < lead else str(r - lead + 1) for r in f["modes"]]
+            return (f"data q{m['groups'][g]['data']} · address " + " ".join(f"q{q}" for q in addrs(g))
+                    + f"\n{2 ** len(addrs(g))} slots, {3 * len(names)} values{pair}"
+                    + ("\nmodes " + ", ".join(names) if names else "\nno modes on it (padding)"))
         if f["vertex"] is None:
             g = f["groups"][0]
             held = sum(gg == g for v in m["vertices"] for gg, *_ in v)
@@ -1133,9 +1380,13 @@ class App:
         if self.morphing:  # compare with the noiseless morph at this step
             o = self.ref_seq[self.idx][i] if self.raw is not None else self.verts[i]
             ref = "expected" if self.raw is not None else "A       "
+        elif self.encoded.payload == "spectral":  # the truncated mesh a noiseless readout returns
+            o, ref = encoded_shape(self.encoded)[i], "modes k "
         fmt = lambda a: "(" + ", ".join(f"{c:+.4f}" for c in a) + ")"  # noqa: E731
         gain = 1.0 if self.fidelity else self.val("Gain (material)")
-        self.tip.set_text(f"vertex {i} on data qubit {self.vq[i]}   (gain {gain:.1f}x, step {self.idx + 1})\n"
+        where = ("on every mode's data qubits" if self.encoded.payload == "spectral"
+                 else f"on data qubit {self.vq[i]}")
+        self.tip.set_text(f"vertex {i} {where}   (gain {gain:.1f}x, step {self.idx + 1})\n"
                           f"{ref} {fmt(o)}\ncurrent  {fmt(n)}\n"
                           f"delta    {fmt(n - o)}\n|delta|  {np.linalg.norm(n - o):.4f}")
         self.tip.set_position(pix[i] + (14, 6))

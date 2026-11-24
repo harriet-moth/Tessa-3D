@@ -1,0 +1,462 @@
+truncation done at 0s
+apple noiseless θ done at 52s
+apple flat noise θ done at 134s
+apple phoenix θ done at 185s
+apple fez θ done at 194s
+suzanne noiseless θ done at 194s
+suzanne flat noise θ done at 194s
+suzanne phoenix θ done at 205s
+suzanne fez θ done at 234s
+apple noiseless sweep xyz snr 3.37 at 286s
+apple noiseless sweep radial snr 17.04 at 286s
+apple noiseless sweep spectral auto snr 5.99 at 286s
+apple noiseless sweep spectral max snr 6.21 at 286s
+apple noiseless interference xyz snr 3.30 at 286s
+apple noiseless interference radial snr 17.15 at 286s
+apple noiseless interference spectral auto snr 4.73 at 286s
+apple noiseless interference spectral max snr 6.50 at 286s
+apple phoenix sweep xyz snr 0.26 at 402s
+apple phoenix sweep radial snr 2.17 at 402s
+apple phoenix sweep spectral auto snr 0.38 at 402s
+apple phoenix sweep spectral max snr 0.31 at 423s
+apple phoenix interference xyz snr 0.32 at 5522s
+apple phoenix interference radial snr 2.64 at 5522s
+apple phoenix interference spectral auto snr 0.65 at 5522s
+apple phoenix interference spectral max snr 0.65 at 5522s
+apple fez sweep xyz snr 0.26 at 5522s
+apple fez sweep radial snr 1.89 at 5522s
+apple fez sweep spectral auto snr 0.41 at 5522s
+apple fez sweep spectral max snr 0.39 at 5522s
+apple fez interference xyz snr 0.28 at 5522s
+apple fez interference radial snr 1.06 at 5522s
+apple fez interference spectral auto snr 0.59 at 5522s
+apple fez interference spectral max snr 0.59 at 5522s
+suzanne noiseless sweep xyz snr 4.73 at 5522s
+suzanne noiseless sweep radial snr 14.43 at 5522s
+suzanne noiseless sweep spectral auto snr 9.36 at 5522s
+suzanne noiseless sweep spectral max snr 8.68 at 5522s
+suzanne noiseless interference xyz snr 4.74 at 5522s
+suzanne noiseless interference radial snr 14.29 at 5522s
+suzanne noiseless interference spectral auto snr 8.25 at 5522s
+suzanne noiseless interference spectral max snr 8.25 at 5522s
+suzanne phoenix sweep xyz snr 0.36 at 5522s
+suzanne phoenix sweep radial snr 2.47 at 5522s
+suzanne phoenix sweep spectral auto snr 0.52 at 5522s
+suzanne phoenix sweep spectral max snr 0.52 at 5522s
+suzanne phoenix interference xyz snr 0.51 at 6919s
+suzanne phoenix interference radial snr 3.67 at 6919s
+suzanne phoenix interference spectral auto snr 1.06 at 6919s
+suzanne phoenix interference spectral max snr 1.06 at 6919s
+suzanne fez sweep xyz snr 0.42 at 6919s
+suzanne fez sweep radial snr 2.76 at 6919s
+suzanne fez sweep spectral auto snr 0.61 at 6919s
+suzanne fez sweep spectral max snr 0.61 at 6919s
+suzanne fez interference xyz snr 0.52 at 6919s
+suzanne fez interference radial snr 2.38 at 6919s
+suzanne fez interference spectral auto snr 1.21 at 6919s
+suzanne fez interference spectral max snr 1.21 at 6919s
+{
+  "apple": {
+    "phoenix": {
+      "spectral k16": {
+        "k_theta": 16,
+        "k_sweep": 16,
+        "k_interference": null,
+        "bite_error_over_disp": 0.5569437788161388,
+        "error": 0.05042498862963594,
+        "xyz_error": 0.0955484981012465,
+        "roughness": 0.24815256901438923,
+        "xyz_roughness": 2.0262289508173206,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.03474151982418076,
+        "xyz_error_drr": 0.07916238285204498,
+        "roughness_drr": 0.22569413964059717,
+        "xyz_roughness_drr": 3.0021515751116823,
+        "pass_drr": false
+      },
+      "spectral k32": {
+        "k_theta": 32,
+        "k_sweep": 32,
+        "k_interference": null,
+        "bite_error_over_disp": 0.43054961332406466,
+        "error": 0.05004109091024669,
+        "xyz_error": 0.0955484981012465,
+        "roughness": 0.24654556878113634,
+        "xyz_roughness": 2.0262289508173206,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.03074686881698141,
+        "xyz_error_drr": 0.07916238285204498,
+        "roughness_drr": 0.22985809327730358,
+        "xyz_roughness_drr": 3.0021515751116823,
+        "pass_drr": false
+      },
+      "spectral k64": {
+        "k_theta": 64,
+        "k_sweep": 64,
+        "k_interference": null,
+        "bite_error_over_disp": 0.33146332026506686,
+        "error": 0.04585421916493077,
+        "xyz_error": 0.0955484981012465,
+        "roughness": 0.25735205839865133,
+        "xyz_roughness": 2.0262289508173206,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.01827845502463017,
+        "xyz_error_drr": 0.07916238285204498,
+        "roughness_drr": 0.2454560036494072,
+        "xyz_roughness_drr": 3.0021515751116823,
+        "pass_drr": false
+      },
+      "spectral auto": {
+        "k_theta": 56,
+        "k_sweep": 84,
+        "k_interference": 84,
+        "bite_error_over_disp": 0.27879435178607953,
+        "error": 0.04588434467193076,
+        "xyz_error": 0.0955484981012465,
+        "roughness": 0.25594115466817907,
+        "xyz_roughness": 2.0262289508173206,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.01893002264484935,
+        "xyz_error_drr": 0.07916238285204498,
+        "roughness_drr": 0.24194301082618985,
+        "xyz_roughness_drr": 3.0021515751116823,
+        "pass_drr": false
+      },
+      "spectral max": {
+        "k_theta": 246,
+        "k_sweep": 246,
+        "k_interference": 131,
+        "bite_error_over_disp": 1.3647713934309054e-12,
+        "error": 0.060801017370726206,
+        "xyz_error": 0.0955484981012465,
+        "roughness": 0.30243351491100257,
+        "xyz_roughness": 2.0262289508173206,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.05125966647709681,
+        "xyz_error_drr": 0.07916238285204498,
+        "roughness_drr": 0.2568096220746426,
+        "xyz_roughness_drr": 3.0021515751116823,
+        "pass_drr": true
+      }
+    },
+    "fez": {
+      "spectral k16": {
+        "k_theta": 16,
+        "k_sweep": 16,
+        "k_interference": null,
+        "bite_error_over_disp": 0.5569437788161388,
+        "error": 0.06971496365439604,
+        "xyz_error": 0.09966795400616897,
+        "roughness": 0.20260819023705753,
+        "xyz_roughness": 2.918183268755565,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.0335384014137146,
+        "xyz_error_drr": 0.08915798468015358,
+        "roughness_drr": 0.1900097251858581,
+        "xyz_roughness_drr": 4.118457471192073,
+        "pass_drr": false
+      },
+      "spectral k32": {
+        "k_theta": 32,
+        "k_sweep": 32,
+        "k_interference": null,
+        "bite_error_over_disp": 0.43054961332406466,
+        "error": 0.06946210727875361,
+        "xyz_error": 0.09966795400616897,
+        "roughness": 0.20330151545753092,
+        "xyz_roughness": 2.918183268755565,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.03285392428302753,
+        "xyz_error_drr": 0.08915798468015358,
+        "roughness_drr": 0.2372724654325681,
+        "xyz_roughness_drr": 4.118457471192073,
+        "pass_drr": false
+      },
+      "spectral k64": {
+        "k_theta": 64,
+        "k_sweep": 64,
+        "k_interference": null,
+        "bite_error_over_disp": 0.33146332026506686,
+        "error": 0.06764326551391664,
+        "xyz_error": 0.09966795400616897,
+        "roughness": 0.215343479429234,
+        "xyz_roughness": 2.918183268755565,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.02591172924587541,
+        "xyz_error_drr": 0.08915798468015358,
+        "roughness_drr": 0.2611500970625027,
+        "xyz_roughness_drr": 4.118457471192073,
+        "pass_drr": false
+      },
+      "spectral auto": {
+        "k_theta": 56,
+        "k_sweep": 84,
+        "k_interference": 73,
+        "bite_error_over_disp": 0.27879435178607953,
+        "error": 0.06766361577885131,
+        "xyz_error": 0.09966795400616897,
+        "roughness": 0.2141582523494423,
+        "xyz_roughness": 2.918183268755565,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.02726537153948876,
+        "xyz_error_drr": 0.08915798468015358,
+        "roughness_drr": 0.26451036464064065,
+        "xyz_roughness_drr": 4.118457471192073,
+        "pass_drr": false
+      },
+      "spectral max": {
+        "k_theta": 149,
+        "k_sweep": 148,
+        "k_interference": 73,
+        "bite_error_over_disp": 0.10932898868789324,
+        "error": 0.07099435945806182,
+        "xyz_error": 0.09966795400616897,
+        "roughness": 0.25806595659339837,
+        "xyz_roughness": 2.918183268755565,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.03266109839070413,
+        "xyz_error_drr": 0.08915798468015358,
+        "roughness_drr": 0.36342287257358047,
+        "xyz_roughness_drr": 4.118457471192073,
+        "pass_drr": true
+      }
+    }
+  },
+  "suzanne": {
+    "phoenix": {
+      "spectral k16": {
+        "k_theta": 16,
+        "k_sweep": 16,
+        "k_interference": null,
+        "bite_error_over_disp": 0.38758604797854423,
+        "error": 0.056137535414878224,
+        "xyz_error": 0.09731551556428591,
+        "roughness": 0.2383756333472629,
+        "xyz_roughness": 2.270836507551276,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.04204195549777956,
+        "xyz_error_drr": 0.08938522861603948,
+        "roughness_drr": 0.18955408382229377,
+        "xyz_roughness_drr": 3.13401930042124,
+        "pass_drr": false
+      },
+      "spectral k32": {
+        "k_theta": 32,
+        "k_sweep": 32,
+        "k_interference": null,
+        "bite_error_over_disp": 0.30937708110274725,
+        "error": 0.048714507597991445,
+        "xyz_error": 0.09731551556428591,
+        "roughness": 0.265702083860659,
+        "xyz_roughness": 2.270836507551276,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.029384548780250996,
+        "xyz_error_drr": 0.08938522861603948,
+        "roughness_drr": 0.3021745802812085,
+        "xyz_roughness_drr": 3.13401930042124,
+        "pass_drr": false
+      },
+      "spectral k64": {
+        "k_theta": 64,
+        "k_sweep": 64,
+        "k_interference": null,
+        "bite_error_over_disp": 0.1950803139837603,
+        "error": 0.04399337925589669,
+        "xyz_error": 0.09731551556428591,
+        "roughness": 0.290832009982817,
+        "xyz_roughness": 2.270836507551276,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.021451569127193332,
+        "xyz_error_drr": 0.08938522861603948,
+        "roughness_drr": 0.30096631425703063,
+        "xyz_roughness_drr": 3.13401930042124,
+        "pass_drr": true
+      },
+      "spectral auto": {
+        "k_theta": 119,
+        "k_sweep": 197,
+        "k_interference": 131,
+        "bite_error_over_disp": 0.09023506939820233,
+        "error": 0.0472486831499614,
+        "xyz_error": 0.09731551556428591,
+        "roughness": 0.32455195662875896,
+        "xyz_roughness": 2.270836507551276,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.02517580928172029,
+        "xyz_error_drr": 0.08938522861603948,
+        "roughness_drr": 0.2970081430847385,
+        "xyz_roughness_drr": 3.13401930042124,
+        "pass_drr": true
+      },
+      "spectral max": {
+        "k_theta": 264,
+        "k_sweep": 263,
+        "k_interference": 131,
+        "bite_error_over_disp": 0.06383008315477488,
+        "error": 0.05311909115961272,
+        "xyz_error": 0.09731551556428591,
+        "roughness": 0.3935945872995168,
+        "xyz_roughness": 2.270836507551276,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.05264147747984998,
+        "xyz_error_drr": 0.08938522861603948,
+        "roughness_drr": 0.39417295311444117,
+        "xyz_roughness_drr": 3.13401930042124,
+        "pass_drr": true
+      }
+    },
+    "fez": {
+      "spectral k16": {
+        "k_theta": 16,
+        "k_sweep": 16,
+        "k_interference": null,
+        "bite_error_over_disp": 0.38758604797854423,
+        "error": 0.06146018602257632,
+        "xyz_error": 0.09197390092776155,
+        "roughness": 0.20167079267040963,
+        "xyz_roughness": 2.5348959061915295,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.039092621814669194,
+        "xyz_error_drr": 0.08535054443064549,
+        "roughness_drr": 0.23039741160758034,
+        "xyz_roughness_drr": 3.3624450038984874,
+        "pass_drr": false
+      },
+      "spectral k32": {
+        "k_theta": 32,
+        "k_sweep": 32,
+        "k_interference": null,
+        "bite_error_over_disp": 0.30937708110274725,
+        "error": 0.0554098369843693,
+        "xyz_error": 0.09197390092776155,
+        "roughness": 0.25164896082820615,
+        "xyz_roughness": 2.5348959061915295,
+        "bite_ok": false,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": false,
+        "error_drr": 0.03269208826648728,
+        "xyz_error_drr": 0.08535054443064549,
+        "roughness_drr": 0.2527906198771331,
+        "xyz_roughness_drr": 3.3624450038984874,
+        "pass_drr": false
+      },
+      "spectral k64": {
+        "k_theta": 64,
+        "k_sweep": 64,
+        "k_interference": null,
+        "bite_error_over_disp": 0.1950803139837603,
+        "error": 0.05194921154699326,
+        "xyz_error": 0.09197390092776155,
+        "roughness": 0.2929950484800769,
+        "xyz_roughness": 2.5348959061915295,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.029253342128316026,
+        "xyz_error_drr": 0.08535054443064549,
+        "roughness_drr": 0.2961552083383708,
+        "xyz_roughness_drr": 3.3624450038984874,
+        "pass_drr": true
+      },
+      "spectral auto": {
+        "k_theta": 119,
+        "k_sweep": 148,
+        "k_interference": 73,
+        "bite_error_over_disp": 0.10849804607442415,
+        "error": 0.052886911871859336,
+        "xyz_error": 0.09197390092776155,
+        "roughness": 0.3868392331165759,
+        "xyz_roughness": 2.5348959061915295,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.03580158095633129,
+        "xyz_error_drr": 0.08535054443064549,
+        "roughness_drr": 0.4187149490834318,
+        "xyz_roughness_drr": 3.3624450038984874,
+        "pass_drr": true
+      },
+      "spectral max": {
+        "k_theta": 149,
+        "k_sweep": 148,
+        "k_interference": 73,
+        "bite_error_over_disp": 0.10849804607442415,
+        "error": 0.052925477063286284,
+        "xyz_error": 0.09197390092776155,
+        "roughness": 0.39941546995304605,
+        "xyz_roughness": 2.5348959061915295,
+        "bite_ok": true,
+        "error_ok": true,
+        "roughness_ok": true,
+        "pass": true,
+        "error_drr": 0.03576250861133153,
+        "xyz_error_drr": 0.08535054443064549,
+        "roughness_drr": 0.4320699612949006,
+        "xyz_roughness_drr": 3.3624450038984874,
+        "pass_drr": true
+      }
+    }
+  },
+  "pass": {
+    "apple": {
+      "raw": true,
+      "drr": true
+    },
+    "suzanne": {
+      "raw": true,
+      "drr": true
+    }
+  }
+}
+all done in 6921s

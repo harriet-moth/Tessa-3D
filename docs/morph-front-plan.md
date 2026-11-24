@@ -1,7 +1,8 @@
 # Tessa Ripple — Morph front: prototype brief
 
-Status: **prototype done, stopped before the UI** (both stop conditions below fired).
-Desktop app only.
+Status: **prototype done; UI in both apps** (2026-11-23). Both stop conditions below
+fired, so the front reads best noiseless. Morph options → **Front**, **Front width**,
+source (auto, or picked by clicking a vertex; marked yellow), **Colour** *front*.
 
 ## Results (2026-11-20, `dev_front.py` → `out/front/front.csv`, `chips.csv`, `strip_apple_radial.png`)
 

@@ -1,0 +1,65 @@
+mesh,backend,config,graph,k,values,runs,twoq,depth
+apple,noiseless,xyz,10x12 lattice,,741,1,792,34
+apple,noiseless,radial,6x8 lattice,,247,1,252,34
+apple,noiseless,spectral k16,3x5 lattice,16,48,1,60,34
+apple,noiseless,spectral k32,4x6 lattice,32,96,1,116,34
+apple,noiseless,spectral k64,6x7 lattice,64,192,1,216,34
+apple,noiseless,spectral auto,5x7 lattice,56,168,1,192,34
+apple,noiseless,spectral max,10x12 lattice,246,738,1,792,34
+apple,noiseless,"spectral auto, one range",5x7 lattice,56,168,1,192,34
+apple,flat noise,xyz,10x12 lattice,,741,1,792,34
+apple,flat noise,radial,6x8 lattice,,247,1,252,34
+apple,flat noise,spectral k16,3x5 lattice,16,48,1,60,34
+apple,flat noise,spectral k32,4x6 lattice,32,96,1,116,34
+apple,flat noise,spectral k64,6x7 lattice,64,192,1,216,34
+apple,flat noise,spectral auto,5x7 lattice,56,168,1,192,34
+apple,flat noise,spectral max,10x12 lattice,246,738,1,792,34
+apple,flat noise,"spectral auto, one range",5x7 lattice,56,168,1,192,34
+apple,phoenix,xyz,ibm_phoenix (whole chip),,741,1,792,34
+apple,phoenix,radial,ibm_phoenix (whole chip),,247,1,248,33
+apple,phoenix,spectral k16,ibm_phoenix (whole chip),16,48,1,60,33
+apple,phoenix,spectral k32,ibm_phoenix (whole chip),32,96,1,116,33
+apple,phoenix,spectral k64,ibm_phoenix (whole chip),64,192,1,228,33
+apple,phoenix,spectral auto,ibm_phoenix (whole chip),56,168,1,196,33
+apple,phoenix,spectral max,ibm_phoenix (whole chip),246,738,1,792,34
+apple,phoenix,"spectral auto, one range",ibm_phoenix (whole chip),56,168,1,196,33
+apple,fez,xyz,ibm_fez (whole chip),,741,2,448,17
+apple,fez,radial,ibm_fez (whole chip),,247,1,252,17
+apple,fez,spectral k16,ibm_fez (whole chip),16,48,1,68,17
+apple,fez,spectral k32,ibm_fez (whole chip),32,96,1,128,17
+apple,fez,spectral k64,ibm_fez (whole chip),64,192,1,260,17
+apple,fez,spectral auto,ibm_fez (whole chip),56,168,1,228,17
+apple,fez,spectral max,ibm_fez (whole chip),149,447,1,448,17
+apple,fez,"spectral auto, one range",ibm_fez (whole chip),56,168,1,228,17
+suzanne,noiseless,xyz,10x12 lattice,,1521,2,792,34
+suzanne,noiseless,radial,9x9 lattice,,507,1,508,34
+suzanne,noiseless,spectral k16,3x5 lattice,16,48,1,60,34
+suzanne,noiseless,spectral k32,4x6 lattice,32,96,1,116,34
+suzanne,noiseless,spectral k64,6x7 lattice,64,192,1,216,34
+suzanne,noiseless,spectral auto,8x9 lattice,119,357,1,406,34
+suzanne,noiseless,spectral max,10x12 lattice,264,792,1,792,34
+suzanne,noiseless,"spectral auto, one range",8x9 lattice,119,357,1,406,34
+suzanne,flat noise,xyz,10x12 lattice,,1521,2,792,34
+suzanne,flat noise,radial,9x9 lattice,,507,1,508,34
+suzanne,flat noise,spectral k16,3x5 lattice,16,48,1,60,34
+suzanne,flat noise,spectral k32,4x6 lattice,32,96,1,116,34
+suzanne,flat noise,spectral k64,6x7 lattice,64,192,1,216,34
+suzanne,flat noise,spectral auto,8x9 lattice,119,357,1,406,34
+suzanne,flat noise,spectral max,10x12 lattice,264,792,1,792,34
+suzanne,flat noise,"spectral auto, one range",8x9 lattice,119,357,1,406,34
+suzanne,phoenix,xyz,ibm_phoenix (whole chip),,1521,2,792,34
+suzanne,phoenix,radial,ibm_phoenix (whole chip),,507,1,518,34
+suzanne,phoenix,spectral k16,ibm_phoenix (whole chip),16,48,1,60,33
+suzanne,phoenix,spectral k32,ibm_phoenix (whole chip),32,96,1,116,33
+suzanne,phoenix,spectral k64,ibm_phoenix (whole chip),64,192,1,228,33
+suzanne,phoenix,spectral auto,ibm_phoenix (whole chip),119,357,1,408,34
+suzanne,phoenix,spectral max,ibm_phoenix (whole chip),264,792,1,792,34
+suzanne,phoenix,"spectral auto, one range",ibm_phoenix (whole chip),119,357,1,408,34
+suzanne,fez,xyz,ibm_fez (whole chip),,1521,4,448,17
+suzanne,fez,radial,ibm_fez (whole chip),,507,2,258,17
+suzanne,fez,spectral k16,ibm_fez (whole chip),16,48,1,68,17
+suzanne,fez,spectral k32,ibm_fez (whole chip),32,96,1,128,17
+suzanne,fez,spectral k64,ibm_fez (whole chip),64,192,1,260,17
+suzanne,fez,spectral auto,ibm_fez (whole chip),119,357,1,448,17
+suzanne,fez,spectral max,ibm_fez (whole chip),149,447,1,448,17
+suzanne,fez,"spectral auto, one range",ibm_fez (whole chip),119,357,1,448,17

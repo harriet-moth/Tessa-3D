@@ -1,6 +1,7 @@
 # Tessa Ripple — Direction morph and spectral payload: plan
 
-Status: **plan, not started.** Desktop app only. Read `docs/morph-plan.md`,
+Status: **Part B (spectral payload) done: gate passed, in both apps** (2026-11-23; results
+below Part B's heading). **Part A not started.** Read `docs/morph-plan.md`,
 `docs/interference-morph.md`, `docs/morph-front-plan.md` and the README's Morph section
 first.
 
@@ -182,6 +183,75 @@ sphere (shared topology where it applies).
 ---
 
 ## Part B — Spectral payload
+
+### Results (2026-11-23, `dev_spectral.py` → `out/spectral/`: `truncation.csv`, `theta.csv`, `morph.csv`, `costs.csv`, `summary.json`, `strip.png`)
+
+Built as planned (`tessa_ripple/spectral.py`, `Params(payload="spectral", spectral_k,
+spectral_tol, spectral_band)`, sweep and interference morphs, tests in
+`tests/test_spectral.py`). One change to the plan: **a morph keeps the constant mode.** The
+centre is A's mass-weighted centroid, so A has no constant part, but B's matched points do:
+B's centroid shift against A is 0.6 % of the bounding-box diagonal for the apple and **3.2 %
+for Suzanne → sphere**, more than the whole 1 % budget. Dropping it would have counted that
+shift as truncation, so a morph encodes the constant as row 0 (A's coefficient there is
+exactly 0); θ and split readouts still drop it.
+
+**Gate: passed** for both meshes on both chips (`summary.json` → `gate`), with or without
+DRR. Numbers are means over 3 seeds at 65,536 shots; error is the RMS per-vertex distance
+over the bounding-box diagonal, against the original mesh (truncation included).
+
+| θ readout, Phoenix / Fez | apple error | apple roughness | Suzanne error | Suzanne roughness |
+|---|---|---|---|---|
+| xyz | 0.096 / 0.100 | 2.0 / 2.9 | 0.097 / 0.092 | 2.3 / 2.5 |
+| radial | 0.010 / 0.014 | 1.6 / 1.6 | 0.020 / 0.021 | 1.2 / 2.2 |
+| spectral, auto (k 56 / 119) | 0.046 / 0.068 | 0.26 / 0.21 | 0.047 / 0.053 | 0.32 / 0.39 |
+| spectral, every mode one run holds | 0.061 / 0.071 | 0.30 / 0.26 | 0.053 / 0.053 | 0.39 / 0.40 |
+| spectral auto, one shared range | 0.044 / 0.055 | 1.0 / 0.64 | 0.048 / 0.049 | 1.3 / 1.05 |
+
+Roughness is |L_u E| / |E − mean| with L_u the uniform graph Laplacian: about the vertex
+degree for independent per-vertex noise, near 0 for smooth swells.
+
+1. **Error.** Spectral is about half of xyz's on both chips (and below it at every k
+   tried). With Tessa's DRR (`mean_std`) it falls to 0.018–0.036 against xyz's 0.08–0.09.
+   Radial stays the quietest payload, but its directions are classical. Noiseless (shot
+   noise only), spectral's noise is 0.0037 against xyz's 0.0056.
+2. **Roughness.** 6–14× lower than xyz's on the chips (the gate asked for 2×). The noise
+   reads as slow swells of the whole surface, not grain (`strip.png`). Under gate noise
+   most of every payload's error is a smooth shrink towards the middle of the range; after
+   DRR removes it, xyz's roughness rises to 3–4 while spectral's stays at 0.2–0.4.
+3. **Band scaling is what makes it work.** With one shared range the error is similar but
+   the roughness is 3–4× higher, and the high modes' noise shows (high-mode energy share
+   0.47 against 0.0003 noiseless, apple).
+4. **Truncation and the bite.** The 1 % tolerance needs k = 56 for the apple alone, 84 for
+   apple → bitten apple, 119 for Suzanne, 197 for Suzanne → sphere. The bite is the hard
+   part: at k = 56–84 it keeps only about 70 % of its depth (bite-region truncation error 28 %
+   of its displacement, gate < 25 %). It passes at k ≥ about 100: every apple mode fits one
+   Phoenix run (k = 246, bite error 0) and Fez's sweep holds k = 148 (bite error 11 %).
+   **For the bite, raise k to the cap** (the apps' k slider past the cap encodes the cap).
+   The interference morph holds half as many (Fez: k = 73, bite error 34 %), so its bite is
+   soft on Fez. Suzanne → sphere passes from k = 64.
+5. **Cost.** Always one run. Apple: 196 two-qubit gates at auto k against xyz's 792 on
+   Phoenix (Fez: 228 against 448 a run, in 2 runs); Suzanne: one run against xyz's 2
+   (Phoenix) or 4 (Fez). Seconds per θ readout on the chip models: 15–64 % of xyz's.
+6. **Morph SNR on the chips (t = 0.5, mean displacement of moving vertices over RMS frame
+   noise): better than xyz, still below 1 without DRR.**
+
+   | SNR, Phoenix / Fez | apple sweep | apple interference | Suzanne sweep | Suzanne interference |
+   |---|---|---|---|---|
+   | xyz | 0.26 / 0.26 | 0.32 / 0.28 | 0.36 / 0.42 | 0.51 / 0.52 |
+   | radial | 2.2 / 1.9 | 2.6 / 1.1 | 2.5 / 2.8 | 3.7 / 2.4 |
+   | spectral auto | 0.38 / 0.41 | 0.65 / 0.59 | 0.52 / 0.61 | 1.06 / 1.21 |
+
+   Noiseless: spectral 6.0 (apple) and 9.4 (Suzanne) against xyz 3.4 and 4.7. With DRR the
+   apple's spectral sweep reaches 2.0 on Phoenix (xyz 0.34). Endpoints are exact
+   (t = 0 and t = 1 within 2e-15 of the truncated A and B) for every payload and readout.
+   So on the chips a spectral morph reads clearly better than xyz and beats it 1.5–2.4×,
+   but the motion itself is still under the noise; the gate (θ error, roughness, bite)
+   did not ask for morph SNR above 1, so the apps got the payload anyway.
+
+UI built per the plan (both apps): Payload / load *spectral*, a k slider (0 = auto, a k past
+one run's cap encodes the cap), error measured against the truncated mesh, the front
+disabled for spectral, the qubit colour replaced by a note, and the qubit map showing each
+data qubit's modes instead of vertices.
 
 ### Encoding
 

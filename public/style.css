@@ -325,6 +325,9 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
   font: 400 20px var(--font); color: var(--ink-dim); }
 .morph-t input { accent-color: var(--accent); width: 100%; }
 .morph-t output { font: 16px var(--font); color: var(--ink-faint); text-align: right; }
+.front-row { display: flex; flex-direction: column; gap: 10px; }
+.front-row[hidden] { display: none; }
+#app.picking #viewer canvas { cursor: crosshair; }
 .morph-note { margin: 0; font: 400 16px/1.35 var(--font); color: var(--ink-faint); }
 #app.portrait .morph-opts { left: 478px; top: 905px; }
 #app.portrait .chip { font-size: 21px; }
@@ -466,6 +469,7 @@ html, .legends { transition: filter 300ms var(--ease-ctl); }
 .legend { font: 400 12px var(--font); color: var(--ink-dim); width: 230px; }
 .legend .bar { height: 7px; border-radius: 4px; margin: 3px 0; }
 .legend .ends { display: flex; justify-content: space-between; font: 10.5px var(--font); color: var(--ink-faint); }
+.legend .gap { margin-top: 3px; color: var(--ink-faint); }
 .legend .swatches { display: flex; flex-wrap: wrap; gap: 2px; margin: 3px 0; }
 .legend .swatches i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 

@@ -37,10 +37,10 @@ OBJ_FILES = {"suzanne": ROOT / "tessa_ripple" / "suzanne.obj",
 # The Params fields the web app sets, with their allowed values (None: any number).
 # Morph's ``target`` (a file path) is never taken from a request: B comes from
 # ``shape_b`` / ``obj_b`` (:func:`mesh_path`).
-CHOICES = {"payload": ("radial", "xyz", "spherical"), "layout": ("mesh", "naive"),
+CHOICES = {"payload": bridge.PAYLOADS, "layout": ("mesh", "naive"),
            "mode": ("theta", "split", "morph"), "backend": bridge.BACKENDS, "placement": bridge.PLACEMENTS,
            "clamp": None, "clamp_b": None, "compression": None, "quant_bits": None,
-           "headroom": None, "shots": None, "noise_strength": None, "seed": None}
+           "headroom": None, "shots": None, "noise_strength": None, "seed": None, "spectral_k": None}
 MAX_FRAMES = 30
 # Vercel stops the function at maxDuration (vercel.json) and answers 504. Each request
 # gets a deadline this many seconds after it arrives, leaving room to send the reply;
@@ -212,6 +212,24 @@ def morph_options(req) -> dict:
     return {k: bool(req.get(k)) for k in ("shared_topology", "hold_t", "a_dirs", "interference")}
 
 
+def spectral_capped(req, p, n_verts: int):
+    """``p`` with ``spectral_k`` capped to what one run holds (the slider may ask for more).
+
+    Args:
+        req: request dict (reads ``interference``: its run holds half as many values).
+        p: bridge.Params.
+        n_verts: Vertices of A.
+
+    Returns:
+        bridge.Params: ``p``, with ``spectral_k`` at most ``bridge.spectral_cap``.
+    """
+    if p.payload != "spectral" or p.spectral_k is None:
+        return p
+    interference = p.mode == "morph" and morph_options(req)["interference"]
+    positions = interf.spectral_positions(p) if interference else None
+    return replace(p, spectral_k=min(p.spectral_k, bridge.spectral_cap(n_verts, p, positions)))
+
+
 def encode_of(req, verts, faces, logs, full, p):
     """Encode the request's mesh. A morph first matches B to it (closest point, or by
     vertex index with ``shared_topology``), then encodes for the basis sweep or, with
@@ -224,17 +242,27 @@ def encode_of(req, verts, faces, logs, full, p):
 
     Returns:
         (Encoded, match, ie): match is the :func:`morph.correspond` dict and ie the
-        ``interfere.Interfered`` (interference only), else None.
+        ``interfere.Interfered`` (interference only), else None. A spectral ``k`` past
+        what one run holds encodes the cap (``bridge.spectral_cap``).
 
     Raises:
-        ValueError: a morph without B, a shared topology that does not match, or a
-            mesh that does not fit.
+        ValueError: a morph without B, a shared topology that does not match, a mesh
+            that does not fit, a front with the interference readout or the spectral
+            payload, or a front source that is not a vertex.
     """
+    p = spectral_capped(req, p, len(verts))
     if p.mode != "morph":
         return bridge.encode_mesh(verts, faces, p), None, None
     if not (req.get("obj_b") or req.get("shape_b")):
         raise ValueError("Morph: drop a second mesh (B) first")
     opts = morph_options(req)
+    if p.morph_front and opts["interference"]:
+        raise ValueError("The morph front turns the basis sweep's qubits one patch at a time; "
+                         "turn off interference readout to use it")
+    if p.morph_front and p.payload == "spectral":
+        raise ValueError(bridge.SPECTRAL_FRONT)
+    if p.front_source is not None and not 0 <= p.front_source < len(verts):
+        raise ValueError(f"Front source {p.front_source} is not a vertex of this mesh (0..{len(verts) - 1})")
     match = correspond(verts, faces, mesh_path(req, "_b"), opts["shared_topology"], logs, full)
     if opts["interference"]:
         ie = interf.encode_interfere(verts, faces, p, match)
@@ -247,7 +275,11 @@ def params_of(req) -> bridge.Params:
 
     Only the non-null CHOICES keys are read (never morph's file path); named
     choices are checked, and numbers clamped: shots to [256, 65536], compression to
-    [0, 100], quant_bits to [1, 16], headroom and noise strength to [0, 10].
+    [0, 100], quant_bits to [1, 16], headroom and noise strength to [0, 10]. With
+    ``morph_front`` true it also reads ``front_width`` (clamped to [0.02, 1], default
+    0.15) and ``front_source`` (a vertex index; null = auto, the vertex that moves most).
+    ``spectral_k`` (spectral payload: modes to encode) of 0 or less is auto (None); a
+    k past one run's cap is capped later, in :func:`encode_of`.
 
     Args:
         req: request dict.
@@ -269,9 +301,16 @@ def params_of(req) -> bridge.Params:
                       ("headroom", 0, 10), ("noise_strength", 0, 10)):
         if k in kw or k == "shots":
             kw[k] = float(np.clip(kw.get(k, 4096), lo, hi))
-    for k in ("shots", "quant_bits", "seed"):
+    for k in ("shots", "quant_bits", "seed", "spectral_k"):
         if k in kw:
             kw[k] = int(kw[k])
+    if kw.get("spectral_k") is not None and kw["spectral_k"] <= 0:  # 0: auto (the 1 % tolerance)
+        del kw["spectral_k"]
+    if req.get("morph_front"):  # the morph front: width in [0.02, 1], source a vertex index or auto
+        kw["morph_front"] = True
+        kw["front_width"] = float(np.clip(float(req.get("front_width") or 0.15), 0.02, 1.0))
+        if req.get("front_source") is not None:
+            kw["front_source"] = int(req["front_source"])
     return bridge.Params(**kw)
 
 
@@ -309,7 +348,8 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
     """Read a morph A -> B.
 
     Frames run along t = 0 -> 1, or all at ``t_one`` with ``hold_t`` (one readout
-    reads at ``t_one`` either way). The basis sweep shares one alpha = 0 readout over
+    reads at ``t_one`` either way). With ``p.front`` each data qubit reads at its own
+    angle (bridge.morph_alpha). The basis sweep shares one alpha = 0 readout over
     its frames, as animate.run_frames does; the interference readout reads each frame
     on its own (interfere.read). The first frame times the readout; the frame count is
     then cut so the rest (and the noiseless references) finish before ``deadline``.
@@ -345,7 +385,7 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
             kept.append(float(share))
         else:
             raw = bridge.decode_raw(e, replace(p, morph_t=t), p.seed + k, reference)
-            frames.append(bridge.morph_frame(e, raw, t, drr, a_dirs))
+            frames.append(bridge.morph_frame(e, raw, t, drr, a_dirs, p.front))
         slowest = max(slowest, time.time() - began)
         if want > 1 and k == 0:
             per = max(time.time() - start, 1e-3) / (1 if ie else 2)  # the sweep's reference cost about one readout
@@ -355,8 +395,33 @@ def morph_frames(e, ie, p, want: int, drr: str, t_one: float, opts: dict, deadli
     for t in ts:
         if t not in refs:
             refs[t] = (interf.frame(ie, interf.ideal(ie, t), t, "none", a_dirs) if ie
-                       else bridge.morph_expected(e, t, a_dirs))
+                       else bridge.morph_expected(e, t, a_dirs, p.front))
     return frames, [refs[t] for t in ts], [float(t) for t in ts], (kept if ie else None)
+
+
+def front_info(e, p, ts) -> dict:
+    """What the page shows of a morph front: its source and how far each vertex has turned.
+
+    Args:
+        e: A morph encoding.
+        p: Params with the front on.
+        ts: Each frame's t.
+
+    Returns:
+        Dict: ``source`` (vertex index, the automatic one resolved), ``width``,
+        ``weights`` (per frame, (N,) share of the way to B each vertex was read at:
+        its data qubits' alpha / (pi/2), averaged over its components) and ``smooth``
+        (the same at each frame's t with every vertex's own distance, which no circuit
+        can make: the gap to ``weights`` is the chip's patch quantisation).
+    """
+    width, source = p.front
+    source = bridge.front_distances(e, source)[0]
+    n = len(e.verts)
+    per_vertex = lambda a: (np.asarray(a, float).reshape(n, -1).mean(1) / (np.pi / 2))
+    weights = [per_vertex(bridge._per_value(e, bridge.morph_alpha(e, t, (width, source)))) for t in ts]
+    smooth = [per_vertex(bridge.front_smooth_alpha(e, t, (width, source))) for t in ts]
+    return {"source": int(source), "width": width,
+            "weights": [rounded(w, 3) for w in weights], "smooth": [rounded(w, 3) for w in smooth]}
 
 
 def run(req):
@@ -380,11 +445,15 @@ def run(req):
         qubit per vertex); ``map``
         (bridge.qubit_map); ``stats`` (Encoded.stats); ``split`` (some vertex spans
         several data qubits); ``error`` (mean bridge.mesh_error over frames, against
-        each frame's reference); ``seconds``. A morph adds ``refs`` (noiseless
+        each frame's reference); ``seconds``; ``spectral`` (``Encoded.spectral``: k,
+        rows, truncation errors; None for other payloads). For the spectral payload
+        ``qubits`` and ``map`` rows are modes, not vertices, and a θ or split readout
+        adds ``refs`` (the truncated mesh, what a noiseless readout returns). A morph adds ``refs`` (noiseless
         positions per frame), ``ts`` (t per frame), ``match`` (B's matching:
         method, coverage, mean distance), ``options`` (:func:`morph_options`),
         ``clamp`` (the one clamp both fields use, in units of π) and, for the
         interference readout, ``kept`` (share of shots each frame was decoded from).
+        A front adds ``front`` (:func:`front_info`).
     """
     t0, deadline = time.time(), deadline_of(req)
     if req.get("mode") == "morph" and req.get("interference"):
@@ -398,21 +467,25 @@ def run(req):
         t_one = float(np.clip(float(req.get("morph_t", 0.5)), 0.0, 1.0))
         opts = morph_options(req)
         frames, refs, ts, kept = morph_frames(e, ie, p, want, drr, t_one, opts, deadline)
-        extra = {"refs": [rounded(r) for r in refs], "ts": ts, "options": opts,
+        if p.front is not None:
+            extra["front"] = front_info(e, p, ts)
+        extra = {**extra, "refs": [rounded(r) for r in refs], "ts": ts, "options": opts,
                  "match": {k: match[k] for k in ("method", "coverage", "distance")},
                  "clamp": bridge.morph_clamp(p) / np.pi, **({"kept": kept} if ie else {})}
     else:
-        refs, per = [verts], 0.0
+        refs, per = [bridge.encoded_shape(e)], 0.0  # the mesh, or spectral's truncated mesh
         while len(frames) < want and (not frames or fits(deadline, per)):
             start = time.time()
             raw = bridge.decode_raw(e, p, p.seed + len(frames))
             frames.append(bridge.restore(e, raw, drr))
             per = max(per, time.time() - start)
         refs = refs * len(frames)
+        if e.spectral is not None:
+            extra["refs"] = [rounded(r) for r in refs]
     return {"verts": rounded(verts), "faces": [list(map(int, f)) for f in faces],
             "frames": [rounded(f) for f in frames], "requested": want,
             "qubits": bridge.vertex_qubits(e).tolist(), "map": bridge.qubit_map(e), "stats": e.stats,
-            "split": e.straddles,
+            "split": e.straddles, "spectral": e.spectral,
             "error": float(np.mean([bridge.mesh_error(r, f) for r, f in zip(refs, frames)])),
             "seconds": time.time() - t0, **extra}
 
@@ -478,7 +551,7 @@ def curves(req):
     not_morph(req, "Curves")
     too_slow(req, "curves")
     verts, faces = mesh_of(req)[:2]
-    return bridge.fidelity_curves(verts, faces, params_of(req))
+    return bridge.fidelity_curves(verts, faces, spectral_capped(req, params_of(req), len(verts)))
 
 
 ACTIONS = {"mesh": mesh, "run": run, "edges": edges, "resources": resources, "curves": curves}

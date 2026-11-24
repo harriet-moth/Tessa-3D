@@ -154,3 +154,64 @@ def test_resolution_decimates_keeps_or_subdivides():
     assert np.allclose(med["verts"], v, atol=1e-5)
     assert np.allclose(high["verts"][:len(v)], v, atol=1e-5)  # the originals stay, midpoints are added
     assert api.mesh({"obj": OCTA})["verts"] == api.mesh({"obj": OCTA, "resolution": 1})["verts"]  # default: medium
+
+
+FRONT = {"shape": "blob", "mode": "morph", "shape_b": "sphere", "morph_front": True}
+
+
+def test_morph_front_reads_each_vertex_at_its_qubits_angle():
+    """The front runs from A (every weight 0) to B (every weight 1), turning patch by patch."""
+    r = api.run({**FRONT, "frames": 3, "shots": 65536})
+    f = r["front"]
+    assert r["ts"] == pytest.approx([0, 0.5, 1]) and f["width"] == pytest.approx(0.15)
+    assert len(f["weights"]) == len(f["smooth"]) == 3 and len(f["weights"][0]) == len(r["verts"])
+    assert np.allclose(f["weights"][0], 0) and np.allclose(f["weights"][2], 1)
+    mid = np.array(f["weights"][1])
+    assert mid.min() < 0.5 < mid.max()  # a front, not the uniform sweep's 0.5 everywhere
+    assert f["weights"][1][f["source"]] == max(f["weights"][1])  # the source turns first
+    assert np.allclose(r["refs"][0], r["verts"], atol=1e-4)  # t = 0 is A
+
+
+def test_morph_front_takes_a_source_and_width():
+    """A chosen source and width come back as given (width clamped to [0.02, 1])."""
+    r = api.run({**FRONT, "front_source": 3, "front_width": 5, "morph_t": 0.3})
+    assert r["front"]["source"] == 3 and r["front"]["width"] == 1.0
+
+
+def test_morph_front_is_refused_with_interference_or_a_bad_source():
+    """The front needs the basis sweep, and its source must be a vertex of A."""
+    with pytest.raises(ValueError, match="interference"):
+        api.run({**FRONT, "interference": True})
+    with pytest.raises(ValueError, match="not a vertex"):
+        api.run({**FRONT, "front_source": 10**6})
+
+
+def test_front_flag_is_ignored_outside_morph():
+    """``morph_front`` on a plain run changes nothing and reports no front."""
+    assert "front" not in api.run({"shape": "blob", "morph_front": True})
+
+
+def test_spectral_payload_runs_with_its_truncated_reference_and_caps_k():
+    """Spectral: θ frames come with the truncated mesh as reference; k past one run is capped; 0 is auto."""
+    r = api.run({"shape": "blob", "payload": "spectral", "frames": 2, "shots": 65536})
+    sp = r["spectral"]
+    assert sp["k"] >= 1 and len(r["map"]["vertices"]) == len(r["qubits"]) == sp["rows"]
+    assert len(r["refs"]) == 2 and r["error"] < 0.02
+    assert not np.allclose(r["refs"][0], r["verts"])  # truncated, not the mesh itself
+    n = len(r["verts"])
+    cap = api.bridge.spectral_cap(n, api.bridge.Params(payload="spectral"))  # one run: 264 modes here
+    assert cap < n - 1
+    assert api.run({"shape": "blob", "payload": "spectral", "spectral_k": 10_000})["spectral"]["k"] == cap
+    assert api.run({"shape": "blob", "payload": "spectral", "spectral_k": 0})["spectral"]["k"] == sp["k"]
+    assert api.run({"shape": "blob", "payload": "radial"})["spectral"] is None
+
+
+def test_spectral_morph_runs_and_refuses_the_front():
+    """Spectral morphs through the sweep and the interference readout; the front is refused."""
+    base = {"shape": "blob", "mode": "morph", "shape_b": "sphere", "payload": "spectral", "shots": 65536}
+    for extra in ({}, {"interference": True}):
+        r = api.run({**base, **extra, "frames": 3})
+        assert r["spectral"]["rows"] == r["spectral"]["k"] + 1 and r["error"] < 0.05
+        assert len(r["refs"]) == len(r["frames"]) == 3
+    with pytest.raises(ValueError, match="front"):
+        api.run({**base, "morph_front": True})

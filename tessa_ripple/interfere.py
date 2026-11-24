@@ -41,7 +41,7 @@ from types import SimpleNamespace
 
 import numpy as np
 from qiskit.quantum_info import Statevector
-from tessa import DataGroup, cell_circuit, encode, prepare_field
+from tessa import DataGroup, Lattice, cell_circuit, encode, prepare_field
 from tessa.codec import _check_traceable, _measured, _normalise, _run
 from tessa.core.decode import _bit_table, decode_cells
 from tessa.core.mode import get_mode
@@ -51,7 +51,7 @@ from tessa.hardware.pipeline import ideal_frames
 from . import bridge
 from .bridge import (DEVICES, Encoded, Params, batch_seed, batches_needed, cells, chip_quality, fill,
                      fit_lattice, morph_clamp, morph_dirs, morph_range, place, radial, restore,
-                     rotated_quality, slot_groups, split_batches, submesh, two_qubit)
+                     rotated_quality, slot_groups, spectral_payload, split_batches, submesh, two_qubit)
 from .mesh import bfs_order, grow_patches
 from .morph import correspond
 
@@ -201,29 +201,53 @@ class Interfered:
     clamp: float
 
 
+def spectral_positions(p: Params) -> int:
+    """Values (A/B pairs) one interference run holds: the graph's half capacity.
+
+    Args:
+        p: Settings (backend).
+
+    Returns:
+        int: ``choose_selectors(graph).capacity`` of the chip, or of the largest lattice.
+    """
+    graph = devices.graph(p.backend) if p.backend in DEVICES else Lattice(bridge.MAX_ROWS, bridge.MAX_COLS)
+    return choose_selectors(graph).capacity
+
+
 def _payload(verts, faces, p: Params, target):
     """A's and B's prepared values and their shared range, as ``bridge.encode_mesh`` (morph).
+
+    Spectral: one row per mode (the constant first), k capped so every A/B pair fits
+    one run's half capacity.
 
     Args:
         verts: (N, 3) A's vertices.
         faces: A's polygons.
-        p: Settings (payload, quant_bits, headroom, target, shared_topology).
+        p: Settings (payload, quant_bits, headroom, target, shared_topology, backend,
+            spectral settings).
         target: :func:`morph.correspond` dict or None.
 
     Returns:
-        dict: ``vals``, ``vals_b`` (N, comps), ``prep``, ``prep_b``, ``rng``, ``centre``,
-        ``dirs``, ``dirs_b``, ``match``.
+        dict: ``vals``, ``vals_b`` (rows, comps), ``prep``, ``prep_b``, ``rng``,
+        ``centre``, ``dirs``, ``dirs_b``, ``match``, ``target`` and, for spectral,
+        ``spectral`` (:func:`bridge.spectral_payload`'s dict), else None.
+
+    Raises:
+        ValueError: For the spherical payload or a morph without B.
     """
-    if p.payload not in ("radial", "xyz"):
-        raise ValueError("The interference morph takes the radial or xyz payload")
+    if p.payload not in ("radial", "xyz", "spectral"):
+        raise ValueError("The interference morph takes the radial, xyz or spectral payload")
     if target is None:
         if p.target is None:
             raise ValueError("Morph: upload a B mesh")
         target = correspond(verts, faces, p.target, p.shared_topology)
     tgt = np.asarray(target["target"], float)
     centre = verts.mean(0)
-    dirs = dirs_b = None
-    if p.payload == "xyz":
+    dirs = dirs_b = sp = None
+    if p.payload == "spectral":
+        sp = spectral_payload(verts, faces, p, spectral_positions(p), tgt)
+        vals, vals_b, centre = sp["vals"], sp["vals_b"], sp["centre"]
+    elif p.payload == "xyz":
         vals, vals_b = verts - centre, tgt - centre
     else:
         vals, dirs = radial(verts, centre)
@@ -231,9 +255,10 @@ def _payload(verts, faces, p: Params, target):
     flat, prep = prepare_field(vals.ravel(), quant_bits=p.quant_bits)
     flat_b, prep_b = prepare_field(vals_b.ravel(), quant_bits=p.quant_bits)
     rng = morph_range(flat, flat_b, p.payload, p.headroom)  # as encode_mesh's morph
-    n = len(verts)
+    n = len(vals)
     return dict(vals=flat.reshape(n, -1), vals_b=flat_b.reshape(n, -1), prep=prep, prep_b=prep_b,
-                rng=rng, centre=centre, dirs=dirs, dirs_b=dirs_b, match=target, target=tgt)
+                rng=rng, centre=centre, dirs=dirs, dirs_b=dirs_b, match=target, target=tgt,
+                spectral=sp)
 
 
 def encode_interfere(verts, faces, p: Params, target=None) -> Interfered:
@@ -246,8 +271,8 @@ def encode_interfere(verts, faces, p: Params, target=None) -> Interfered:
     Args:
         verts: (N, 3) A's vertices.
         faces: A's polygons.
-        p: Settings (payload radial or xyz, layout, backend, placement, clamp,
-            compression, target).
+        p: Settings (payload radial, xyz or spectral, layout, backend, placement,
+            clamp, compression, target).
         target: :func:`morph.correspond` dict, or None to build it from ``p.target``.
 
     Returns:
@@ -255,13 +280,14 @@ def encode_interfere(verts, faces, p: Params, target=None) -> Interfered:
     """
     verts = np.asarray(verts, float)
     d = _payload(verts, faces, p, target)
-    n, comps = d["vals"].shape
+    sp = d["spectral"]
+    n, comps = d["vals"].shape  # n: vertices, or spectral modes
     quality = None
     if p.backend in DEVICES:
         graph, name = devices.graph(p.backend), f"ibm_{p.backend} (whole chip)"
         quality = chip_quality(p.backend)
     else:
-        graph = _fit(n, comps, p.layout == "mesh")
+        graph = _fit(n, comps, p.layout == "mesh" or sp is not None)
         name = f"{graph.rows}x{graph.cols} lattice"
     stars = choose_selectors(graph)
     half = stars.half
@@ -274,8 +300,11 @@ def encode_interfere(verts, faces, p: Params, target=None) -> Interfered:
     for k, idx in enumerate(groups):
         v_k, f_k = (verts, faces) if k_runs == 1 else (verts[idx], submesh(faces, idx))
         mesh = p.layout == "mesh"
-        order = bfs_order(len(idx), f_k) if mesh else None
-        grow = (lambda sizes, v=v_k, f=f_k, o=order: grow_patches(v, f, sizes, o)) if mesh else None
+        if sp is not None:  # modes low first, whole modes per data qubit (one run by construction)
+            order, grow = np.arange(len(idx)), None
+        else:
+            order = bfs_order(len(idx), f_k) if mesh else None
+            grow = (lambda sizes, v=v_k, f=f_k, o=order: grow_patches(v, f, sizes, o)) if mesh else None
         q_k = None if hq is None else (rotated_quality(hq, skip) if skip else hq)
         s_k, _ = place(half, len(idx), comps, order, q_k, 1, grow)
         if q_k is not None:  # later batches start on the next-best data qubits
@@ -296,7 +325,8 @@ def encode_interfere(verts, faces, p: Params, target=None) -> Interfered:
     e = Encoded(verts, faces, graph, name, circuit, enc, d["prep"], a_slots, p.payload, d["centre"],
                 d["dirs"], two_qubit(circuit), quality, None, "morph",
                 parts=tuple(parts) if k_runs > 1 else (), batch=batch if k_runs > 1 else None,
-                target=d["target"], dirs_b=d["dirs_b"], prep_b=d["prep_b"], match=d["match"])
+                target=d["target"], dirs_b=d["dirs_b"], prep_b=d["prep_b"], match=d["match"],
+                **({} if sp is None else dict(scales=sp["scales"], basis=sp["basis"], spectral=sp["info"])))
     a01, b01 = (_normalise(prep.reference, d["rng"])[0] for prep in (d["prep"], d["prep_b"]))
     return Interfered(e, stars, b_slots, a01, b01, clamp)
 
@@ -312,8 +342,6 @@ def _fit(n: int, comps: int, mesh: bool):
     Returns:
         Lattice: The lattice; the largest one if even that needs batches.
     """
-    from tessa import Lattice
-
     for m in range(n, 4 * n + 1, max(1, n // 8)):  # half capacity is about half, not exactly
         try:
             lat = fit_lattice(m, comps, mesh)
@@ -632,7 +660,8 @@ def coherence(frame, coherent, mixed) -> float:
 def frame(ie: Interfered, raw, t: float, drr: str = "none", a_dirs_only: bool = False) -> np.ndarray:
     """Positions of a frame: DRR and payload back to vertices (``bridge.restore``).
 
-    Radial directions turn with ``bridge.morph_dirs`` (slerp at t), as the sweep morph.
+    Radial directions turn with ``bridge.morph_dirs`` (slerp at t), as the sweep morph;
+    xyz and spectral read every part of the shape from the state.
 
     Args:
         ie: The encoding.

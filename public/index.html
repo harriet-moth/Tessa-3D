@@ -42,9 +42,9 @@
 
     <!-- home: the object, its arc menus and the run buttons -->
     <section id="home" class="screen" data-layer="0" aria-label="Encode and decode your object">
-      <button id="hint" class="hint" aria-label="Open the settings menu">click and hold</button>
+      <button id="hint" class="hint" aria-label="Open the settings menu">click for settings</button>
 
-      <!-- Menu layers 1 (Encode / Decode tabs, while held) and 2 (a web of words on the
+      <!-- Menu layers 1 (Encode / Decode tabs, after a click on the object) and 2 (a web of words on the
            left, every line from one hub), drawn by app.js -->
       <div id="menu" data-state="closed">
         <svg id="menuSvg" viewBox="0 0 1440 1024" width="1440" height="1024" aria-hidden="true">
@@ -100,6 +100,14 @@
           <button class="chip" data-opt="interference" aria-pressed="false" title="Read by turning selector qubits from A (0) to B (1), instead of the basis sweep">interference readout</button>
           <button class="chip" data-opt="shared_topology" aria-pressed="false" title="Pair B's vertices with A's by index (B must have A's vertex count and faces)">shared topology</button>
           <button class="chip" data-opt="a_dirs" aria-pressed="false" title="Radial load: keep A's directions; only the radii morph">A's directions only</button>
+          <button class="chip" data-opt="morph_front" aria-pressed="false" title="Each data qubit turns at its own t, by its distance over the surface from a source: B spreads over A patch by patch">front</button>
+        </div>
+        <div id="frontRow" class="front-row" hidden>
+          <label class="morph-t"><span>front width</span><input id="front_width" type="range" min="0.05" max="0.6" step="0.05" value="0.15" aria-label="Front width: how soft the front's edge is, as a share of the surface distance"><output></output></label>
+          <div class="chips" role="group" aria-label="Front source">
+            <button id="srcAuto" class="chip" aria-pressed="true" title="Start the front at the vertex where A and B differ most">source: auto</button>
+            <button id="srcPick" class="chip" aria-pressed="false" title="Then click a vertex on the object to start the front there">pick source</button>
+          </div>
         </div>
         <label class="morph-t"><span>morph t</span><input id="morph_t" type="range" min="0" max="1" step="0.05" value="0.5" aria-label="Morph t: the single run's t, and every frame's with hold t"><output></output></label>
         <p id="morphNote" class="morph-note"></p>
@@ -153,7 +161,7 @@
     <h2>view</h2>
     <div class="seg" role="radiogroup" aria-label="View"><button data-set="view" data-value="fidelity" class="on">fidelity</button><button data-set="view" data-value="material">material</button></div>
     <label><span>gain <small>(material)</small></span><input id="gain" type="range" min="0" max="10" step="0.1" value="3"><output></output></label>
-    <div class="seg" role="radiogroup" aria-label="Colour"><button data-set="colour" data-value="glow" class="on">glow</button><button data-set="colour" data-value="error">error</button><button data-set="colour" data-value="qubit">qubit</button></div>
+    <div class="seg" role="radiogroup" aria-label="Colour"><button data-set="colour" data-value="glow" class="on">glow</button><button data-set="colour" data-value="error">error</button><button data-set="colour" data-value="qubit">qubit</button><button data-set="colour" data-value="front" title="Morph front: how far each vertex has turned from A (0) to B (1)">front</button></div>
     <label>in-between<input id="between" type="range" min="0" max="30" step="1" value="8"><output></output></label>
     <label>speed (fps)<input id="fps" type="range" min="1" max="60" step="1" value="24"><output></output></label>
     <label class="check"><input id="loop" type="checkbox" checked> loop</label>
@@ -191,7 +199,7 @@
   <h2 id="helpTitle">what is this?</h2>
   <p>Tessa3D stores a 3D mesh in a quantum state, reads it back, and shows you the result. Every wobble you see is shot noise or a simulated IBM chip. Nothing is added to make it move. It can also hold two meshes in the same qubits and morph between them, by changing how the state is measured rather than blending the shapes.</p>
   <h3>encode</h3>
-  <p>Moth's Tessa encoder packs the mesh's vertex positions into rotation angles on a small lattice of qubits: many values per qubit, laid out to suit the chip so no SWAPs are needed. Press and hold beside the object, then pick <b>Encode</b> to set the load, mode, vertex layout, clamps and compression.</p>
+  <p>Moth's Tessa encoder packs the mesh's vertex positions into rotation angles on a small lattice of qubits: many values per qubit, laid out to suit the chip so no SWAPs are needed. Click the object, then pick <b>Encode</b> to set the load, mode, vertex layout, clamps and compression.</p>
   <h3>decode</h3>
   <p>Decoding measures the state and turns the counts back into vertices. <b>Decode</b> sets the shots, frames, backend (noiseless or a chip's noise) and chip placement. ▶ reads once; ▶|| reads a run of frames and plays them.</p>
   <h3>why tessa</h3>

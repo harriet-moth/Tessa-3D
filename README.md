@@ -90,18 +90,23 @@ How it works:
   does; they keep a steady size and brightness, and shimmer only while a run is working.
 - **Run buttons:** the gear ▶ encodes and reads once; ▶|| runs **Frames** readouts,
   then plays and pauses them. Both switch the colour to **error**. The gear glows while the settings differ from the last run.
-- **Settings:** click (or right-click, or press on a touch screen) and hold the object:
+- **Settings:** click (or tap) the object:
   **Encode** and **Decode** tabs appear up and down to its left, each with a leader
-  line angled in towards it. Release on one to open its arc of options
+  line angled in towards it. Click one to open its arc of options
   (**load**, **mode**, **vert layout**, **clamps**, **compression**; **DRR**,
-  **frames**, **shots**, **chip placement**, **backend**); release anywhere else to
-  cancel. A quick drag still rotates the object. Each arc sweeps out of the round back
+  **frames**, **shots**, **chip placement**, **backend**); click anywhere else to
+  close. A drag still rotates the object. Each arc sweeps out of the round back
   button on its end, and choosing an option sweeps it back in while that setting's
   toggles fade in. **Back** (or Esc) goes up one layer: from the toggles to the arc, from
   the arc to the home screen. Clicking well away from the object also goes home.
 - **Morph:** **mode → θ+φ morph** opens a box for mesh B: drop an `.obj` or pick a
   shape. Under it are the desktop app's morph options (**hold t**, **interference
   readout**, **shared topology**, **A's directions only**) and the **morph t** slider.
+  **front** turns on the morph front (see *Front* under Morph): a **front
+  width** slider, and **source: auto** or **pick source** (then click a vertex on the
+  object; it is marked in yellow). It cannot be combined with the interference readout.
+  A front run switches **Colour** to *front*: how far each vertex has turned from A (0)
+  to B (1), with the mean gap from a smooth per-vertex front at that step.
   ▶|| reads the morph A → B along t = 0 → 1 (or every frame at morph t with hold t);
   one ▶ reads at morph t. Morph uses one clamp for both fields, so in **clamps** the
   θ and φ knobs move together (0 means Tessa's pair default, 0.2π).
@@ -123,8 +128,8 @@ Differences from the desktop app:
   button is greyed out: **curves** with any noisy backend, **read edges** on phoenix
   or fez, and the **interference readout** with noise (minutes per frame). All of
   them run in the desktop app.
-- Morph has every desktop option except the morph front (a prototype with no UI in
-  either app); curves and edge readouts are off in morph mode.
+- Morph has every desktop option, including the morph front; curves and edge readouts
+  are off in morph mode.
 - There's no GIF export; **Download OBJ** saves the current step.
 - The landing background is Figma's WebGPU shader fill (`@figma/expressive-components`);
   browsers without WebGPU show plain black there.
@@ -149,6 +154,12 @@ Then open http://localhost:8000.
      angle in θ and the azimuth in φ (read in Z, X and Y, so φ covers the full
      circle), and a radius slot holding the radius in θ. Only the centroid is
      classical. Mode θ only.
+   - *spectral* (both apps; `Params(payload="spectral")`):
+     the xyz coefficients of the mesh's first `k` Laplacian modes ("mesh harmonics",
+     [`spectral.py`](tessa_ripple/spectral.py)), one row of three values per mode, so
+     `3k` values instead of `3N` and always one run. Readout noise becomes smooth
+     swells of the whole surface instead of per-vertex grain. See *Spectral payload*
+     under Morph for k, band scaling, findings and what it does not support.
 3. **Prepare.** `tessa.prepare_field` optionally quantises the values (Quant bits).
 4. **Pick a graph.**
    - On a simulator backend, the smallest near-square `tessa.Lattice` that holds
@@ -335,7 +346,7 @@ back is strictly worse than RAM. The decode also simulates one commuting cell at
 time, which shows that this loader is classically easy to simulate. Tessa is a
 loading stage, and the edge readout is the first step past loading.
 
-## Morph (desktop only)
+## Morph
 
 **Mode** *morph A→B* carries two meshes in one state. Mesh A (the selected
 **Shape**) sets every slot's θ and mesh B (an uploaded OBJ) sets its φ. It is
@@ -352,6 +363,11 @@ classically.
 2. In the **Morph options** box (lower left), press **Upload B (.obj)**.
 3. Set **Morph t** and press **Run** or **Run frames**. Before any run, the view
    shows the noiseless morph at the slider's t.
+4. Optional: tick **Front** (basis sweep only; greyed out with **Interference
+   readout**). **Front width** sets how soft its edge is; **Auto source** starts it at
+   the vertex that moves most, **Pick source** then a click on a vertex starts it there
+   (a drag still rotates). The source is marked yellow, and **Colour** *front* shows
+   how far each vertex has turned.
 
 How B is matched to A:
 - **Alignment.** B's centroid moves onto A's, and B is scaled so its RMS radius
@@ -440,7 +456,7 @@ each against its noiseless reference):
 A frame costs one readout per run, so batched morphs on the chips take a few
 seconds per frame. The status line gives an estimate before **Run frames**.
 
-**Front** (`Params.morph_front`, prototype, no UI yet). Instead of one α for every
+**Front** (`Params.morph_front`; in both apps, Morph options → **Front**). Instead of one α for every
 qubit, each (batch, data qubit) gets its own α_q(t) = (π/2)·clip((t(1 + w) − d_q)/w, 0, 1),
 where d_q is the median surface distance (Dijkstra over the edges, `morph.geodesic`)
 of its vertices from a source (default: the vertex with the largest |B − A|). B then
@@ -449,8 +465,9 @@ not reached were read in Z, so they decode from that readout alone, as A. Endpoi
 by `dev_front.py` (summary at the top of `docs/morph-front-plan.md`): the patch steps
 are only 0.3–8 % of the motion away from a smooth per-vertex wave, and on the Phoenix
 and Fez snapshots the front's edge reads at most 1.6× the noise at 65,536 shots (3× is
-readable), so the UI was not built. Tessa's `mean_std` DRR halves the apple's chip
-noise.
+readable), so it reads best on the noiseless backend. Tessa's `mean_std` DRR halves the
+apple's chip noise. The web API returns each frame's per-vertex weights and the smooth
+front's (`api/tessa.py` `front_info`) for the *front* colour.
 
 **Interference morph** (`tessa_ripple/interfere.py`; in the app, Morph options →
 **Interference readout**). A and B sit
@@ -463,6 +480,38 @@ cross-fade), though a re-timed cross-fade gets within 2 %. On the Phoenix and Fe
 models the coherence measurably survives: λ is 0.6–0.9 above a dephased-selector
 control, over 15σ. It is below per-vertex noise in a single frame. Numbers and method:
 `docs/interference-morph.md`, `dev_interfere.py`.
+
+### Spectral payload
+
+**Payload** *spectral* (load → the wave icon on the web) encodes the mesh's shape as the
+xyz coefficients of its first `k` Laplacian modes instead of xyz per vertex
+([`spectral.py`](tessa_ripple/spectral.py)). The modes are A's cotangent-Laplacian
+eigenvectors (mass-orthonormal, low frequency first); the centre (A's mass-weighted
+centroid) stays classical, as in every payload. B in a morph is projected on A's modes,
+plus the constant mode as an extra row for B's centroid shift. Works with every Mode and
+with both morph readouts.
+
+- **k** (desktop slider *Spectral k*, web *modes k*): 0 is **auto**, the smallest k whose
+  truncation error is at most 1 % of the bounding-box diagonal for A (and B). A k past
+  what one run holds encodes the most one run holds (the cap: capacity ÷ 3, less one row
+  in a morph, half that for the interference readout). Always one run, never batched.
+- **Truncation.** Endpoints and the error colour compare against the *truncated* mesh,
+  which is what a noiseless readout returns; the info panel shows the truncation error of
+  A (and B). Detail that needs high modes softens: apple → bitten apple needs k ≳ 100 to
+  keep the bite (auto picks 84), so slide k to the top for it.
+- **Band scaling.** Each mode is scaled to fill [−1, 1] on its own; low modes are far
+  larger than high ones, so one shared range would leave the high modes in the noise.
+- **What it buys** (`dev_spectral.py`, `docs/direction-spectral-plan.md` Part B): on the
+  Phoenix and Fez noise models the error is about half of xyz's (0.05–0.07 against
+  0.09–0.10 of the diagonal), and the noise is 6–14× smoother: slow swells of the whole
+  surface instead of per-vertex grain. Fewer gates (apple: 196 two-qubit gates against
+  792), always one run. Radial is still quieter, with classical directions. Morphs read
+  1.5–2.4× better than xyz on the chips but still below their noise (SNR 0.4–1.2), and
+  reach 2 on Phoenix with DRR `mean_std`.
+- **Not supported:** the morph **Front** (a qubit holds modes of the whole surface, not a
+  patch of it), and per-vertex views: **Colour** *qubit* shows a note instead, hovering a
+  vertex shows no qubits, and the **qubit map** lists the modes each data qubit holds
+  (row 0 of a morph is the constant). "Start from original" starts from the truncated mesh.
 
 ## The controls
 
@@ -522,7 +571,7 @@ it opens exactly as exported.
 
 ### Encoder
 
-**Payload** (radial / xyz)
+**Payload** (radial / xyz / spherical / spectral)
 - *In practice:*
   - *Radial*: one radius per vertex from the centroid, so noise moves each
     vertex in and out along its direction from the centre. That looks like a
@@ -532,7 +581,12 @@ it opens exactly as exported.
 - *In Tessa:* *radial* encodes `N` values on `value_range=(0, r_max(1 + headroom))`
   (morph: centred on A's mean radius instead, see Morph);
   *xyz* encodes `3N` values on one symmetric range `(-m, m)` shared by all axes, so
-  the mesh isn't stretched per axis.
+  the mesh isn't stretched per axis. *Spectral* encodes `3k` band-scaled mode
+  coefficients on `(-1, 1)`, a mode's x, y, z on one data qubit, low modes on the best
+  qubits (see *Spectral payload* under Morph).
+
+**Spectral k** (0 = auto, up to 300; spectral payload only): modes to encode. See
+*Spectral payload* under Morph.
 
 **Mode** (shape θ (Z) / shape θ+φ / morph A→B)
 
@@ -673,7 +727,7 @@ basis.
 - *Material*: **Gain** applies, and the title says
   "gain 3.0× (noise exaggerated)".
 
-**Colour** (error / qubit / morph Δ / plain)
+**Colour** (error / qubit / morph Δ / front / plain)
 - *Error*: each vertex's distance from its original position at the current
   step, in mesh units, so the colours change as the mesh plays. They start
   light on the original mesh, grow darker as a readout's error glides in, and
@@ -683,6 +737,11 @@ basis.
   values. It is always the true decoded error, even in the material view, where
   gain only changes the positions shown. On a chip backend it shows the
   bad qubits.
+- *Front* (morph with **Front** on): how far each vertex has turned from A (0, purple)
+  to B (1, yellow) at the current step, from its data qubits' sweep angles. The title
+  gives the source vertex and the mean gap from a smooth per-vertex front (which no
+  circuit can make): that gap is the chip's patch quantisation. **Run frames** with the
+  front on switches to it.
 - *Qubit*: which data qubit holds each vertex, one distinct colour per qubit in
   use (hues spread by the golden ratio). With the mesh layout, cells show up as
   patches, so the mesh becomes a picture of the chip. With the naive layout on
@@ -813,7 +872,9 @@ map with `bridge.qubit_map(e)`.
 
 - **Full-lattice coherences.** Hadamards on the address qubits of the whole
   encoded mesh, instead of isolated pairs.
-- **Morph in the web version.** Morph is desktop only.
+- **Direction morph** (`docs/direction-spectral-plan.md` Part A): each vertex's
+  direction as a qubit's Bloch direction, morphed by the interference readout and read
+  from ratios of ⟨X⟩, ⟨Y⟩, ⟨Z⟩. Not started; Part B (the spectral payload) is done.
 - **Collision morph.** The front is in place: `bridge.sweep_circuit` takes one α per
   (batch, data qubit), `morph.geodesic` and `bridge.qubit_distance` turn a source vertex
   into per-qubit distances, and `morph_alpha` drives the sweep from them. A collision
@@ -838,9 +899,13 @@ tessa_ripple/
                resources (Why Tessa), read_edges (coherence readout)
   interfere.py interference morph: choose_selectors, encode_interfere, run_frames,
                read (with a dephased control), ideal / pure / incoherent, coherence
+  spectral.py  spectral payload geometry: cotan_laplacian, basis, coefficients,
+               reconstruct, truncation_errors, choose_k, band_scales, high_share
   animate.py   run_frames, blend, interpolate, timeline, export_obj_sequence
   app.py       matplotlib window: views, colours, controls, playback, export
 tests/         meshes, placement, round trips, split mode, chip backend, resources,
                edge readout, seeding, interpolation, export, morph (test_morph.py),
-               interference morph (test_interfere.py), headless app (test_app.py)
+               interference morph (test_interfere.py), spectral payload
+               (test_spectral.py), headless app (test_app.py)
+dev_spectral.py  spectral payload experiments → out/spectral/
 ```
