@@ -39,9 +39,9 @@
   --ink: rgb(var(--ink-rgb));
   --ink-dim: #999897;                   /* gray on a dark ground */
   --ink-faint: rgb(var(--ink-rgb) / 0.4);
-  --orb-line: rgb(var(--ink-rgb) / 0.28);
+  --orb-line: rgb(var(--ink-rgb) / 0.35); /* an unchosen option's outline */
   --glass: rgb(231 231 231 / 0.2);      /* support gray #E7E7E7 */
-  --glass-line: rgb(var(--ink-rgb) / 0.3);
+  --glass-line: rgb(var(--ink-rgb) / 0.8); /* outlines of boxes and controls: one brightness app-wide */
   --hairline: rgb(var(--ink-rgb) / 0.12);
   --surface: #100F0F;                   /* near-black panels (as Atlas) */
   --accent: #DCF900;                    /* signal on a dark ground */
@@ -62,17 +62,26 @@
   --edge: clamp(14px, 5vw, 72px);  /* inset from the right edge (logo and tools share it) */
   --top: clamp(16px, 6vh, 64px);   /* inset from the top (logo and resolution row share it) */
   --logo-w: clamp(40px, 4vw, 58px);
-  --help-w: 30px;                  /* the "?" in the corner; the logo sits just left of it */
+  --bottom: clamp(12px, 3vh, 28px); /* inset from the bottom (the log button) */
+  /* type: five sizes, each with one job (stage elements are in stage px, so they scale with the page) */
+  --fs-small: 12px;    /* small print: footnotes, chart axes, colour-key numbers, page counts */
+  --fs-body: 14px;     /* reading text: log, help, hover labels, View drawer, tools, values, chart readings */
+  --fs-control: 18px;  /* controls: pills, options, slider labels, run buttons; also sub-headings */
+  --fs-heading: 24px;  /* window titles, the symbols in the option circles, large prompts */
+  --fs-title: 38px;    /* the name, Tessa3D */
+  --help-w: 30px;                  /* the round buttons top right: "?", light / dark, home */
+  --round-gap: 12px;               /* between the round buttons */
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { font-synthesis: none; }
 b, strong, h1, h2, h3, th { font-family: var(--font-medium); font-weight: 400; }
 html, body { margin: 0; height: 100%; background: var(--black); color: var(--ink); overflow: hidden;
-  font: 16px/1.4 var(--font); }
+  font: var(--fs-body)/1.4 var(--font); }
 button, input, select, textarea { font: inherit; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 46px; }
+/* keyboard focus looks like hover (each button's :focus-visible rule): no outline box */
+button:focus-visible { outline: none; }
 
 #app { position: fixed; inset: 0; background: var(--black); }
 
@@ -88,27 +97,38 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 
 #stage { position: absolute; left: 50%; top: 50%; width: 1440px; height: 1024px; pointer-events: none; user-select: none; -webkit-user-select: none;
   transform: translate(-50%, -50%) scale(var(--s)); transform-origin: center; }
-#stage button, #stage .drop-b, #stage .more-shapes { pointer-events: auto; }
+#stage button, #stage .drop-b { pointer-events: auto; }
 
-/* the logo: a small mark in the top right corner on every screen, just left of the "?",
-   its top level with the resolution row */
-.logo { position: absolute; z-index: 2; border-radius: 10px;
-  left: calc(100% - var(--edge) - var(--help-w) - 16px - var(--logo-w)); top: var(--top); width: var(--logo-w);
-  transition: background 200ms var(--ease-ctl); }
-.logo img { display: block; width: 100%; height: auto; transition: filter 200ms var(--ease-ctl); }
-.logo:hover { background: var(--flip-light); }
-.logo:hover img { filter: invert(1); }
+/* the name, top left on every screen: it is the home button (back to the landing page).
+   Centred on the round buttons' row, left inset --edge; it scales with the stage (--s), so it
+   stays the size "drop an .obj file" used to show at (48px × the landing's 0.8) */
+.brand { position: absolute; z-index: 2; left: var(--edge); top: calc(var(--top) + var(--logo-w) * 0.3);
+  transform: translateY(-50%); margin: 0; font: 400 calc(var(--fs-title) * var(--s, 1))/1.2 var(--font-medium); white-space: nowrap; }
+#app[data-screen="landing"] .brand { animation: ghost 950ms var(--ease) backwards; }
+/* the hover patch reaches a little past the letters; the negative margin keeps them on --edge */
+.logo { margin-left: -0.45em; padding: 0.1em 0.45em; border-radius: 999px; color: var(--ink);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+/* the top-right row, right to left: "?", light / dark. Circles the same size, level, --round-gap apart */
+/* light / dark: the sun alone, in a circle, just left of the "?" */
+#themeToggle { position: absolute; z-index: 2; display: flex; align-items: center; justify-content: center;
+  right: calc(var(--edge) + var(--help-w) + var(--round-gap));
+  top: calc(var(--top) + var(--logo-w) * 0.3 - var(--help-w) / 2);
+  width: var(--help-w); height: var(--help-w); border-radius: 50%; border: 1px solid var(--glass-line); color: var(--ink);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+#themeToggle:hover, #themeToggle:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
+.logo:hover, .logo:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
 /* help: a small round "?" in the top right corner, on every screen, centred on the
    logo's height (the logo is 0.6 as tall as wide); its right edge in line with the tools */
 .help-btn { position: absolute; z-index: 2; top: calc(var(--top) + var(--logo-w) * 0.3 - var(--help-w) / 2);
   right: var(--edge); width: var(--help-w); height: var(--help-w); border-radius: 50%;
-  border: 1px solid var(--glass-line); font: 400 16px/28px var(--font-medium); text-align: center; color: var(--ink-dim);
+  border: 1px solid var(--glass-line); font: 400 16px/28px var(--font-medium); text-align: center; color: var(--ink); /* the "?" is an icon: 16px, like the drawn icons, not a text size */
   transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 .help-btn:hover, .help-btn:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
 #helpDialog { width: min(400px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 48px)); overflow: auto;
-  margin: calc(var(--top) + var(--logo-w)) var(--edge) auto auto; font-size: 13px; line-height: 1.45; }
-#helpDialog h2 { font-size: 20px; }
-#helpDialog h3 { font: 400 13px var(--font-medium); margin: 12px 0 2px; color: var(--ink); }
+  margin: calc(var(--top) + var(--logo-w)) var(--edge) auto auto; font-size: var(--fs-body); line-height: 1.45; }
+#helpDialog h2 { margin-bottom: 14px; }
+/* each subheading sits midway: the same gap to the paragraph above as to its own below */
+#helpDialog h3 { font: 400 var(--fs-body) var(--font-medium); margin: 7px 0; color: var(--ink); }
 #helpDialog p { margin: 0; color: var(--ink-dim); }
 
 /* screens */
@@ -117,61 +137,72 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; bo
 
 /* ---------- landing (Figma 15:6) */
 /* the heading and shapes, a little smaller than the design, scaled about the middle of the group */
-/* the title, where the large logo used to stand: top centre of the frame */
-.landing-title { position: absolute; left: 720px; top: calc(110px - var(--T, 0px)); transform: translate(-50%, -50%); margin: 0;
-  font: 400 72px/normal var(--font-medium); letter-spacing: -1.5px; white-space: nowrap; color: var(--ink); }
-/* two drawings of the title: white for dark mode; black for light, counter-inverted so html.light's invert leaves its colours alone */
-.landing-title img { display: block; width: 460px; height: auto; }
-.landing-title .title-light, html.light .landing-title .title-dark { display: none; }
-html.light .landing-title .title-light { display: block; filter: invert(1); }
-#app[data-screen="landing"] .landing-title { animation: ghost 950ms var(--ease) backwards; }
 .landing-centre { position: absolute; inset: 0; transform: scale(0.8); transform-origin: 720px 600px; }
-.drop-title, .or { position: absolute; left: 720px; width: 460px; transform: translate(-50%, -50%); margin: 0;
-  font: 400 48px/normal var(--font); text-align: center; color: var(--ink); }
-.drop-title { top: 324px; height: 92px; border-radius: 46px; transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+.drop-title { position: absolute; left: 720px; width: max-content; transform: translate(-50%, -50%); margin: 0;
+  font: 400 var(--fs-heading)/normal var(--font); text-align: center; color: var(--ink); }
+/* the sentence: its middle halfway between the bottoms of the shapes (stage y 596 =
+   512 + 0.8 × 105) and the bottom of the window (stage y 512 + 50vh ÷ --s).
+   Worked out in stage px, then undone through .landing-centre's 0.8 scale about y 600 */
+.drop-title { top: calc((596px + 512px + 50vh / var(--s, 1)) / 2 * 1.25 - 150px); height: 56px; padding: 0 28px; border-radius: 28px; transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 .drop-title .w { display: inline-block; }
 #app[data-screen="landing"] .drop-title .w { animation: ghost 950ms var(--ease) calc(var(--i) * 55ms) backwards; }
-#app[data-screen="landing"] .or { animation: rise 600ms var(--ease) 220ms backwards; }
-.drop-title:hover, #app.dragging .drop-title { background: var(--flip-light); color: var(--black); }
-.or { top: 455px; }
+/* a drop prompt, not a button: no fill. Under the pointer "drop an .obj file" underlines, as
+   a link to browse for one (the words are separate blocks, so each underlines too) */
+.drop-link, .drop-link .w { text-decoration: underline transparent; text-decoration-thickness: 1px; text-underline-offset: 6px;
+  transition: text-decoration-color 200ms var(--ease-ctl); }
+.drop-title:hover .drop-link, .drop-title:hover .drop-link .w, .drop-title:focus-visible .drop-link, .drop-title:focus-visible .drop-link .w,
+#app.dragging .drop-link, #app.dragging .drop-link .w { text-decoration-color: var(--ink); }
 .preset { position: absolute; transition: transform 300ms var(--ease-ctl); }
 /* (rises on transform: translate already carries the spread) */
 #app[data-screen="landing"] .preset { animation: rise-t 600ms var(--ease) var(--rise-d, 300ms) backwards; }
 .preset img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
-.preset.cube { left: 192px; top: 455px; width: 339px; height: 471px; }
-.preset.blob { left: 562px; top: 503px; width: 332.5px; height: 374.5px; --rise-d: 380ms; }
-.preset.sphere { left: 925px; top: 552px; width: 261px; height: 276px; --rise-d: 460ms; }
-/* each shape slides out from the centre by its offset × --spread (offsets: cube −358.5, sphere +335.5) */
-.preset.cube { translate: calc(-358.5px * var(--spread, 0)) 0; }
-.preset.sphere { translate: calc(335.5px * var(--spread, 0)) 0; }
-.preset:hover { transform: scale(1.06); }
-#app[data-screen="landing"] .more-shapes { animation: rise 600ms var(--ease) 540ms backwards; }
+/* five in a row, 275px apart round the centre, centred on the window (y 490 here is the
+   stage's middle, 512, once .landing-centre's 0.8 scale about y 600 is applied); each shape's drawn part 210px tall (the boxes
+   differ because each picture has its own transparent margin). Each slides out from the
+   centre by its offset × --spread on wide windows */
+.preset.cube { left: 11px; top: 284.4px; width: 299.1px; height: 415.1px; translate: calc(-550px * var(--spread, 0)) 0; }
+.preset.blob { left: 297.6px; top: 333.7px; width: 294px; height: 331.1px; translate: calc(-275px * var(--spread, 0)) 0; --rise-d: 380ms; }
+.preset.sphere { left: 597.7px; top: 370.3px; width: 246.9px; height: 261.6px; --rise-d: 460ms; }
+.preset.apple { left: 900.7px; top: 380.3px; width: 188.6px; height: 219.4px; translate: calc(275px * var(--spread, 0)) 0; --rise-d: 540ms; }
+.preset.suzanne { left: 1131px; top: 377.4px; width: 278.1px; height: 223.8px; translate: calc(550px * var(--spread, 0)) 0; --rise-d: 620ms; }
+.preset:hover, .preset:focus-visible { transform: scale(1.06); }
 /* reveals (design guide): a ghost blurs up into focus; a group item fades and rises 16px */
 @keyframes ghost { from { opacity: 0; filter: blur(10px); translate: 0 0.3em; } }
 @keyframes rise-t { from { opacity: 0; transform: translateY(16px); } }
 @keyframes rise { from { opacity: 0; translate: 0 16px; } }
-.more-shapes { position: absolute; left: 0; right: 0; top: 950px; text-align: center; font: 400 18px var(--font); color: var(--ink-faint); }
-.more-shapes button { color: var(--ink-dim); text-decoration: underline; text-underline-offset: 4px; }
-.more-shapes button, .drop-b-presets button { border-radius: 12px; padding: 0 5px; transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
-.more-shapes button:hover, .drop-b-presets button:hover { background: var(--flip-light); color: var(--black); text-decoration: none; }
+.drop-b-presets button { border-radius: 12px; padding: 0 5px; transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+.drop-b-presets button:hover, .drop-b-presets button:focus-visible { background: var(--flip-light); color: var(--black); text-decoration: none; }
 
 /* ---------- home (Figma 10:2, 18:230). #home[data-layer] is the menu layer, 0–3. */
-.hint { position: absolute; left: 720px; top: 840px; width: 452px; transform: translate(-50%, -50%); margin: 0;
-  font: 400 24px/normal var(--font); text-align: center; color: var(--ink); opacity: 0.85;
-  transition: opacity 300ms var(--ease-ctl); }
+/* "click for settings": a small pill, level with the object's middle and halfway between the
+   window's left edge (stage x --vlx) and the object's left edge (stage x 720 − 275, the radius
+   app.js fits it to); both follow the object when it is shifted (--ox, --oy) */
+.hint { position: absolute; left: calc((var(--vlx, 0px) + 445px + var(--ox, 0px)) / 2); top: calc(512px + var(--oy, 0px));
+  transform: translate(-50%, -50%); margin: 0; padding: 8px 20px; border: 1px solid var(--glass-line); border-radius: 999px;
+  font: 400 var(--fs-control)/1.2 var(--font); white-space: nowrap; color: var(--ink);
+  transition: opacity 300ms var(--ease-ctl), background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+/* its leader line: straight right from the pill to just short of the object's left edge, drawn
+   like the menu tabs' leads. The pill's middle is (445 + ox − vlx) / 2 from the object's edge;
+   less half the pill (50%) and a 56px gap */
+.hint::after { content: ""; position: absolute; left: 100%; top: 50%; height: 1px; pointer-events: none;
+  width: calc((445px + var(--ox, 0px) - var(--vlx, 0px)) / 2 - 50% - 56px); background: rgb(var(--ink-rgb) / 0.85); }
+#app.portrait .hint::after { display: none; } /* under the object on phones: no line */
+.hint:hover, .hint:focus-visible { background: var(--flip-light); color: var(--black); border-color: var(--ink); outline: none; }
 #app[data-screen="home"] .hint { animation: ghost 950ms var(--ease) 300ms backwards; }
 #home:not([data-layer="0"]) .hint { opacity: 0; pointer-events: none; }
 /* resolution row: top centre of the window, its top level with the logo's; the chosen
    option in medium weight */
-.res-row { position: absolute; z-index: 2; top: var(--top); left: 50%; transform: translateX(-50%); display: flex;
+/* centred on the top row's middle line (the name and round buttons); line height 1.2 is
+   Riforma's ascent + descent, so the letters' middle is the box's middle */
+.res-row { position: absolute; z-index: 2; top: calc(var(--top) + var(--logo-w) * 0.3); left: 50%; transform: translate(-50%, -50%); display: flex;
   gap: clamp(8px, 7vw - 12px, 96px); transition: opacity 300ms var(--ease-ctl); } /* tighter on phones, clear of the logo */
-.res-row button { white-space: nowrap; padding: 0 6px; border-radius: 46px; line-height: 1.15;
-  font: 400 clamp(13px, 1.1vw, 16px)/1.15 var(--font); letter-spacing: 0.2px; color: rgb(var(--ink-rgb) / 0.5);
+.res-row button { white-space: nowrap; padding: 0 6px; border-radius: 46px;
+  font: 400 var(--fs-body)/1.2 var(--font); letter-spacing: 0.2px; color: rgb(var(--ink-rgb) / 0.5);
   transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 .res-row button[aria-checked="true"] { font-family: var(--font-medium); font-weight: 400; color: rgb(var(--ink-rgb) / 0.85); }
-.res-row button:hover { background: var(--flip-light); color: var(--black); }
-/* small screens: the logo and "?" take the right of the top row, so the row starts at the left edge */
-#app.compact .res-row { left: var(--edge); transform: none; }
+.res-row button:hover, .res-row button:focus-visible { background: var(--flip-light); color: var(--black); }
+/* narrow screens: left-aligned, just under the name (half its 1.2-line box is 23px × --s) */
+#app.compact .res-row { left: var(--edge); transform: none; top: calc(var(--top) + var(--logo-w) * 0.3 + 23px * var(--s, 1) + 14px); }
 #app[data-screen="landing"] .res-row, #app:not([data-layer="0"]) .res-row { opacity: 0; pointer-events: none; }
 
 /* the run buttons belong to the home screen: they hide while the menu is held open
@@ -184,17 +215,18 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 #menu button { pointer-events: none; }
 #menuSvg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 
-/* layer 1 tabs: sharp dark trapezoids up and down to the left of the object, each with a
-   thin leader line angled in towards it; hovering one flips it light */
-.pill-band { fill: #2b2b2b; stroke: rgb(var(--ink-rgb) / 0.22); stroke-width: 1; transition: fill 160ms var(--ease-ctl), stroke 160ms var(--ease-ctl); }
+/* layer 1 tabs: outlined pills (drawn like "Click for settings") in layer 2's top and bottom
+   places, on lines from the same hub; hovering one fills it light */
+.pill-band { fill: rgb(231 231 231 / 0); stroke: rgb(var(--ink-rgb) / 0.8); stroke-width: 1; transition: fill 160ms var(--ease-ctl), stroke 160ms var(--ease-ctl); }
 .pill-band.hot { fill: #E7E7E7; stroke: var(--ink); }
 .tab-lead { stroke: rgb(var(--ink-rgb) / 0.85); stroke-width: 1; fill: none; }
+.tab-hub { fill: var(--ink); }
 
 /* layer 1: the tabs pop out of the object while it is held */
 #pills { opacity: 0; transform: scale(0.94) translateX(14px); transform-origin: 440px 512px; transition: opacity 200ms var(--ease-ctl), transform 300ms var(--ease-ctl); }
 #menu[data-state="open"] #pills { opacity: 1; transform: none; }
 .pill-label { position: absolute; transform: translate(-50%, -50%) scale(0.82); opacity: 0; white-space: nowrap;
-  font: 400 21px/normal var(--font); letter-spacing: -1.2px; text-align: center;
+  font: 400 var(--fs-control)/1.2 var(--font); text-align: center;
   transition: opacity 200ms var(--ease-ctl), transform 300ms var(--ease-ctl), color 200ms var(--ease-ctl); }
 .pill-label.encode, .pill-label.decode { color: var(--ink); }
 #menu[data-state="open"] .pill-label { opacity: 1; transform: translate(-50%, -50%); pointer-events: auto; }
@@ -202,39 +234,35 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 
 /* ---------- the webs (layers 2 and 3): thin straight lines from one hub, drawn outward
    one after another (--d, set by app.js) as the layer opens, folded back as it closes */
-.web-line { stroke: rgb(var(--ink-rgb) / 0.5); stroke-width: 1; fill: none; stroke-dasharray: 1; stroke-dashoffset: 1;
+.web-line { stroke: rgb(var(--ink-rgb) / 0.85); stroke-width: 1; fill: none; stroke-dasharray: 1; stroke-dashoffset: 1;
   transition: stroke-dashoffset 200ms var(--ease-ctl), stroke 160ms var(--ease-ctl); }
 .web-hub { fill: var(--ink); opacity: 0; transition: opacity 200ms var(--ease-ctl); }
 #menu[data-state="encode"] .web.encode .web-line, #menu[data-state="decode"] .web.decode .web-line, #panel.shown .web-line {
   stroke-dashoffset: 0; transition: stroke-dashoffset 600ms var(--ease) var(--d, 0ms), stroke 160ms var(--ease-ctl); }
 #menu[data-state="encode"] .web.encode .web-hub, #menu[data-state="decode"] .web.decode .web-hub, #panel.shown .web-hub { opacity: 1; }
 
-/* layer 2: bare words at the ends of the lines; hovering one flips it to a light patch */
+/* layer 2: outlined pills at the ends of the lines (drawn like "Click for settings" and the
+   Encode / Decode tabs); hovering one fills it light */
 .arc { position: absolute; inset: 0; pointer-events: none; }
-.arc-label { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; padding: 3px 8px;
-  font: 400 22px/1.15 var(--font); letter-spacing: -0.3px; color: var(--ink); opacity: 0; translate: 0 16px;
-  transition: opacity 160ms var(--ease-ctl), translate 160ms var(--ease-ctl), background 160ms var(--ease-ctl), color 160ms var(--ease-ctl); }
+.arc-label { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; padding: 8px 20px;
+  border: 1px solid var(--glass-line); border-radius: 999px;
+  font: 400 var(--fs-control)/1.2 var(--font); color: var(--ink); opacity: 0; translate: 0 16px;
+  transition: opacity 160ms var(--ease-ctl), translate 160ms var(--ease-ctl), background 160ms var(--ease-ctl), color 160ms var(--ease-ctl), border-color 160ms var(--ease-ctl); }
 #menu[data-state="encode"] .arc.encode .arc-label, #menu[data-state="decode"] .arc.decode .arc-label {
   opacity: 1; translate: 0 0; pointer-events: auto;
   transition: opacity 600ms var(--ease) var(--d, 0ms), translate 600ms var(--ease) var(--d, 0ms), background 160ms var(--ease-ctl), color 160ms var(--ease-ctl); }
-.arc-label:hover, .arc-label:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
+.arc-label:hover, .arc-label:focus-visible { background: var(--flip-light); color: var(--black); border-color: var(--ink); outline: none; }
 
-/* the header (layers 2 and 3): the menu's or setting's name, underlined to a dot, and
-   the back button: an arrow turning back on itself */
-/* In the page frame's top row: left inset --edge (the logo's right inset, mirrored), and
-   centred on the logo's own height (it is 0.6 as tall as wide). The header lives on the
-   stage, so window px are turned into stage px (÷ --s, less the stage's spare height E). */
-.menu-head { position: absolute; left: calc(var(--vlx, 0px) + var(--edge) / var(--s, 1));
-  top: calc((var(--top) + 0.3 * var(--logo-w)) / var(--s, 1) - var(--E, 0px));
-  display: flex; align-items: center; gap: 52px; pointer-events: none;
-  opacity: 0; transform: translate(0, calc(-50% + 16px)); transition: opacity 600ms var(--ease), transform 600ms var(--ease); }
-#home[data-layer="2"] .menu-head, #home[data-layer="3"] .menu-head { opacity: 1; transform: translate(0, -50%); }
-#home[data-layer="2"] .menu-head .back, #home[data-layer="3"] .menu-head .back { pointer-events: auto; }
-.menu-title { position: relative; min-width: 96px; padding: 0 0 6px; border-bottom: 1px solid rgb(var(--ink-rgb) / 0.55);
-  font: 400 24px/1.1 var(--font); letter-spacing: 0.4px; color: var(--ink-dim); white-space: nowrap; }
-.menu-title::after { content: ""; position: absolute; right: -2px; bottom: -3px; width: 5px; height: 5px; border-radius: 50%; background: rgb(var(--ink-rgb) / 0.8); }
-.back { display: grid; place-items: center; width: 52px; height: 42px; color: var(--ink); transition: background 160ms var(--ease-ctl), color 160ms var(--ease-ctl); }
-.back svg { display: block; }
+/* back (menu layers 1–3): a round button drawn like the light / dark one (30 window px, so
+   ÷ --s on the stage). Its left edge is in line with the name's (window x --edge), and it is
+   level with the webs' hub (stage y 512, the window's middle), where the middle option sits */
+.back { position: absolute; left: calc(var(--vlx, 0px) + var(--edge) / var(--s, 1)); top: 512px; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: calc(var(--help-w) / var(--s, 1)); height: calc(var(--help-w) / var(--s, 1)); border-radius: 50%;
+  border: calc(1px / var(--s, 1)) solid var(--ink); color: var(--ink); opacity: 0; pointer-events: none;
+  transition: opacity 600ms var(--ease), background 160ms var(--ease-ctl), color 160ms var(--ease-ctl); }
+.back svg { display: block; width: calc(16px / var(--s, 1)); height: calc(16px / var(--s, 1)); }
+#home[data-layer="1"] .back, #home[data-layer="2"] .back, #home[data-layer="3"] .back { opacity: 1; pointer-events: auto; } /* on every menu layer */
 .back:hover, .back:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
 
 /* ---------- layer 3: one setting's web */
@@ -250,20 +278,18 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
   transition: opacity 160ms var(--ease-ctl), translate 160ms var(--ease-ctl), left 500ms var(--ease), top 500ms var(--ease), background 160ms var(--ease-ctl), color 160ms var(--ease-ctl), border-color 160ms var(--ease-ctl); }
 #panel.shown .orb { opacity: 1; translate: 0 0;
   transition: opacity 600ms var(--ease) var(--d, 0ms), translate 600ms var(--ease) var(--d, 0ms), left 500ms var(--ease), top 500ms var(--ease), background 160ms var(--ease-ctl), color 160ms var(--ease-ctl), border-color 160ms var(--ease-ctl); }
-.orb.square { width: 72px; height: 72px; border: 1px solid rgb(var(--ink-rgb) / 0.5); background: var(--black); font: 400 25px/normal var(--font); }
-.orb.word { padding: 3px 8px; font: 400 20px/1.15 var(--font); letter-spacing: -0.2px; }
+/* the picture / symbol options: circles */
+.orb.square { width: 72px; height: 72px; border-radius: 50%; border: 1px solid var(--orb-line); background: var(--black); font: 400 var(--fs-heading)/normal var(--font); }
+/* word options: outlined pills like layer 2's (the chosen one white with a bright outline,
+   the others grey with a faint one) */
+.orb.word { padding: 8px 20px; border: 1px solid var(--orb-line); border-radius: 999px; font: 400 var(--fs-control)/1.2 var(--font); }
+.orb.word.on { border-color: rgb(var(--ink-rgb) / 0.8); }
 .orb.on { color: var(--ink); }
-.orb.square.on { border: 2px solid var(--ink); }
-.orb.word.on { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; }
+.orb.square.on { border-color: var(--glass-line); } /* chosen: bright outline and white, like the word options */
+/* a chosen word is told apart by colour alone (white; the others grey), no underline */
 .orb:hover, .orb:focus-visible { background: var(--flip-light); border-color: var(--ink); color: var(--black); outline: none; }
-.orb:hover .icon, .orb:focus-visible .icon { filter: invert(1); }
-.orb:hover .morph span, .orb:focus-visible .morph span { color: var(--black); }
-.orb.square.greek { font-size: 25px; }
-.orb .icon { width: 46px; height: 46px; display: block; }
-.orb .morph { position: relative; width: 66px; height: 55px; transform: scale(0.875); }
-.orb .morph img { position: absolute; display: block; }
-.orb .morph span { position: absolute; left: 1.2px; top: 10.76px; width: 58.8px; height: 32.28px; display: grid; place-items: center;
-  font: 400 24px/normal var(--font); letter-spacing: 0.48px; color: var(--ink); }
+.orb .qicon { width: 40px; height: 40px; display: block; } /* the Load options' line icons */
+.orb.square.label { font-size: var(--fs-control); } /* words in a circle (Morph, (x,y,z)): control size, to fit */
 .orb.disabled { opacity: 0.35 !important; pointer-events: none; }
 
 /* sliders: the web's line bends at an elbow and runs straight left as the track, with
@@ -271,11 +297,11 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 .line-slider { position: absolute; left: 0; top: 0; width: 1440px; height: 1024px; overflow: visible; pointer-events: none;
   opacity: 0; translate: 0 16px; transition: opacity 160ms var(--ease-ctl), translate 160ms var(--ease-ctl); }
 #panel.shown .line-slider { opacity: 1; translate: 0 0; transition: opacity 600ms var(--ease) var(--d, 0ms), translate 600ms var(--ease) var(--d, 0ms); }
-.line-slider .track { fill: none; stroke: rgb(var(--ink-rgb) / 0.5); stroke-width: 1; }
+.line-slider .track { fill: none; stroke: rgb(var(--ink-rgb) / 0.85); stroke-width: 1; }
 .line-slider .fill { fill: none; stroke: var(--ink); stroke-width: 2; }
 .line-slider .hit { fill: none; stroke: transparent; stroke-width: 36; pointer-events: stroke; cursor: pointer; }
-.line-slider text { fill: var(--ink-dim); font: 400 18px var(--font); }
-.line-slider .slider-value { fill: var(--ink); font-size: 16px; }
+.line-slider text { fill: var(--ink); font: 400 var(--fs-control) var(--font); }
+.line-slider .slider-value { fill: var(--ink); font-size: var(--fs-body); }
 .knob { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; background: var(--ink); border: 0;
   cursor: grab; touch-action: none; opacity: 0; transition: opacity 160ms var(--ease-ctl), transform 160ms var(--ease-ctl); }
 .knob::before { content: ""; position: absolute; inset: -14px; } /* a bigger target than it looks */
@@ -283,90 +309,89 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 .knob:hover, .knob:focus-visible, .knob.dragging { transform: scale(1.35); outline: none; }
 .knob.dragging { cursor: grabbing; }
 
-/* morph: drop the second mesh (Figma 20:44, 21:41) */
-.drop-b { position: absolute; left: 792px; top: 331px; width: 484px; height: 344px; cursor: pointer;
+/* morph: the drop box for the second mesh and its options, placed together as one block by
+   app.js (placeMorphBox: halfway between the object and the tools, centred top to bottom).
+   Drawn like the rest: a bright outline and no fill (light on hover), the words always sharp
+   and in front, choices as outlined pills. */
+.drop-b { position: absolute; left: 792px; top: 331px; width: 484px; height: 300px; cursor: pointer;
   opacity: 0; transform: translateY(16px); transition: opacity 600ms var(--ease), transform 600ms var(--ease); }
 .drop-b[hidden] { display: block; visibility: hidden; }
 .drop-b.shown { opacity: 1; transform: none; }
-.drop-b p { position: absolute; left: 16px; top: 125px; width: 452px; height: 94px; margin: 0; display: grid; place-items: center;
-  font: 400 24px/normal var(--font); text-align: center; color: var(--ink); }
-.drop-b-box { position: absolute; inset: 0; border-radius: 28px; background: var(--glass); border: 1px solid var(--glass-line);
-  backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px); z-index: 1; pointer-events: none;
-  transition: border-color 250ms var(--ease-ctl), backdrop-filter 250ms var(--ease-ctl), background 250ms var(--ease-ctl); }
-/* hover (or a file over it): the glass flips light, its text dark and in front */
-.drop-b:hover .drop-b-box, .drop-b.over .drop-b-box { background: var(--flip-light); border-color: var(--ink); backdrop-filter: none; -webkit-backdrop-filter: none; }
-.drop-b p { transition: color 250ms var(--ease-ctl); }
-.drop-b:hover p, .drop-b.over p { z-index: 2; color: var(--black); }
-.drop-b:hover .drop-b-presets { color: rgba(0, 0, 0, 0.55); }
-.drop-b:hover .drop-b-presets button { color: var(--black); }
-.drop-b:hover .drop-b-presets button:hover { background: var(--flip-dark); color: var(--ink); }
-.drop-b.ready .drop-b-box { border-color: rgb(var(--accent-rgb) / 0.7); }
-.drop-b-presets { position: absolute; left: 0; right: 0; bottom: 22px; z-index: 2; text-align: center;
-  font: 400 15px var(--font); color: var(--ink-faint); }
-.drop-b-presets button { color: var(--ink-dim); margin: 0 3px; text-decoration: underline; text-underline-offset: 3px; }
-.drop-b-presets button.on { color: var(--ink); }
+.drop-b { --drop-h: 300px; --text-h: calc(var(--fs-heading) * 1.3); --label-h: calc(var(--fs-body) * 1.2); --pill-h: calc(var(--fs-body) * 1.2 + 10px); }
+/* a drop area: a dashed outline says "drop here"; it turns solid white under the pointer or
+   a dragged file (no fill) */
+.drop-b-box { position: absolute; inset: 0; border-radius: 22px; border: 1px dashed var(--glass-line); pointer-events: none;
+  transition: border-color 250ms var(--ease-ctl); }
+.drop-b p { position: absolute; left: 16px; right: 16px; top: 0; bottom: 0; z-index: 1; /* the middle of the box */ margin: 0; display: grid; place-items: center;
+  font: 400 var(--fs-heading)/1.3 var(--font); text-align: center; color: var(--ink); transition: color 250ms var(--ease-ctl); }
+.drop-b:hover .drop-b-box, .drop-b.over .drop-b-box { border-style: solid; border-color: var(--ink); }
+.drop-b.ready .drop-b-box { border-style: solid; border-color: var(--ink); } /* B loaded: a solid white outline */
+/* "Or morph into:" sits exactly halfway between the centred words and the pills: the row gap
+   is half of what is left between them (the box's lower half less the 24px edge, the pills,
+   half the words and the label itself) */
+.drop-b-presets { position: absolute; left: 0; right: 0; bottom: 24px; z-index: 1; display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  column-gap: 6px; row-gap: calc((var(--drop-h) / 2 - 24px - var(--pill-h) - var(--text-h) / 2 - var(--label-h)) / 2); line-height: 1.2;
+  font: 400 var(--fs-body) var(--font); color: var(--ink-dim); }
+.drop-b-presets span { flex-basis: 100%; text-align: center; } /* its own line, above the pills */
+.drop-b-presets button { padding: 4px 12px; border: 1px solid var(--orb-line); border-radius: 999px; color: var(--ink-dim);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl), border-color 200ms var(--ease-ctl); }
+.drop-b-presets button.on { color: var(--ink); border-color: var(--glass-line); }
+.drop-b-presets button:hover, .drop-b-presets button:focus-visible { background: var(--flip-light); border-color: var(--ink); color: var(--black); }
 
-/* morph options under the drop box: glass chips and the morph t slider */
-.morph-opts { position: absolute; left: 792px; top: 698px; width: 484px; display: flex; flex-direction: column; gap: 14px;
+/* the morph options under the drop box: chips and sliders. Vertical spacing on the app's 8px
+   scale: 8 within a group (the two chip rows; a slider and its note; the Front row's parts),
+   24 between groups (the box, the chips, the Front row, Morph t) and inside the box's edge. */
+.morph-opts { position: absolute; left: 792px; top: 655px; width: 484px; display: flex; flex-direction: column; gap: 24px;
   opacity: 0; transform: translateY(16px); transition: opacity 600ms 80ms var(--ease), transform 600ms 80ms var(--ease); }
 .morph-opts[hidden] { display: flex; visibility: hidden; }
 .morph-opts.shown { opacity: 1; transform: none; }
 #stage .morph-opts button, #stage .morph-opts input { pointer-events: auto; }
-.chips { display: flex; flex-wrap: wrap; gap: 10px; }
-.chip { padding: 9px 18px; border-radius: 46px; border: 1px solid var(--orb-line); background: rgba(16, 15, 15, 0.45);
-  font: 400 19px var(--font); letter-spacing: 0.3px; color: var(--ink-dim);
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+/* the morph options in two rows: the lower three spread edge to edge (first left, last right,
+   the middle one halfway); the upper two centred, as far apart as the lower ones (--chip-gap,
+   measured by app.js) */
+#morphOpts > .chips { flex-direction: column; flex-wrap: nowrap; }
+.chip-row { display: flex; justify-content: center; gap: var(--chip-gap, 8px); }
+.chip-row.spread { justify-content: space-between; gap: 0; }
+.chip { padding: 8px 20px; border-radius: 999px; border: 1px solid var(--orb-line); background: none;
+  font: 400 var(--fs-control)/1.2 var(--font); color: var(--ink-dim);
   transition: color 200ms var(--ease-ctl), border-color 200ms var(--ease-ctl), background 200ms var(--ease-ctl); }
-.chip:hover { background: var(--flip-light); border-color: var(--ink); color: var(--black); }
-.chip[aria-pressed="true"] { color: var(--ink); border: 2px solid var(--ink); padding: 8px 17px;
-  background: radial-gradient(circle, rgb(231 231 231 / 0.5) 0%, rgb(98 98 98 / 0.5) 100%); }
-.chip[aria-pressed="true"]:hover { background: var(--flip-dark); color: var(--ink); }
-.chip:disabled { opacity: 0.35; pointer-events: none; }
-.morph-t { display: grid; grid-template-columns: auto 1fr 56px; align-items: center; gap: 14px;
-  font: 400 20px var(--font); color: var(--ink-dim); }
-.morph-t input { accent-color: var(--accent); width: 100%; }
-.morph-t output { font: 16px var(--font); color: var(--ink-faint); text-align: right; }
-.front-row { display: flex; flex-direction: column; gap: 10px; }
+.chip:hover, .chip:focus-visible { background: var(--flip-light); border-color: var(--ink); color: var(--black); }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--glass-line); } /* on: white with a bright outline, no fill */
+.chip[aria-pressed="true"]:hover, .chip[aria-pressed="true"]:focus-visible { color: var(--black); border-color: var(--ink); }
+.chip[aria-disabled="true"] { opacity: 0.35; cursor: default; } /* can't be used now: greyed, its reason shows bottom right on hover */
+.chip[aria-disabled="true"]:hover, .chip[aria-disabled="true"]:focus-visible { background: none; color: var(--ink-dim); border-color: var(--orb-line); }
+.morph-t { display: grid; grid-template-columns: auto 1fr 56px; align-items: center; gap: 16px;
+  font: 400 var(--fs-control) var(--font); color: var(--ink); }
+.morph-t output { font: var(--fs-body) var(--font); color: var(--ink-dim); text-align: right; }
+.front-row { display: flex; flex-direction: column; gap: 8px; } /* a group: 8 */
 .front-row[hidden] { display: none; }
 #app.picking #viewer canvas { cursor: crosshair; }
-.morph-note { margin: 0; font: 400 16px/1.35 var(--font); color: var(--ink-faint); }
+.morph-note { margin: -16px 0 0; font: 400 var(--fs-body)/1.45 var(--font); color: var(--ink-dim); } /* it explains Morph t, so it sits 8 under it, not 16 */
 #app.portrait .morph-opts { left: 478px; top: 905px; }
-#app.portrait .chip { font-size: 21px; }
+#app.portrait .chip { font-size: var(--fs-heading); } /* phones: a size up, as the stage is small */
 
-/* run buttons (Figma 21:12) */
-.run-btn { position: absolute; top: calc(896px + var(--B, 0px)); scale: 0.8; translate: 0 16px; /* smaller and lower than the design: room for the object */ width: 101px; height: 101px; border-radius: 50%; transition: transform 200ms var(--ease-ctl), filter 200ms var(--ease-ctl); }
-.run-btn img, .run-btn span { position: absolute; display: block; pointer-events: none; }
-/* outline style: an unfilled white ring, white icons */
-.run-btn .ring { left: 0; top: 0; width: 101px; height: 101px; border: 2.5px solid var(--ink); border-radius: 50%; background: transparent;
-  transition: background 200ms var(--ease-ctl); }
-.run-btn .gear, .run-btn .tri { filter: brightness(0) invert(1); transition: filter 200ms var(--ease-ctl); }
-#run { left: 595px; translate: 12px 16px; }
-#run .gear { left: 12.06px; top: 14.06px; width: 52.8758px; height: 52.8747px; }
-#run .tri { left: 40.87px; top: 37.12px; width: 50.2295px; height: 45.75px; transform: rotate(90deg); }
-#play { left: 736px; width: 109px; translate: -12px 16px; }
-#play .tri { left: 15.85px; top: 30.12px; width: 43.3013px; height: 39.75px; transform: rotate(90deg); }
-#play .bars { left: 39px; top: 19px; width: 70px; height: 56px; display: grid; place-items: center;
-  font: 400 48px/normal var(--font-bold); letter-spacing: -2.4px; color: var(--ink); transition: color 200ms var(--ease-ctl); }
-/* hover flip: the ring fills white and the icons turn black */
-.run-btn:hover { transform: scale(1.06); }
-.run-btn:hover .ring { background: var(--flip-light); }
-.run-btn:hover .gear, .run-btn:hover .tri { filter: brightness(0); }
-#play:hover .bars { color: var(--black); }
-.run-btn:active { transform: scale(0.96); }
-/* settings changed since the last run dim the gear's ring in and out; a run in
-   progress pulses both rings and spins the gear (▶ and ▶|| both encode first). */
-#run.stale .ring { animation: ring 1.8s ease-in-out infinite; }
-#app.busy .run-btn { pointer-events: none; }
-#app.busy .run-btn .ring { animation: ring 1.2s ease-in-out infinite; }
+/* run buttons: two outlined pills side by side under the object, centred on it.
+   "Run once" encodes and reads once; the other runs the frames and plays them, then says
+   "Pause" / "Play" while those frames still match the settings (app.js syncPlay) */
+.run-buttons { position: absolute; left: 720px; top: calc(946px + var(--B, 0px)); transform: translate(-50%, -50%);
+  display: flex; gap: 16px; }
+.run-btn { height: 48px; padding: 0 26px; border: 1px solid var(--glass-line); border-radius: 999px;
+  font: 400 var(--fs-control)/1 var(--font); color: var(--ink); white-space: nowrap;
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl), border-color 200ms var(--ease-ctl), transform 200ms var(--ease-ctl); }
+#play { min-width: 160px; } /* holds its width as the label changes */
+.run-btn:hover, .run-btn:focus-visible { background: var(--flip-light); color: var(--black); border-color: var(--ink); outline: none; }
+.run-btn:active { transform: scale(0.97); }
+/* settings changed since the last run: "Run once" breathes; a run in progress pulses both */
+#run.stale { animation: ring 1.8s ease-in-out infinite; }
+#app.busy .run-btn { pointer-events: none; animation: ring 1.2s ease-in-out infinite; }
 @keyframes ring { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-#app.running #run .gear { animation: spin 1.6s linear infinite; }
-@keyframes spin { to { rotate: 360deg; } }
-#play.playing .tri { opacity: 0.35; }
 
 /* ---------- HUD, drawer, info (outside the stage, so they stay readable on small windows) */
 #side, #info, .legends, #drawer, #qmap { transition: opacity 600ms var(--ease); }
 #app[data-screen="landing"] #side, #app[data-screen="landing"] #logBody, #app[data-screen="landing"] .legends,
 #app[data-screen="landing"] #drawer, #app[data-screen="landing"] #qmap { opacity: 0; pointer-events: none; }
-/* the landing page keeps only the light / dark toggle from the bottom-left corner */
+/* no log button on the landing page */
 #app[data-screen="landing"] #logToggle { display: none; }
 /* the tools: a column down the right edge, centred top to bottom, clear of the logo and object */
 /* The handle stays stuck to the right wall; the tools slide in from the right beside it.
@@ -382,55 +407,62 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 #side.open #hud { opacity: 1; transition: transform 300ms var(--ease-ctl), opacity 300ms var(--ease-ctl) 60ms; }
 .side-handle { display: block; padding: 0; line-height: 0; }
 .side-handle svg { display: block; }
-.handle-shape { fill: #2b2b2b; stroke: rgb(var(--ink-rgb) / 0.22); stroke-width: 1; transition: fill 160ms var(--ease-ctl); }
+.handle-shape { fill: rgb(231 231 231 / 0); stroke: rgb(var(--ink-rgb) / 0.8); stroke-width: 1; transition: fill 160ms var(--ease-ctl); } /* outline only, like the pills */
 .handle-arrow { stroke: var(--ink); transform-origin: 14.5px 56px; transition: stroke 160ms var(--ease-ctl), transform 300ms var(--ease-ctl); }
 #side.open .handle-arrow { transform: rotate(180deg); }
-.side-handle:hover .handle-shape { fill: #E7E7E7; }
-.side-handle:hover .handle-arrow { stroke: var(--black); }
-.side-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* trapezoid buttons: the outline is two clipped layers, the edge colour and the fill 1px
-   inside it, so slanted edges keep a crisp 1px line. --trap is the shape. */
-.trap { position: relative; isolation: isolate; --edge-c: #626262; --fill-c: var(--surface); } /* both opaque: the fill sits on the edge layer */
-.trap::before, .trap::after { content: ""; position: absolute; z-index: -1; clip-path: var(--trap); pointer-events: none; }
-.trap::before { inset: 0; background: var(--edge-c); }
-.trap::after { inset: 1px; background: var(--fill-c); }
-.trap:hover, .trap:focus-visible { --edge-c: var(--ink); --fill-c: var(--flip-light); color: var(--black); outline: none; }
-
-/* the tools: single-sided trapezoids, square to the right wall and slanted on the left */
-#hud button { --trap: polygon(14px 0, 100% 0, 100% 100%, 0 100%); text-align: center; padding: 7px 14px 7px 24px;
-  font: 400 14px var(--font); letter-spacing: 0.3px; color: var(--ink-dim); transition: color 200ms var(--ease-ctl); }
-#hud button[aria-pressed="true"], #hud button[aria-expanded="true"] { color: var(--ink); --edge-c: var(--ink); --fill-c: #2E2D2D; }
-#hud button[aria-pressed="true"]:hover, #hud button[aria-expanded="true"]:hover { --fill-c: var(--flip-dark); color: var(--ink); }
-#hud button:disabled { opacity: 0.4; pointer-events: none; }
-.seg button { padding: 7px 14px; border-radius: 46px; border: 1px solid var(--orb-line);
-  font: 400 14px var(--font); letter-spacing: 0.3px; color: var(--ink-dim);
-  background: rgba(16, 15, 15, 0.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+.side-handle:hover .handle-shape, .side-handle:focus-visible .handle-shape { fill: rgb(231 231 231 / 1); }
+.side-handle:hover .handle-arrow, .side-handle:focus-visible .handle-arrow { stroke: var(--black); }
+/* the tools: outlined pills like the rest, all alike (an open View drawer or qubit map shows
+   for itself, so a tool that is on needs no mark of its own); hovering one fills it light */
+#hud button { text-align: center; padding: 8px 20px; border: 1px solid var(--glass-line); border-radius: 999px;
+  font: 400 var(--fs-body)/1.2 var(--font); color: var(--ink); transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+#hud button:hover, #hud button:focus-visible { background: var(--flip-light); color: var(--black); }
+/* a tool that can't run right now: greyed, no hover fill, but its reason shows on hover */
+#hud button[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+#hud button[aria-disabled="true"]:hover, #hud button[aria-disabled="true"]:focus-visible { background: none; color: var(--ink); }
+/* segmented choices: outlined pills like the settings' word options (the chosen one white
+   with a bright outline, the others grey with a faint one); hovering fills light */
+.seg button { padding: 6px 16px; border-radius: 999px; border: 1px solid var(--orb-line);
+  font: 400 var(--fs-body)/1.2 var(--font); color: rgb(var(--ink-rgb) / 0.6); background: none;
   transition: color 200ms var(--ease-ctl), border-color 200ms var(--ease-ctl), background 200ms var(--ease-ctl); }
-.seg button:hover { background: var(--flip-light); border-color: var(--ink); color: var(--black); }
-.seg button.on { color: var(--ink); border-color: var(--ink); background: rgb(231 231 231 / 0.18); }
-.seg button.on:hover { background: var(--flip-dark); color: var(--ink); }
+.seg button.on { color: var(--ink); border-color: rgb(var(--ink-rgb) / 0.8); }
+.seg button:hover, .seg button:focus-visible { background: var(--flip-light); border-color: var(--ink); color: var(--black); }
 
-/* view drawer: opens to the left of the tools column */
-#drawer { position: absolute; top: 50%; right: calc(var(--edge) + 200px); transform: translateY(-50%); width: 280px; max-height: calc(100vh - 80px); overflow: auto; padding: 14px 16px;
-  border-radius: 22px; background: rgba(16, 15, 15, 0.55); border: 1px solid var(--glass-line);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font: 400 14px var(--font); color: var(--ink-dim); }
+/* view drawer: opens to the left of the tools column; drawn like the log box (bright outline)
+   with white headings and labels, and sliders, ticks and fields in the app's white */
+#drawer { position: absolute; top: 50%; right: calc(var(--edge) + 240px); transform: translateY(-50%); width: 300px; max-height: calc(100vh - 80px); overflow: auto; padding: 18px 22px;
+  border-radius: 22px; background: rgba(16, 15, 15, 0.92); border: 1px solid var(--glass-line);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); font: 400 var(--fs-body) var(--font); color: var(--ink);
+  display: flex; flex-direction: column; gap: 14px; } /* every row the same distance apart */
+#drawer > * { margin: 0; }
 #drawer[hidden] { display: none; }
-#drawer h2 { margin: 12px 0 6px; font: 400 18px var(--font); letter-spacing: 0.4px; color: var(--ink-dim); }
-#drawer h2:first-child { margin-top: 0; }
-#drawer h2 small, #drawer label small { color: var(--ink-faint); font-size: 12px; }
-.seg { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
-.seg button { padding: 5px 12px; }
-#drawer label { display: grid; grid-template-columns: 1fr 1.2fr 38px; align-items: center; gap: 8px; margin: 7px 0; }
+#drawer h2 { font: 400 var(--fs-control)/1.2 var(--font); color: var(--ink); } /* sub-headings */
+#drawer h2 small, #drawer label small { color: var(--ink-faint); font-size: var(--fs-small); }
+.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; } /* two to a row: Glow / Error over Qubit / Front */
+.seg button { width: 100%; } /* every choice the same width, in both groups */
+#drawer label { display: grid; grid-template-columns: 1fr 1.2fr 38px; align-items: center; gap: 8px; }
 #drawer label.check { grid-template-columns: auto 1fr; }
-#drawer label output { font: 12px var(--font); text-align: right; color: var(--ink-faint); }
-#drawer input[type=range] { accent-color: var(--accent); width: 100%; }
-#drawer input[type=number] { grid-column: 2 / 4; background: transparent; color: var(--ink); border: 1px solid var(--orb-line); border-radius: 10px; padding: 3px 8px; font: inherit; }
-#drawer input[type=checkbox] { accent-color: var(--accent); }
+#drawer label output { font: var(--fs-body) var(--font); text-align: right; color: var(--ink-dim); }
+/* sliders: a thin white line and a small white square, like the settings' sliders */
+#drawer input[type=range], .morph-t input { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; background: none; }
+#drawer input[type=range]::-webkit-slider-runnable-track, .morph-t input::-webkit-slider-runnable-track { height: 1px; background: rgb(var(--ink-rgb) / 0.85); }
+#drawer input[type=range]::-moz-range-track, .morph-t input::-moz-range-track { height: 1px; background: rgb(var(--ink-rgb) / 0.85); }
+#drawer input[type=range]::-webkit-slider-thumb, .morph-t input::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5.5px; background: var(--ink); border: 0; border-radius: 0; }
+#drawer input[type=range]::-moz-range-thumb, .morph-t input::-moz-range-thumb { width: 12px; height: 12px; background: var(--ink); border: 0; border-radius: 0; }
+#drawer input[type=range]:focus-visible, .morph-t input:focus-visible { outline: none; }
+#drawer input[type=range]:focus-visible::-webkit-slider-thumb, .morph-t input:focus-visible::-webkit-slider-thumb { transform: scale(1.35); }
+#drawer input[type=number] { grid-column: 2 / 4; background: transparent; color: var(--ink); border: 1px solid var(--glass-line); border-radius: 999px; padding: 4px 12px; font: inherit; }
+#drawer input[type=number]:focus-visible { outline: none; border-color: var(--ink); background: rgb(var(--ink-rgb) / 0.08); }
+/* tick boxes: small white squares, filled with a dark tick when on */
+#drawer input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin: 0 4px 0 0;
+  border: 1px solid var(--glass-line); display: grid; place-items: center; cursor: pointer; }
+#drawer input[type=checkbox]:checked { background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.2 6 9.6l4.5-5' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat; }
+#drawer input[type=checkbox]:focus-visible { outline: none; border-color: var(--ink); }
 
 /* the log: an up-arrow button bottom left; open, the stats and status sit above it */
-#info { position: absolute; left: var(--edge); bottom: clamp(12px, 3vh, 28px); max-width: min(420px, 40vw); display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-  font: 11.5px/1.5 var(--font); color: rgb(var(--ink-rgb) / 0.5); }
-#logBody { padding: 10px 12px; border-radius: 14px; background: rgba(16, 15, 15, 0.55); border: 1px solid var(--orb-line);
+#info { position: absolute; left: var(--edge); bottom: var(--bottom); max-width: min(420px, 40vw); display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+  font: var(--fs-body)/1.5 var(--font); color: rgb(var(--ink-rgb) / 0.5); }
+#logBody { padding: 10px 12px; border-radius: 14px; background: rgba(16, 15, 15, 0.55); border: 1px solid var(--glass-line);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity 250ms var(--ease-ctl), transform 300ms var(--ease-ctl); }
 #info.open #logBody { opacity: 1; transform: none; pointer-events: auto; }
@@ -440,15 +472,16 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 /* no hints on the landing page: the log waits for home, unless it holds an error (a bad upload) */
 #app[data-screen="landing"] #info.open #logBody:not(:has(#status.err)) { opacity: 0; transform: translateY(8px); pointer-events: none; }
 #app:not([data-layer="0"]) #info { pointer-events: none; } /* its box would still catch clicks... */
-#app:not([data-layer="0"]) #info .corner-row { pointer-events: auto; } /* ...but the log and theme buttons stay live */
-/* log and light mode: trapezoids, narrower at the top */
-#logToggle, #themeToggle { --trap: polygon(9px 0, calc(100% - 9px) 0, 100% 100%, 0 100%);
-  display: flex; align-items: center; gap: 6px; padding: 5px 18px 5px 15px;
-  color: var(--ink-dim); font: 400 13px var(--font); letter-spacing: 0.3px; transition: color 200ms var(--ease-ctl); }
-#logToggle svg { transition: transform 300ms var(--ease-ctl); }
+#app:not([data-layer="0"]) #info .corner-row { pointer-events: auto; } /* ...but the log button stays live */
+/* log: an outlined pill as tall as the round buttons, an arrow and the word; the arrow points
+   the way the log will move (up to open it above, down to fold it away) */
+#logToggle { display: flex; align-items: center; gap: 6px; height: var(--help-w); padding: 0 16px 0 12px;
+  border: 1px solid var(--glass-line); border-radius: 999px; color: var(--ink); font: 400 var(--fs-body)/1 var(--font);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+#logToggle:hover, #logToggle:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
+#logToggle svg { display: block; transition: transform 300ms var(--ease-ctl); }
 #info.open #logToggle svg { transform: rotate(180deg); }
-#themeToggle { padding: 5px 15px; } /* the symbol alone */
-.corner-row { display: flex; gap: 6px; }
+.corner-row { display: flex; align-items: center; gap: 6px; }
 
 /* light mode: the whole page inverted (black ↔ white). Set on <html> so dialogs flip too.
    The tokens are set to the inverse of the guide's light set, so after the flip the page
@@ -459,84 +492,125 @@ html.light .landing-title .title-light { display: block; filter: invert(1); }
 html.light { filter: invert(1);
   --black: #040506; --ink-rgb: 255 255 255; --ink-dim: #9D9D9D; --surface: #EFF0F0;
   --orange: #005EA7; --red: #01FFFB; }
-html.light .legends, html.light .orb .icon { filter: hue-rotate(180deg); }
-html.light .orb:hover .icon, html.light .orb:focus-visible .icon { filter: invert(1) hue-rotate(180deg); }
+html.light .legends { filter: hue-rotate(180deg); }
 html, .legends { transition: filter 300ms var(--ease-ctl); }
 #stats { margin: 0 0 6px; white-space: pre-wrap; font: inherit; }
-#status { color: rgb(var(--ink-rgb) / 0.72); }
+#status { color: var(--ink); } /* the status line: full white, brighter than the stats above it */
 #status.err { color: var(--red); }
 .legends { position: absolute; right: 18px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
-.legend { font: 400 12px var(--font); color: var(--ink-dim); width: 230px; }
+.legend { font: 400 var(--fs-small) var(--font); color: var(--ink); width: 230px; } /* captions white, the end values a step dimmer */
 .legend .bar { height: 7px; border-radius: 4px; margin: 3px 0; }
-.legend .ends { display: flex; justify-content: space-between; font: 10.5px var(--font); color: var(--ink-faint); }
-.legend .gap { margin-top: 3px; color: var(--ink-faint); }
+.legend .ends { display: flex; justify-content: space-between; font: var(--fs-small) var(--font); color: var(--ink-dim); }
+.legend .gap { margin-top: 3px; color: var(--ink-dim); }
 .legend .swatches { display: flex; flex-wrap: wrap; gap: 2px; margin: 3px 0; }
 .legend .swatches i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
-#qmap { position: absolute; left: 18px; top: 18px; max-width: 290px; padding: 10px; border-radius: 18px;
-  background: rgba(16, 15, 15, 0.6); border: 1px solid var(--glass-line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+/* the qubit map: centred over the page, which dims behind it as it does for the dialogs */
+#qmap { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); }
+.qmap-card { max-width: min(360px, calc(100vw - 32px)); padding: 18px 22px; border: 1px solid var(--glass-line); border-radius: 22px;
+  background: rgba(16, 15, 15, 0.92); color: var(--ink); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
 #qmap[hidden] { display: none; }
 #qmap canvas { display: block; margin: 0 auto 6px; cursor: crosshair; }
-#qtext { font: 11px/1.4 var(--font); color: var(--ink-dim); white-space: pre-wrap; }
+#qtext { font: var(--fs-body)/1.45 var(--font); color: var(--ink-dim); white-space: pre-wrap; } /* as the help text */
 
 #dropOverlay { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
-  background: rgba(0, 0, 0, 0.35); border: 2px dashed rgb(var(--accent-rgb) / 0.6); border-radius: 18px; margin: 12px; }
+  /* a file over the window: a solid white outline round the page, the words plain white (no fill), as the morph drop box */
+  border: 1px solid var(--ink); border-radius: 22px; margin: 12px; }
 #dropOverlay[hidden] { display: none; }
-#dropOverlay p { font: 400 40px var(--font); background: var(--flip-light); color: var(--black); padding: 6px 28px; border-radius: 46px; }
+/* the words stay readable over the object: a soft dark glow fades out behind them (no box,
+   no edge), plus a text shadow */
+#dropOverlay p { margin: 0; padding: 60px 120px; font: 400 var(--fs-title) var(--font); color: var(--ink);
+  background: radial-gradient(closest-side, rgb(0 0 0 / 0.8), rgb(0 0 0 / 0.5) 55%, transparent);
+  text-shadow: 0 0 12px rgb(0 0 0 / 0.9), 0 0 32px rgb(0 0 0 / 0.8); }
 
 dialog { border: 1px solid var(--glass-line); border-radius: 22px; background: rgba(16, 15, 15, 0.92); color: var(--ink);
-  max-width: min(960px, 94vw); padding: 18px 22px; font: 400 14px var(--font);
-  backdrop-filter: blur(14px); box-shadow: 0 0 60px rgb(var(--accent-rgb) / 0.08); }
+  max-width: min(960px, 94vw); padding: 18px 22px; font: 400 var(--fs-body) var(--font);
+  backdrop-filter: blur(14px); }
 .tip { position: fixed; inset: auto; margin: 0; padding: 0; border: 0; background: none; overflow: visible;
-  pointer-events: none; width: max-content; max-width: 220px; font: 400 13px/1.25 var(--font); color: var(--ink); opacity: 0.5; }
+  pointer-events: none; width: max-content; white-space: pre; font: 400 var(--fs-body)/1.25 var(--font); color: var(--ink); } /* white; one line unless app.js breaks it */
 /* the label is in the top layer, which html.light's invert does not reach: flip it here */
 html.light .tip { filter: invert(1); }
 .tip:popover-open { animation: tip-in 160ms var(--ease-ctl); }
 @keyframes tip-in { from { opacity: 0; } }
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
-dialog h2 { font: 400 26px var(--font); margin: 0 0 10px; }
-dialog .close { float: right; font-size: 26px; line-height: 1; color: var(--ink-dim); }
-dialog .close { width: 32px; height: 32px; border-radius: 50%; transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
-dialog .close:hover { background: var(--flip-light); color: var(--black); }
-dialog table { border-collapse: collapse; font-size: 13px; width: 100%; }
+/* the heading's line is as tall as the close button beside it, so the two share a centre
+   line (Riforma's ascent + descent puts the capitals' middle at the line's middle) */
+dialog h2, .qmap-card h2 { font: 400 var(--fs-heading)/var(--help-w) var(--font); margin: 0 0 10px; }
+dialog form[method="dialog"] { margin: 0; }
+/* close: an x in a circle, drawn like the round buttons top right */
+dialog .close, .qmap-card .close { float: right; display: flex; align-items: center; justify-content: center;
+  width: var(--help-w); height: var(--help-w); border-radius: 50%; border: 1px solid var(--glass-line); color: var(--ink);
+  transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl); }
+dialog .close:hover, dialog .close:focus-visible, .qmap-card .close:hover, .qmap-card .close:focus-visible { background: var(--flip-light); color: var(--black); outline: none; }
+dialog table { border-collapse: collapse; font-size: var(--fs-body); width: 100%; }
 dialog th, dialog td { border-bottom: 1px solid var(--hairline); padding: 6px 8px; text-align: right; }
 dialog th:first-child, dialog td:first-child { text-align: left; }
 dialog th { font-weight: 400; color: var(--ink-dim); }
-dialog .note { color: var(--ink-faint); font-size: 12px; }
-.charts { display: flex; flex-wrap: wrap; gap: 12px; }
-.charts svg { width: min(440px, 88vw); height: auto; color: var(--ink); }
-svg text { fill: var(--ink-dim); font-size: 11px; }
+dialog .note { color: var(--ink-faint); font-size: var(--fs-small); }
+/* the Curves window: each chart with a plain-language reading of it underneath */
+dialog .lede { margin: 0 0 14px; color: var(--ink-dim); font-size: var(--fs-body); }
+/* one chart a page, 440px wide as the charts were before, with a round arrow either side;
+   the track slides one page width at a time. The window keeps to that width. */
+.curves { width: min(532px, calc(94vw - 44px)); }
+/* the Curves window's spacing, on one 8px scale: 8 inside a group (title and its intro, a
+   chart and its reading), 16 between neighbours (arrows to chart, chart to page count), 24
+   between sections (intro to charts, page count to footnote). Every element sets only the
+   space below it. */
+.curves > * { margin: 0; }
+.curves h2 { margin-bottom: 8px; }
+.curves .lede { margin-bottom: 24px; }
+.curves .carousel { margin-bottom: 16px; }
+.curves .page-count { margin-bottom: 24px; }
+.curves .chart figcaption { margin-top: 8px; padding-left: calc(58 / 420 * 100%); } /* in line with the chart's title, key and left axis (58 of its 420 units in) */
+.curves .note { line-height: 1.5; }
+.carousel { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.chart-pages { overflow: hidden; width: min(440px, calc(94vw - 44px - 92px)); flex: none; }
+.chart-track { display: flex; transition: transform 450ms var(--ease); }
+.chart-page { flex: 0 0 100%; min-width: 0; }
+.chart { margin: 0; min-width: 0; }
+dialog .page-count { font: 400 var(--fs-small) var(--font); color: var(--ink-dim); text-align: center; }
+.page-btn { flex: none; }
+.page-btn { display: flex; align-items: center; justify-content: center; width: var(--help-w); height: var(--help-w); border-radius: 50%;
+  border: 1px solid var(--glass-line); color: var(--ink); transition: background 200ms var(--ease-ctl), color 200ms var(--ease-ctl), opacity 200ms var(--ease-ctl); }
+.page-btn:hover, .page-btn:focus-visible { background: var(--flip-light); color: var(--black); }
+.page-btn:disabled { opacity: 0.3; pointer-events: none; }
+.chart-pages svg { width: 100%; height: auto; color: var(--ink); }
+.chart-pages svg text.title { fill: var(--ink); font: 400 var(--fs-body) var(--font-medium); }
+.chart-pages svg text.key { fill: var(--ink); }
+.chart figcaption { margin-top: 6px; font: 400 var(--fs-body)/1.45 var(--font); color: var(--ink); }
+svg text { fill: var(--ink-dim); font-size: var(--fs-small); }
 
 .landing-msg { position: absolute; left: 720px; top: 395px; width: 600px; transform: translateX(-50%); margin: 0;
-  font: 400 18px var(--font); text-align: center; color: var(--red); }
+  font: 400 var(--fs-control) var(--font); text-align: center; color: var(--red); }
 .landing-msg[hidden] { display: none; }
 
 /* ---------- portrait (phones, tablets upright): landing shapes in two rows, morph box
    under the object. The logo and titles ride up into the extra height (--T), the run
    buttons down (--B). */
-#app.portrait .drop-title { top: calc(300px - var(--T, 0px) / 2); }
-#app.portrait .or { top: calc(420px - var(--T, 0px) / 2); }
+/* the sentence wraps onto two lines on narrow screens */
+#app.portrait .drop-title { top: calc(300px - var(--T, 0px) / 2); max-width: 560px; height: auto; padding: 8px 28px; white-space: normal; }
 #app.portrait .landing-msg { top: calc(360px - var(--T, 0px) / 2); width: 520px; }
-#app.portrait .preset.cube { left: 400px; top: 480px; width: 226px; height: 314px; }
-#app.portrait .preset.sphere { left: 830px; top: 548px; width: 196px; height: 207px; }
-#app.portrait .preset.blob { left: 607px; top: calc(800px + var(--B, 0px) / 2); width: 226px; height: 255px; }
-#app.portrait .more-shapes { top: calc(1075px + var(--B, 0px)); font-size: 22px; }
+#app.portrait .preset.cube { left: 346.4px; top: 493.2px; width: 213.7px; height: 296.5px; translate: none; }
+#app.portrait .preset.blob { left: 614.7px; top: 528.4px; width: 210px; height: 236.5px; translate: none; }
+#app.portrait .preset.sphere { left: 892.7px; top: 554.5px; width: 176.4px; height: 186.8px; translate: none; }
+#app.portrait .preset.apple { left: 522.6px; top: calc(801.7px + var(--B, 0px) / 2); width: 134.7px; height: 156.7px; translate: none; }
+#app.portrait .preset.suzanne { left: 750.7px; top: calc(799.6px + var(--B, 0px) / 2); width: 198.6px; height: 159.9px; translate: none; }
 #app.portrait .drop-b { left: 478px; top: 700px; width: 484px; height: 190px; }
-#app.portrait .drop-b p { top: 30px; height: 80px; font-size: 22px; }
-#app.portrait .drop-b-presets { bottom: 16px; font-size: 16px; }
-#app.portrait .hint { top: 852px; font-size: 30px; }
+#app.portrait .drop-b p { top: 30px; bottom: auto; height: 80px; font-size: var(--fs-heading); }
+#app.portrait .drop-b-presets { bottom: 16px; row-gap: 8px; font-size: var(--fs-control); }
+/* phones: no room beside the object, so under it */
+#app.portrait .hint { left: 720px; top: 852px; font-size: var(--fs-heading); }
 
 /* ---------- compact (narrow or portrait): tools fold into one button; stats behind a tap */
 /* small screens keep the same frame, just smaller buttons */
 #app.compact #hud { gap: clamp(14px, 3.5vh, 40px); }
-#app.compact #hud button { padding: 5px 10px 5px 20px; font-size: 12px; }
+#app.compact #hud button { padding: 6px 14px; font-size: var(--fs-small); }
 #app.compact #drawer { top: 56px; right: 12px; transform: none; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 80px); }
-#app.compact #info { max-width: calc(100vw - 2 * var(--edge)); font-size: 11px; }
+#app.compact #info { max-width: calc(100vw - 2 * var(--edge)); font-size: var(--fs-small); }
 #app.compact #logBody { background: rgba(16, 15, 15, 0.94); } /* open over the run buttons on small screens */
 #app.compact .legends { display: none; }
 /* landscape compact: status bottom-left, stopping short of the centred run buttons */
 #app.compact:not(.portrait) #info { max-width: calc(50% - 90px); }
-#app.compact #qmap { top: auto; bottom: 48px; left: 12px; max-width: calc(100vw - 24px); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 1ms !important; }
