@@ -60,6 +60,8 @@ function fitStage() {
   app.style.setProperty('--E', `${layout.E}px`);
   resize();
   syncShift();
+  placeDrawer();
+  placeMorphBox();
   relayoutMenus();
 }
 const toStage = (x, y) => [(x - innerWidth / 2) / scale + CX, (y - innerHeight / 2) / scale + CY];
@@ -298,8 +300,10 @@ async function call(action, extra = {}) {
   if (!res.ok) throw new Error(body.error || `server error ${res.status}`);
   return body;
 }
+// the log's lines each start with a capital (the first letter, after any symbol like ⚠)
+const capLines = (text) => text.split('\n').map((l) => l.replace(/\p{L}/u, (c) => c.toUpperCase())).join('\n');
 function status(msg, err = false) {
-  $('status').textContent = msg;
+  $('status').textContent = capLines(msg);
   $('status').classList.toggle('err', err);
   if (err) setLog(true); // a problem opens the log so it is seen
 }
@@ -336,7 +340,7 @@ async function busy(label, fn) {
   S.busy = true;
   app.classList.add('busy');
   syncPlay();
-  document.querySelectorAll('#hud button').forEach((b) => { b.disabled = true; });
+  syncHud(); // every tool greys, its hover label saying a run is going
   status(label);
   try { await fn(); } catch (err) { status(`⚠ ${err.message}`, true); } finally {
     S.busy = false;
@@ -363,7 +367,7 @@ function setMesh(d, key) {
   buildCloud(d);
   rebuild();
   S.step = 0; S.playing = false;
-  $('stats').textContent = `${objLabel()} · ${d.verts.length} vertices · ${d.faces.length} faces`;
+  $('stats').textContent = capLines(`${objLabel()} · ${d.verts.length} vertices · ${d.faces.length} faces`);
   drawMap();
   syncHud(); syncStale();
 }
@@ -511,16 +515,16 @@ function colourise(stepOnly = false) {
     for (let i = 0; i < n; i++) { set(i, ramp(EDGE, w[i])); gap += Math.abs(w[i] - sm[i]); }
     if (!stepOnly) legend('faceLegend', EDGE_HEX, '0 = A', '1 = B', `front: share of the way to B · source vertex ${S.data.front.source}`);
     $('faceLegend').querySelector('.gap')?.remove();
-    $('faceLegend').insertAdjacentHTML('beforeend', `<div class="gap">patch steps: ${(gap / n).toFixed(3)} from a smooth front</div>`);
+    $('faceLegend').insertAdjacentHTML('beforeend', `<div class="gap">Patch steps: ${(gap / n).toFixed(3)} from a smooth front</div>`);
   } else if (P.colour === 'qubit' && S.data?.spectral) { // rows are modes: no qubit of a vertex's own
     mix = 0;
     $('faceLegend').hidden = false;
-    $('faceLegend').innerHTML = 'qubit: the spectral load spreads every vertex over all modes (see the qubit map)';
+    $('faceLegend').innerHTML = 'Qubit: the spectral load spreads every vertex over all modes (see the qubit map)';
   } else if (P.colour === 'qubit' && S.data) {
     const d = S.data, used = [...new Set(d.qubits)].sort((a, b) => a - b), rank = new Map(used.map((q, r) => [q, r]));
     for (let i = 0; i < n; i++) set(i, hsl(rank.get(d.qubits[i]) * GOLDEN, 0.8, 0.6));
     $('faceLegend').hidden = false;
-    $('faceLegend').innerHTML = `<div class="swatches">${used.map((q, r) => `<i title="qubit ${q}" style="background:hsl(${((r * GOLDEN) % 1 * 360).toFixed(0)} 80% 60%)"></i>`).join('')}</div>one colour per data qubit (${used.length})`;
+    $('faceLegend').innerHTML = `<div class="swatches">${used.map((q, r) => `<i title="qubit ${q}" style="background:hsl(${((r * GOLDEN) % 1 * 360).toFixed(0)} 80% 60%)"></i>`).join('')}</div>One colour per data qubit (${used.length})`;
   } else {
     mix = 0;
     $('faceLegend').hidden = true;
@@ -533,7 +537,7 @@ function legend(id, colours, lo, hi, caption) {
   const el = $(id);
   el.hidden = false;
   el.innerHTML = `<div class="bar" style="background:linear-gradient(to right, ${colours.join(', ')})"></div>`
-    + `<div class="ends"><span>${lo}</span><span>${hi}</span></div>${caption}`;
+    + `<div class="ends"><span>${lo}</span><span>${hi}</span></div>${capLines(caption)}`;
 }
 
 function copyEnds(target, pairs, v) {
@@ -629,12 +633,12 @@ addEventListener('pointerup', (e) => {
   setPicking(false);
   placeSource();
   syncStale();
-  status(`Front source: vertex ${i}. Press ▶ to morph from there.`);
+  status(`Front source: vertex ${i}. Press Run & play to morph from there.`);
 }, true);
 
 function showInfo(d, p) {
   const s = d.stats;
-  $('stats').textContent = [
+  $('stats').textContent = capLines([
     `${objLabel()}${d.ts ? ` → ${bLabel()} (morph, ${d.match.method}, ${(100 * d.match.coverage).toFixed(0)}% of B covered)` : ''} · ${d.verts.length} verts · ${p.payload}${d.spectral ? ', modes low first' : `, ${p.layout} layout`}`,
     ...(d.ts ? [`${d.options.interference ? `interference readout · selector 0 = A, 1 = B${d.kept ? ` · decoded from ${(100 * d.kept.reduce((a, b) => a + b, 0) / d.kept.length).toFixed(0)}% of shots` : ''}` : 'basis sweep · θ = A, φ = B'} · clamp ${d.clamp.toFixed(2)}π (θ and φ)`
       + `${d.options.hold_t ? ` · held at t = ${d.ts[0]}` : ''}${d.options.a_dirs ? " · A's directions" : ''}`
@@ -646,7 +650,7 @@ function showInfo(d, p) {
       + (s.runs > 1 ? ` · ${s.runs} runs of ${s.values_per_run.join(' / ')} values` : ''),
     `depth ${s.depth} · 2q gates ${s.twoq}` + (s.twoq_single !== s.twoq ? ` (θ alone ${s.twoq_single})` : ''),
     `mean error ${(d.error).toFixed(4)} of bbox${P.view === 'material' ? ` · material gain ${P.gain}×` : ' · true positions'}`,
-  ].join('\n');
+  ].join('\n'));
 }
 
 // ---------- actions
@@ -655,7 +659,7 @@ async function run(frames) {
     openPanel('encode', 'mode');
     return status('⚠ Morph needs a second mesh: drop one in the box, or pick a shape', true);
   }
-  app.classList.add('running'); // spins the gear until the readouts are back (or fail)
+  app.classList.add('running'); // marks a run in progress until the readouts are back (or fail)
   await busy(frames > 1 ? `${P.mode === 'morph' ? 'Morphing' : 'Running'} ${frames} readouts on ${P.backend}…` : `Encoding and reading once on ${P.backend}…`, async () => {
     // a mesh too big for one lattice is read in several runs (stats.runs), never decimated
     const d = await call('run', { frames });
@@ -680,7 +684,7 @@ async function run(frames) {
 
 function setEdges(r) {
   S.edges = r;
-  $('edges').textContent = r ? 'hide edges' : 'read edges';
+  $('edges').textContent = r ? 'Hide edges' : 'Read edges';
   $('edgeLegend').hidden = !r;
   if (!r) { edgeLines.visible = false; return; }
   const lo = Math.min(...r.exact), hi = Math.max(...r.exact), span = hi - lo || 1; // true edge range
@@ -718,68 +722,155 @@ async function why() {
     const r = await call('resources');
     const shots = 2 ** P.shots;
     const rows = r.rows.map((x) => `<tr><td>${x.name}</td><td>${x.qubits}</td><td>${x.fits ? 'yes' : 'no'}</td><td>${x.twoq}</td><td>${x.depth}</td><td>${x.swaps}</td><td>${x.settings}</td><td>${x.configs}</td><td>${Math.floor(shots / x.configs)}</td></tr>`).join('');
-    openDialog(`<h2>why tessa</h2>
+    openDialog(`<h2>Why Tessa</h2>
       <p>${r.stats.values} values (${r.payload}, ${r.mode}) transpiled onto the ibm_phoenix snapshot (120 qubits, square lattice).</p>
-      <table><tr><th>encoding</th><th>qubits</th><th>fits on chip</th><th>2q gates</th><th>depth</th><th>SWAPs</th><th>settings</th><th>outcomes / cell</th><th>shots / value (${shots})</th></tr>${rows}</table>
+      <table><tr><th>Encoding</th><th>Qubits</th><th>Fits on chip</th><th>2q gates</th><th>Depth</th><th>SWAPs</th><th>Settings</th><th>Outcomes / cell</th><th>Shots / value (${shots})</th></tr>${rows}</table>
       <p class="note">Generic random data in every row, no compression. SWAPs ≈ extra CZs from routing ÷ 3. Each shot is split over a cell's outcomes, so each value gets about shots ÷ outcomes. Amplitude: Z readout gives magnitudes only. With a chip backend, Tessa's row is on that chip; the baselines stay on Phoenix.</p>`);
     status('Why Tessa: resource table opened');
   });
 }
 
+// ---------- charts (the Curves window)
+// A tick label: thousands with separators (2,000 not 2e+3), small values to 2 significant figures
+const fmtTick = (v) => (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : String(+v.toPrecision(Math.abs(v) >= 1 ? 3 : 2)));
+// "Nice" ticks for a linear axis (steps of 1, 2 or 5 × a power of ten, about five of them)
+function niceStep(range, integer) {
+  const raw = range / 5, p = 10 ** Math.floor(Math.log10(raw || 1));
+  const step = [1, 2, 5, 10].map((k) => k * p).find((s) => s >= raw) || raw;
+  return integer ? Math.max(1, Math.round(step)) : step;
+}
+// Ticks for a log axis: 1, 2 and 5 × powers of ten inside the range (just 1 and 5, or just
+// powers, when that would be too many)
+function logTicks(lo, hi) {
+  for (const ms of [[1, 2, 5], [1, 5], [1]]) {
+    const t = [];
+    for (let k = Math.floor(Math.log10(lo)); k <= Math.ceil(Math.log10(hi)); k++) for (const m of ms) { const v = m * 10 ** k; if (v >= lo && v <= hi) t.push(v); }
+    if (t.length <= 5) return t.length >= 2 ? t : [lo, hi];
+  }
+  return [lo, hi];
+}
+/**
+ * One chart as an SVG string.
+ *
+ * Args:
+ *   title, xlabel, ylabel: its heading and axis names.
+ *   series: [{label, color, points: [[x, y]], dash?, mark?: 'ring' | 'square' | 'none'}].
+ *   logx, logy: log scales.
+ *
+ * A linear y axis whose values all sit close together (spread under half the largest) starts
+ * at zero, so a tiny difference is not stretched to fill the chart.
+ */
 function chart({ title, xlabel, ylabel, series, logx = false, logy = false }) {
-  const W = 420, H = 270, m = { l: 58, r: 12, t: 42, b: 42 };
-  const fx = logx ? Math.log10 : (x) => x, fy = logy ? Math.log10 : (y) => y;
+  const W = 420, H = 270, m = { l: 58, r: 14, t: 44, b: 42 };
   const pts = series.flatMap((s) => s.points);
-  const [x0, x1] = [Math.min(...pts.map((p) => fx(p[0]))), Math.max(...pts.map((p) => fx(p[0])))];
-  let [y0, y1] = [Math.min(...pts.map((p) => fy(p[1]))), Math.max(...pts.map((p) => fy(p[1])))];
-  if (y1 === y0) { y0 -= 1; y1 += 1; }
-  const X = (x) => m.l + ((fx(x) - x0) / (x1 - x0 || 1)) * (W - m.l - m.r);
-  const Y = (y) => H - m.b - ((fy(y) - y0) / (y1 - y0)) * (H - m.t - m.b);
-  const fmt = (v) => (Math.abs(v) >= 1000 ? v.toExponential(0) : +v.toPrecision(2)).toString();
-  const ticks = (a, b, log) => [0, 1, 2, 3].map((k) => { const t = a + (k / 3) * (b - a); return log ? 10 ** t : t; });
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  let [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  let yt;
+  if (logy) yt = logTicks(y0, y1);
+  else {
+    if (y0 > 0 && (y1 - y0) / y1 < 0.5) y0 = 0;
+    const integer = ys.every(Number.isInteger), step = niceStep(y1 - y0 || Math.abs(y1) || 1, integer);
+    y0 = Math.floor(y0 / step) * step;
+    y1 = Math.ceil(y1 / step) * step;
+    if (Math.max(...ys) > y1 - step / 4) y1 += step; // room above the highest point
+    yt = []; for (let v = y0; v <= y1 + step / 2; v += step) yt.push(+v.toPrecision(10));
+  }
+  const xt = logx ? logTicks(x0, x1) : (() => { const st = niceStep(x1 - x0 || 1, xs.every(Number.isInteger)), t = []; for (let v = Math.ceil(x0 / st) * st; v <= x1 + 1e-9; v += st) t.push(+v.toPrecision(10)); return t; })();
+  const fx = logx ? Math.log10 : (x) => x, fy = logy ? Math.log10 : (y) => y;
+  const X = (x) => m.l + ((fx(x) - fx(x0)) / (fx(x1) - fx(x0) || 1)) * (W - m.l - m.r);
+  const Y = (y) => H - m.b - ((fy(y) - fy(y0)) / (fy(y1) - fy(y0) || 1)) * (H - m.t - m.b);
   // mark: 'ring' (hollow circle), 'square' or 'none'; dashed series draw on top, so
   // two series that coincide both stay visible
   const markAt = (s, x, y) => (s.mark === 'none' ? '' : s.mark === 'square'
     ? `<rect x="${x - 3}" y="${y - 3}" width="6" height="6" style="fill: ${s.color}"/>`
-    : `<circle cx="${x}" cy="${y}" r="5" fill="none" style="stroke: ${s.color}" stroke-width="1.8"/>`);
-  const mark = (s, p) => markAt(s, X(p[0]), Y(p[1]));
-  const lines = series.map((s) => `<polyline fill="none" style="stroke: ${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${s.points.map((p) => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>`
-    + s.points.map((p) => mark(s, p)).join('')).join('');
-  // legend in a row under the title, clear of the data
-  const legendRow = series.map((s, i) => {
-    const x = m.l + 150 * i;
-    return `<line x1="${x}" y1="29" x2="${x + 22}" y2="29" style="stroke: ${s.color}" stroke-width="2" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`
-      + markAt(s, x + 11, 29)
-      + `<text x="${x + 28}" y="33">${s.label}</text>`;
+    : `<circle cx="${x}" cy="${y}" r="4.5" fill="var(--black)" style="stroke: ${s.color}" stroke-width="1.5"/>`);
+  const lines = series.map((s) => `<polyline fill="none" style="stroke: ${s.color}" stroke-width="1.5" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${s.points.map((p) => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>`
+    + s.points.map((p) => markAt(s, X(p[0]), Y(p[1]))).join('')).join('');
+  // legend in a row under the title, each entry as wide as its words
+  let lx = m.l;
+  const legendRow = series.map((s) => {
+    const x = lx;
+    lx += 28 + s.label.length * 7 + 22; // about 7 units a letter at --fs-small
+    return `<line x1="${x}" y1="31" x2="${x + 22}" y2="31" style="stroke: ${s.color}" stroke-width="1.5" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`
+      + markAt(s, x + 11, 31) + `<text class="key" x="${x + 28}" y="35">${s.label}</text>`;
   }).join('');
-  const xt = ticks(x0, x1, logx).map((t) => `<text x="${X(t)}" y="${H - m.b + 16}" text-anchor="middle">${fmt(t)}</text>`).join('');
-  const yt = ticks(y0, y1, logy).map((t) => `<text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join('');
+  const xT = xt.map((t) => `<text x="${X(t)}" y="${H - m.b + 16}" text-anchor="middle">${fmtTick(t)}</text>`).join('');
+  const yT = yt.map((t) => `<text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmtTick(t)}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}">
-    <text x="${W / 2}" y="16" text-anchor="middle" style="font-family: var(--font-medium)">${title}</text>
-    <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="currentColor" opacity=".3"/>
-    <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="currentColor" opacity=".3"/>
-    ${xt}${yt}${lines}${legendRow}
+    <text class="title" x="${m.l}" y="16">${title}</text>
+    <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="currentColor" opacity=".35"/>
+    <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="currentColor" opacity=".35"/>
+    ${xT}${yT}${lines}${legendRow}
     <text x="${(W + m.l) / 2}" y="${H - 6}" text-anchor="middle">${xlabel}</text>
     <text transform="translate(14 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${ylabel}</text></svg>`;
+}
+
+// plain-language readings of the curves: what each chart says about this mesh
+const pct = (a, b) => (100 * (b - a)) / a;
+const sig = (v) => String(+v.toPrecision(2));
+function shotsTakeaway(shots, guide) {
+  const [s0, e0] = shots[0], [s1, e1] = shots[shots.length - 1], g1 = guide[guide.length - 1][1];
+  const noise = e1 / g1 > 0.5 && e1 / g1 < 2;
+  return `More shots help: going from ${s0.toLocaleString()} to ${s1.toLocaleString()} shots cuts the error about ${Math.round(e0 / e1)}×.`
+    + (noise ? ' It falls in step with the dashed shot-noise line, so the error left is just shot noise: choose shots by how smooth you need the result against how long you can wait.'
+      : ' It does not follow the dashed shot-noise line, so something besides shot noise (the backend\'s noise or the encoding) limits the error.');
+}
+function compressionTakeaway(r) {
+  const mesh = r.mesh.map(([c, , e]) => [c, e]), naive = r.naive.map(([c, , e]) => [c, e]);
+  const [c1, e1] = mesh[mesh.length - 1], d = pct(mesh[0][1], e1);
+  const cost = Math.abs(d) < 0.5 ? `Compression is free here: even at ${c1}% the error doesn't change.`
+    : Math.abs(d) < 5 ? `Compression is nearly free here: even at ${c1}% the error changes only ${d >= 0 ? '+' : ''}${d.toFixed(0)}%.`
+    : `Compression costs accuracy: at ${c1}% the error rises from ${sig(mesh[0][1])} to ${sig(e1)} (${d >= 0 ? '+' : ''}${d.toFixed(0)}%).`;
+  const lay = pct(naive[0][1], mesh[0][1]);
+  const layouts = r.same ? ' Both layouts place every value the same way for this mesh, so they give the same result.'
+    : Math.abs(lay) < 0.5 ? ' The two layouts give the same error.'
+    : Math.abs(lay) < 5 ? ` The two layouts are about equal (the mesh layout's error is ${Math.abs(lay).toFixed(0)}% ${lay < 0 ? 'lower' : 'higher'}).`
+      : ` The mesh layout's error is ${Math.abs(lay).toFixed(0)}% ${lay < 0 ? 'lower' : 'higher'} than the naive layout's.`;
+  return cost + layouts;
+}
+function depthTakeaway(r) {
+  const d = r.mesh.map(([, dep]) => dep), [a, b] = [d[0], d[d.length - 1]];
+  return a === b ? `The circuit stays ${a} step${a === 1 ? '' : 's'} deep at every compression, so compressing won't shorten it for this mesh. (Shorter circuits pick up less noise on real chips.)`
+    : `Compressing to ${r.mesh[r.mesh.length - 1][0]}% takes the circuit from ${a} to ${b} steps deep${b < a ? ': shorter circuits pick up less noise on real chips' : ''}.`;
 }
 
 async function curves() {
   await busy('Curves: 15 readouts on the current backend…', async () => {
     const r = await call('curves');
-    const A = 'var(--accent)', B = 'var(--orange)', G = 'var(--ink-dim)';
+    // the app's colours: the measured / mesh line in white, the others in greys, dashed
+    const A = 'var(--ink)', B = 'rgb(var(--ink-rgb) / 0.6)', G = 'rgb(var(--ink-rgb) / 0.45)';
     const shots = r.shots.map(([s, e]) => [s, e]);
     const guide = shots.map(([s]) => [s, shots[0][1] * Math.sqrt(shots[0][0] / s)]);
     const err = (k) => r[k].map(([c, , e]) => [c, e]);
     const depth = (k) => r[k].map(([c, d]) => [c, d]);
     // fixed per layout, as in the desktop app: mesh solid with rings, naive dashed with squares
-    const layouts = (pick) => [{ label: 'mesh layout', color: A, points: pick('mesh') },
-      { label: 'naive layout', color: B, dash: true, mark: 'square', points: pick('naive') }];
-    openDialog(`<h2>fidelity curves</h2><div class="charts">
-      ${chart({ title: 'error vs shots', xlabel: 'shots', ylabel: 'mean error (of bbox)', logx: true, logy: true,
-        series: [{ label: 'measured', color: A, points: shots }, { label: '1/√shots', color: G, dash: true, mark: 'none', points: guide }] })}
-      ${chart({ title: 'error vs compression', xlabel: 'compression %', ylabel: 'mean error (of bbox)', series: layouts(err) })}
-      ${chart({ title: 'depth vs compression', xlabel: 'compression %', ylabel: 'circuit depth', series: layouts(depth) })}
-      </div>${r.same ? '<p class="note"><b>Mesh and naive layouts place every value identically for this mesh</b>, so their lines coincide.</p>' : ''}<p class="note">Error is the mean coordinate error as a fraction of the bounding box. Compression drops the smallest Walsh–Hadamard coefficients of each Tessa cell.</p>`);
+    const layouts = (pick) => [{ label: 'Mesh layout', color: A, points: pick('mesh') },
+      { label: 'Naive layout', color: B, dash: true, mark: 'square', points: pick('naive') }];
+    const card = (svg, text) => `<figure class="chart">${svg}<figcaption>${text}</figcaption></figure>`;
+    const cards = [
+      card(chart({ title: 'Error vs Shots', xlabel: 'Shots', ylabel: 'Error (share of size)', logx: true, logy: true,
+        series: [{ label: 'Measured', color: A, points: shots }, { label: 'Shot-noise limit', color: G, dash: true, mark: 'none', points: guide }] }), shotsTakeaway(shots, guide)),
+      card(chart({ title: 'Error vs Compression', xlabel: 'Compression %', ylabel: 'Error (share of size)', series: layouts(err) }), compressionTakeaway(r)),
+      card(chart({ title: 'Depth vs Compression', xlabel: 'Compression %', ylabel: 'Circuit depth (steps)', series: layouts(depth) }), depthTakeaway(r)),
+    ];
+    // one chart to a page; round arrow buttons (and the arrow keys) slide between pages
+    const pages = cards.map((c) => `<div class="chart-page">${c}</div>`);
+    const arrow = (dir, d) => `<button class="page-btn" data-dir="${dir}" aria-label="${dir < 0 ? 'Previous' : 'Next'} charts"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+    openDialog(`<div class="curves"><h2>Fidelity Curves</h2><p class="lede">How the result's accuracy changes with the settings, for this mesh.</p>
+      <div class="carousel">${arrow(-1, 'M10 3.5 5.5 8l4.5 4.5')}<div class="chart-pages"><div class="chart-track">${pages.join('')}</div></div>${arrow(1, 'M6 3.5 10.5 8 6 12.5')}</div>
+      <p class="page-count"></p>
+      <p class="note">Error is how far the read-back vertices sit from the true ones, on average, as a share of the object's size (0.01 = 1%). Compression throws away the smallest parts of each Tessa cell's data to save gates.</p></div>`);
+    let page = 0;
+    const body = $('dialogBody'), go = (to) => {
+      page = Math.max(0, Math.min(pages.length - 1, to));
+      body.querySelector('.chart-track').style.transform = `translateX(${-100 * page}%)`;
+      body.querySelector('.page-count').textContent = `${page + 1} / ${pages.length}`;
+      body.querySelectorAll('.page-btn').forEach((b) => { b.disabled = (+b.dataset.dir < 0 ? page === 0 : page === pages.length - 1); });
+      body.querySelectorAll('.chart-page').forEach((pg, i) => { pg.inert = i !== page; });
+    };
+    body.querySelectorAll('.page-btn').forEach((b) => b.addEventListener('click', () => go(page + +b.dataset.dir)));
+    body.querySelector('.chart-pages').addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') go(page + 1); if (e.key === 'ArrowLeft') go(page - 1); });
+    go(0);
     status('Fidelity curves opened');
   });
 }
@@ -932,12 +1023,10 @@ function syncShift(layer = +home.dataset.layer) {
 // ---------- geometry
 const rad = THREE.MathUtils.degToRad;
 const svgNS = 'http://www.w3.org/2000/svg';
-// Layer 1: two sharp trapezoid tabs up and down to the left of the object, each with a
-// leader line angled in towards it (stage coordinates, from the redesign).
-const TABS = {
-  encode: { poly: [[346, 181], [505, 181], [530, 219], [346, 219]], label: [432, 200], lead: [[440, 219], [513, 294]] },
-  decode: { poly: [[343, 786], [553, 786], [520, 824], [343, 824]], label: [440, 805], lead: [[442, 786], [499, 711]] },
-};
+// Layer 1: two pill tabs, Encode and Decode, laid out like the first and last of layer 2's
+// five words (Compression's and Load's places): on lines from the same hub, WEB.vstep2 × 2
+// above and below it. layoutTabs fills in each pill's box (`poly`, for hit tests).
+const TABS = { encode: { poly: [] }, decode: { poly: [] } };
 // Layers 2 and 3 are webs: every option sits at the end of a thin straight line from one
 // hub just left of the object, level with the centre of the right-hand tools (both sit
 // at the window's mid-height, stage y = CY). Angles are in degrees: 180 points straight
@@ -945,8 +1034,8 @@ const TABS = {
 // is spaced evenly and symmetrically about its centre line.
 const WEB = {
   dx: 330, // the hub: this far left of the object's centre (clear of the object)
-  fan2: { encode: 150, decode: 210 }, step2: 24, r2: 270, // layer 2: words
-  fan3: { encode: 180, decode: 205 }, step3: 46, span3: 124, // layer 3: options and sliders
+  vstep2: 66, r2: 270, // layer 2: pills, vstep2 apart top to bottom, the middle one level with the hub
+  fan3: { encode: 180, decode: 180 }, step3: 46, span3: 124, // layer 3 with sliders: centred on the hub, so a pair sits symmetrically above and below
   rText: 230, rSquare: 190, rElbow: 150, track: 230, gap: 12,
 };
 const dirOf = (a) => [Math.cos(rad(a)), -Math.sin(rad(a))];
@@ -988,7 +1077,11 @@ function fanLayout(entries, angles) {
     rel[i] = { end, minX: end[0] - e.left };
   });
   const vl = Number.isFinite(layout.vl) ? layout.vl : -Infinity; // NaN while the window has no size
-  const hx = Math.max(hx0, vl + 28 - Math.min(...rel.map((r) => r.minX)));
+  // keep the fan clear of the window's left edge and of the back button there (its left
+  // edge at --edge, 30px wide: the CSS clamp(14px, 5vw, 72px), in window px), plus a gap
+  const edge = Math.min(72, Math.max(14, innerWidth * 0.05));
+  const clear = Number.isFinite(scale) && scale > 0 ? (edge + 30 + 24) / scale : 28;
+  const hx = Math.max(hx0, vl + clear - Math.min(...rel.map((r) => r.minX)));
   return { hub: [hx, hy], at: rel.map((r) => ({ end: [hx + r.end[0], hy + r.end[1]], c: r.c && [hx + r.c[0], hy + r.c[1]] })) };
 }
 /**
@@ -1024,7 +1117,9 @@ function webLines(group, hub, ends) {
 function layoutArc(side) {
   const labels = [...$(`${side}Arc`).querySelectorAll('.arc-label')];
   if (side === 'encode') labels.reverse(); // mirrored: each list starts nearest the horizontal
-  const angles = fanAngles(labels.length, WEB.fan2[side], WEB.step2);
+  // evenly spaced top to bottom (not by angle), centred on the hub: the middle pill sits
+  // straight left of it. Each line still has length r2, so the pills follow a gentle arc.
+  const angles = labels.map((_, i) => 180 + THREE.MathUtils.radToDeg(Math.asin(((i - (labels.length - 1) / 2) * WEB.vstep2) / WEB.r2)));
   const { hub, at } = fanLayout(labels.map((b) => ({ w: b.offsetWidth, h: b.offsetHeight, r: WEB.r2, gap: WEB.gap })), angles);
   labels.forEach((b, i) => {
     Object.assign(b.style, { left: `${at[i].c[0]}px`, top: `${at[i].c[1]}px` });
@@ -1033,16 +1128,27 @@ function layoutArc(side) {
   webLines($(`${side}Web`), hub, at.map((p) => p.end));
 }
 
-/** Draw layer 1's tabs and lay out both layer 2 webs. */
-function drawMenuShapes() {
-  for (const side of ['encode', 'decode']) {
-    const tab = TABS[side];
-    $(`${side}PillBand`).setAttribute('d', `M ${tab.poly.map((q) => q.join(' ')).join(' L ')} Z`);
-    $(`${side}Lead`).setAttribute('d', `M ${tab.lead[0].join(' ')} L ${tab.lead[1].join(' ')}`);
-    const [x, y] = tab.label;
+/** Lay out layer 1's tabs where layer 2's top and bottom words go, with lines from the hub. */
+function layoutTabs() {
+  const h = 18 * 1.2 + 16; // padded like "Click for settings" (8px × 20px, 1.2-line text)
+  const sides = ['encode', 'decode'], dy = 2 * WEB.vstep2; // layer 2 has five words: the outer two sit 2 steps out
+  const boxes = sides.map((side) => ({ w: $(`${side}Pill`).offsetWidth + 40, h, r: WEB.r2, gap: WEB.gap }));
+  const angles = [-dy, dy].map((d) => 180 + THREE.MathUtils.radToDeg(Math.asin(d / WEB.r2)));
+  const { hub, at } = fanLayout(boxes, angles);
+  sides.forEach((side, i) => {
+    const [x, y] = at[i].c, { w } = boxes[i], r = h / 2;
+    const [l, t, rt, b] = [x - w / 2, y - h / 2, x + w / 2, y + h / 2];
+    TABS[side].poly = [[l, t], [rt, t], [rt, b], [l, b]];
+    $(`${side}PillBand`).setAttribute('d', `M ${l + r} ${t} H ${rt - r} A ${r} ${r} 0 0 1 ${rt - r} ${b} H ${l + r} A ${r} ${r} 0 0 1 ${l + r} ${t} Z`);
+    $(`${side}Lead`).setAttribute('d', `M ${hub.map((v) => v.toFixed(1)).join(' ')} L ${at[i].end.map((v) => v.toFixed(1)).join(' ')}`);
     Object.assign($(`${side}Pill`).style, { left: `${x}px`, top: `${y}px` });
-    layoutArc(side);
-  }
+  });
+  $('tabHub').setAttribute('cx', hub[0].toFixed(1)); $('tabHub').setAttribute('cy', hub[1].toFixed(1));
+}
+/** Lay out layer 1's tabs and both layer 2 webs. */
+function drawMenuShapes() {
+  layoutTabs();
+  for (const side of ['encode', 'decode']) layoutArc(side);
 }
 drawMenuShapes();
 document.fonts?.ready.then(drawMenuShapes); // re-measure the words once Riforma has loaded
@@ -1050,12 +1156,11 @@ document.fonts?.ready.then(drawMenuShapes); // re-measure the words once Riforma
 /** Re-lay the open web after the window (and so the visible stage) changes size. */
 function relayoutMenus() {
   const st = menuEl.dataset.state;
+  layoutTabs();
   if (st === 'encode' || st === 'decode') layoutArc(st);
   layoutPanel();
 }
 
-// The header (layers 2 and 3): the menu's or setting's name, and the back button.
-const setHead = (title) => { $('menuTitle').textContent = title; };
 
 // menu state: closed | open (layer 1) | encode / decode (layer 2) | panel (layer 3)
 function setMenu(state) {
@@ -1077,12 +1182,10 @@ function openArc(side, fromKeyboard = false) {
   ++menuGen;
   syncShift(2);
   layoutArc(side);
-  setHead(side);
   setMenu(side);
   if (fromKeyboard) $(`${side}Arc`).querySelector('.arc-label')?.focus({ preventScroll: true });
 }
 /** Layer 2 → home: the web folds back into its hub. */
-function closeArc() { ++menuGen; setMenu('closed'); }
 /**
  * Layer 2 → 3: the words give way to one setting's own web.
  *
@@ -1095,7 +1198,6 @@ function openPanel(side, key) {
   panelEl.dataset.side = side;
   panelEl.dataset.key = key;
   panelEl.hidden = false;
-  setHead(PANELS[key].title);
   setMenu('panel');
   buildPanel(side, key);
   requestAnimationFrame(() => { panelEl.classList.add('shown'); syncMorphBox(); });
@@ -1106,17 +1208,19 @@ function backToArc() {
   ++menuGen;
   closePanel();
   layoutArc(side);
-  setHead(side);
   setMenu(side);
 }
 function goBack() {
   const st = menuEl.dataset.state;
   if (st === 'panel') backToArc();
-  else if (st === 'encode' || st === 'decode') closeArc();
+  else if (st === 'encode' || st === 'decode') { ++menuGen; setMenu('open'); } // back to the Encode / Decode tabs
   else if (st === 'open') setMenu('closed');
 }
 $('back').addEventListener('click', goBack);
-addEventListener('keydown', (e) => { if (e.key === 'Escape' && app.dataset.screen === 'home' && !$('dialog').open) goBack(); });
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || app.dataset.screen !== 'home' || $('dialog').open) return;
+  if (mapOn()) setMapOpen(false); else goBack(); // Escape closes the qubit map first
+});
 
 function closePanel(now = false) {
   if (panelEl.hidden) return;
@@ -1139,7 +1243,7 @@ function closeAll() {
 const CLICK_SLOP = 8; // px a press may move and still count as a click
 let press = null; // the pointerdown a click may complete: {id, x, y}
 const objDist = (sx, sy) => Math.hypot(sx - (CX + shift[0]), sy - (CY + shift[1]));
-const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #menuHead, .orb, .knob, .line-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #help, #hud, #drawer, #qmap, #info, #resRow, #side, dialog, .logo');
+const insideUi = (el) => !!el.closest?.('.pill-label, .arc-label, #back, .orb, .knob, .line-slider .hit, #dropB, #morphOpts, .run-buttons, #hint, #help, #hud, #drawer, #qmap, #info, #resRow, #side, dialog, .logo');
 // which pill (if any) is at stage point (sx, sy)
 function pillAt(sx, sy) {
   const PAD = 16; // a forgiving margin round each tab
@@ -1162,13 +1266,10 @@ addEventListener('pointerup', (e) => {
   if (st === 'closed') {
     if (objDist(sx, sy) < OBJ_R) setMenu('open');
   } else if (st === 'open') {
-    // a tab opens its arc; a click anywhere else (the object too) closes the menu
-    const side = pillAt(sx, sy);
-    if (side) openArc(side); else setMenu('closed');
-  } else if (objDist(sx, sy) > OBJ_R) {
-    // layers 2 and 3: a click well away from the object and the menu goes home
-    if (st === 'panel') { closePanel(); ++menuGen; setMenu('closed'); } else closeArc();
+    const side = pillAt(sx, sy); // a tab opens its arc
+    if (side) openArc(side);
   }
+  // an open menu (any layer) stays open on a click elsewhere: only the back button (or Escape) steps back
 });
 addEventListener('pointercancel', () => { press = null; });
 // with the tabs open, light the one under the pointer
@@ -1184,23 +1285,32 @@ for (const label of document.querySelectorAll('.arc-label')) {
 }
 
 // ---------- panel contents
-const icon = (src, cls = '') => `<img class="icon ${cls}" src="assets/${src}" alt="">`;
-const MORPH_ORB = `<div class="morph"><img src="assets/morph-vector.svg" alt="" style="left:22.2px;top:16.74px;width:18px;height:21.522px">`
-  + `<img src="assets/morph-ellipse-a.svg" alt="" style="left:0;top:0;width:32.4px;height:32.283px">`
-  + `<img src="assets/morph-ellipse-b.svg" alt="" style="left:31.2px;top:21.52px;width:34.8px;height:33.478px"><span>θ+φ</span></div>`;
+// Line icons for the Load options, drawn like the round buttons' symbols: white strokes
+// (currentColor, so a hover turns them dark), each a qubit drawn as a sphere outline
+const qicon = (inner) => `<svg class="qicon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"`
+  + ` stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/>${inner}</svg>`;
+const iconDot = (x, y) => `<circle cx="${x}" cy="${y}" r="1.3" fill="currentColor" stroke="none"/>`;
+const ICONS = {
+  // one value per vertex: its distance from the centre, a single radius
+  radial: qicon(`<path d="M12 12 18.2 5.8"/>${iconDot(12, 12)}${iconDot(18.2, 5.8)}`),
+  // a direction in θ and φ: the equator and a vector tipped out from the pole
+  spherical: qicon(`<ellipse cx="12" cy="12" rx="10" ry="3.2"/><path d="M12 12V3.5M12 12l5.2 4.6"/>${iconDot(17.2, 16.6)}`),
+  // the mesh's smooth surface modes: a wave across the sphere
+  spectral: qicon('<path d="M3.2 12c1.5-3.6 3-3.6 4.4 0s2.9 3.6 4.4 0 2.9-3.6 4.4 0 2.9 3.6 4.4 0"/>'),
+};
 const clampFmt = (v) => (v ? `${v.toFixed(2)}π` : P.mode === 'morph' ? '0.20π' : 'off');
 const PANELS = {
   load: { title: 'load', key: 'payload', squares: true, items: [
-    { v: 'xyz', html: '(x,y,z)', tip: 'xyz: three values per vertex' },
-    { v: 'radial', html: icon('radial-icon.svg', 'r55'), tip: 'radial: one value per vertex (distance from the centre)' },
-    { v: 'spherical', html: icon('spherical-icon.svg'), tip: 'spherical: direction in θ and φ, radius in θ' },
-    { v: 'spectral', html: icon('spectral-icon.svg'), tip: 'spectral: xyz of the mesh\'s first k surface modes (smooth noise, one run)' }],
+    { v: 'xyz', html: '(x,y,z)', cls: 'label', name: 'xyz', tip: 'three values per vertex' },
+    { v: 'radial', html: ICONS.radial, name: 'Radial', tip: 'one value per vertex (distance from the centre)' },
+    { v: 'spherical', html: ICONS.spherical, name: 'Spherical', tip: 'direction in θ and φ, radius in θ' },
+    { v: 'spectral', html: ICONS.spectral, name: 'Spectral', tip: 'the mesh\'s first k surface modes in x, y and z (smooth noise, one run)' }],
   sliders: [{ key: 'spectral_k', label: 'modes k', min: 0, max: 300, step: 1, fmt: (v) => (v ? `${v}` : 'auto'),
     show: () => P.payload === 'spectral' }] },
   mode: { title: 'mode', key: 'mode', squares: true, items: [
     { v: 'theta', html: 'θ', cls: 'greek', tip: 'shape in θ, read in Z' },
     { v: 'split', html: 'θ+φ', cls: 'greek', tip: 'shape over θ and φ: two values per slot' },
-    { v: 'morph', html: MORPH_ORB, cls: 'flat', tip: 'morph: A in θ, B in φ, read along a basis sweep' }] },
+    { v: 'morph', html: 'Morph', cls: 'label', tip: 'A in θ, B in φ, read along a basis sweep' }] },
   layout: { title: 'vert layout', key: 'layout', items: [
     { v: 'mesh', html: 'mesh', tip: 'neighbouring vertices share data qubits' },
     { v: 'naive', html: 'naive', tip: 'values in file order' }] },
@@ -1251,8 +1361,9 @@ function buildPanel(side, key) {
   for (const it of spec.items || []) {
     const b = document.createElement('button');
     b.className = `orb ${spec.squares ? 'square' : 'word'} ${it.cls || ''}`;
-    b.innerHTML = it.html;
-    b.setAttribute('aria-label', it.tip);
+    // a word option starts with a capital (sentence case); graphics and symbols are left alone
+    b.innerHTML = !spec.squares && !it.html.includes('<') ? it.html[0].toUpperCase() + it.html.slice(1) : it.html;
+    b.setAttribute('aria-label', it.name ? `${it.name}: ${it.tip}` : it.tip); // pictures have no words: name them for screen readers
     if (spec.squares) b.dataset.tip = it.tip; // a graphic: its name shows on hover
     b.dataset.v = it.v;
     b.addEventListener('click', () => choose(spec.key, it.v));
@@ -1272,7 +1383,15 @@ function layoutPanel() {
     ...orbs.map((el) => ({ el, w: el.offsetWidth, h: el.offsetHeight, r: spec.squares ? WEB.rSquare : WEB.rText, gap: spec.squares ? 0 : WEB.gap })),
     ...sliders.map((el) => ({ el, elbow: true, left: WEB.track + 80 })),
   ];
-  const { hub, at } = fanLayout(entries, fanAngles(entries.length, WEB.fan3[panelEl.dataset.side], WEB.step3, WEB.span3));
+  // options alone sit like layer 2's words: evenly spaced top to bottom, centred on the hub
+  // (the middle one straight left of it), at least WEB.vstep2 apart; with a slider among
+  // them the fan is spread by angle instead, so each track clears the lines
+  let angles;
+  if (!sliders.length) {
+    const step = Math.max(WEB.vstep2, ...entries.map((e) => e.h + 24));
+    angles = entries.map((e, i) => 180 + THREE.MathUtils.radToDeg(Math.asin(Math.max(-0.95, Math.min(0.95, ((i - (entries.length - 1) / 2) * step) / e.r)))));
+  } else angles = fanAngles(entries.length, WEB.fan3[panelEl.dataset.side], WEB.step3, WEB.span3);
+  const { hub, at } = fanLayout(entries, angles);
   entries.forEach((e, i) => {
     const d = `${120 + 80 * i}ms`;
     if (e.elbow) e.el.place(at[i].end, d);
@@ -1336,14 +1455,19 @@ function lineSlider(sl) {
   knob.setAttribute('role', 'slider');
   knob.setAttribute('aria-valuemin', sl.min); knob.setAttribute('aria-valuemax', sl.max);
   wrap.append(svg, knob);
-  const labelText = () => (typeof sl.label === 'function' ? sl.label() : sl.label);
+  const labelText = () => { const t = typeof sl.label === 'function' ? sl.label() : sl.label; return t[0].toUpperCase() + t.slice(1); }; // sentence case
   let T = [0, 0]; // the track's left end; it runs WEB.track px right to the elbow
   wrap.place = (elbow, delay) => {
     T = [elbow[0] - WEB.track, elbow[1]];
     const [x, y] = T;
-    track.setAttribute('d', `M ${x} ${y} H ${elbow[0]} M ${x} ${y - 6} V ${y + 6}`);
+    // the track, with a short upright tick at each end: the minimum (left) and the maximum,
+    // where the track meets the line in from the hub
+    track.setAttribute('d', `M ${x} ${y} H ${elbow[0]} M ${x} ${y - 6} V ${y + 6} M ${elbow[0]} ${y - 6} V ${y + 6}`);
     hit.setAttribute('d', `M ${x} ${y} H ${elbow[0]}`);
-    label.setAttribute('x', x); label.setAttribute('y', y - 20);
+    // left edge in line with the knob's (14px square centred on the track's end); on the
+    // outside of the fan: above the knob for a slider above the hub, below it for one below,
+    // with the same 13px gap either way (18px type: capitals 12.6px tall)
+    label.setAttribute('x', x - 7); label.setAttribute('y', y > CY ? y + 7 + 13 + 12.6 : y - 7 - 13);
     value.setAttribute('x', x - 14); value.setAttribute('y', y + 5);
     wrap.style.setProperty('--d', delay);
     wrap.sync();
@@ -1393,6 +1517,25 @@ function lineSlider(sl) {
 }
 
 // ---------- morph: the drop box for mesh B
+/**
+ * Place the morph block (the drop box and the options under it) as one unit: centred on the
+ * window's middle height, and halfway across the gap between the object's right edge and the
+ * tools on the right (their open position). Stage px. Phones use the stylesheet's layout.
+ */
+const MORPH_W = 484, MORPH_BOX_H = 300, MORPH_GAP = 24, OBJ_FIT_R = 275;
+function placeMorphBox() {
+  const box = $('dropB'), opts = $('morphOpts');
+  // the upper chips sit as far apart as the spread-out lower ones
+  const low = [...$('chipsBottom').children], used = low.reduce((w, c) => w + c.offsetWidth, 0);
+  if (low.length > 1 && $('chipsBottom').offsetWidth) opts.style.setProperty('--chip-gap', `${($('chipsBottom').offsetWidth - used) / (low.length - 1)}px`);
+  if (portrait) { box.style.left = box.style.top = opts.style.left = opts.style.top = ''; return; }
+  const objRight = CX + shift[0] + OBJ_FIT_R;
+  const hud = $('hud'), toolsLeft = toStage(innerWidth - parseFloat(getComputedStyle(hud).marginRight) - hud.offsetWidth, 0)[0];
+  const left = Math.max(objRight + MORPH_GAP, (objRight + toolsLeft) / 2 - MORPH_W / 2);
+  const top = CY - (MORPH_BOX_H + MORPH_GAP + opts.offsetHeight) / 2;
+  Object.assign(box.style, { left: `${left}px`, top: `${top}px` });
+  Object.assign(opts.style, { left: `${left}px`, top: `${top + MORPH_BOX_H + MORPH_GAP}px` });
+}
 function syncMorphBox() {
   const on = !panelEl.hidden && panelEl.dataset.key === 'mode' && P.mode === 'morph';
   const box = $('dropB');
@@ -1401,40 +1544,44 @@ function syncMorphBox() {
   const opts = $('morphOpts');
   if (on) { opts.hidden = false; requestAnimationFrame(() => opts.classList.add('shown')); } else opts.classList.remove('shown');
   for (const c of opts.querySelectorAll('.chip')) c.setAttribute('aria-pressed', P[c.dataset.opt]);
-  const interf = opts.querySelector('[data-opt="interference"]');
-  interf.disabled = noisy() || P.morph_front;
-  interf.title = noisy() ? `Interference readout with ${P.backend} noise takes minutes per frame on the web: noiseless backend only (or the desktop app)`
-    : P.morph_front ? 'Interference readout: turn the front off first (the front turns the basis sweep)'
-    : 'Read by turning selector qubits from A (0) to B (1), instead of the basis sweep';
-  const front = opts.querySelector('[data-opt="morph_front"]');
-  front.disabled = P.interference || P.payload === 'spectral';
-  front.title = P.interference ? 'Front: basis sweep only; turn interference readout off first'
-    : P.payload === 'spectral' ? 'Front: not with the spectral load (its qubits hold modes of the whole surface, not patches)'
-    : 'Each data qubit turns at its own t, by its distance over the surface from a source: B spreads over A patch by patch';
+  // a chip that can't be used now stays greyed and says why on hover (bottom right, like the
+  // tools); one that can keeps its description
+  const setChip = (c, reason, about) => {
+    c.setAttribute('aria-disabled', !!reason);
+    if (reason) { c.dataset.tip = reason; c.removeAttribute('title'); } else { delete c.dataset.tip; c.title = about; }
+  };
+  setChip(opts.querySelector('[data-opt="interference"]'),
+    noisy() ? `Interference readout with ${P.backend} noise takes minutes per frame on the web: noiseless backend only (or the desktop app)`
+      : P.morph_front ? 'Interference readout: turn the front off first (the front turns the basis sweep)' : '',
+    'Read by turning selector qubits from A (0) to B (1), instead of the basis sweep');
+  setChip(opts.querySelector('[data-opt="morph_front"]'),
+    P.interference ? 'Front: basis sweep only; turn interference readout off first'
+      : P.payload === 'spectral' ? 'Front: not with the spectral load (its qubits hold modes of the whole surface, not patches)' : '',
+    'Each data qubit turns at its own t, by its distance over the surface from a source: B spreads over A patch by patch');
   $('frontRow').hidden = !P.morph_front;
   $('front_width').value = P.front_width;
   $('front_width').nextElementSibling.textContent = P.front_width.toFixed(2);
   $('srcAuto').setAttribute('aria-pressed', P.front_source == null && !S.picking);
   $('srcPick').setAttribute('aria-pressed', S.picking || P.front_source != null);
-  $('srcPick').textContent = S.picking ? 'click a vertex…' : P.front_source != null ? `source: vertex ${P.front_source}` : 'pick source';
+  $('srcPick').textContent = S.picking ? 'Click a vertex…' : P.front_source != null ? `Source: vertex ${P.front_source}` : 'Pick source';
   if (!P.morph_front && S.picking) { S.picking = false; app.classList.remove('picking'); }
   placeSource();
-  const aDirs = opts.querySelector('[data-opt="a_dirs"]');
-  aDirs.disabled = P.payload !== 'radial';
-  aDirs.title = P.payload === 'radial' ? "Radial load: keep A's directions; only the radii morph" : "A's directions only: radial load only";
+  setChip(opts.querySelector('[data-opt="a_dirs"]'), P.payload === 'radial' ? '' : "A's directions only: radial load only",
+    "Radial load: keep A's directions; only the radii morph");
   $('morph_t').value = P.morph_t;
   $('morph_t').nextElementSibling.textContent = P.morph_t.toFixed(2);
   $('morphNote').textContent = (P.interference ? 'Interference: t turns the selector qubits from A (0) to B (1).'
     : P.morph_front ? 'Front: each qubit turns from A to B at its own t, by its distance from the source.'
     : 'Basis sweep: t turns the readout from Z (A) to X (B).')
-    + (P.hold_t ? ` Every frame reads at t = ${P.morph_t.toFixed(2)}.` : ` Frames run t 0 → 1; one ▶ reads at t = ${P.morph_t.toFixed(2)}.`);
-  $('dropBText').textContent = bLabel() ? `B: ${bLabel()} ✓ — press ▶ to morph (drop to replace)` : 'drop second mesh (.obj)';
+    + (P.hold_t ? ` Every frame reads at t = ${P.morph_t.toFixed(2)}.` : ` Frames run t 0 → 1; Run once reads at t = ${P.morph_t.toFixed(2)}.`);
+  $('dropBText').textContent = bLabel() ? `B: ${bLabel()} ✓ — press Run & play to morph (drop to replace)` : 'Drop second mesh (.obj)';
   for (const b of box.querySelectorAll('[data-shape-b]')) b.classList.toggle('on', !S.objTextB && b.dataset.shapeB === P.shapeB);
   syncShift();
+  placeMorphBox();
   layoutPanel();
 }
 for (const c of document.querySelectorAll('#morphOpts .chip')) {
-  c.addEventListener('click', () => { P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
+  c.addEventListener('click', () => { if (c.getAttribute('aria-disabled') === 'true') return; P[c.dataset.opt] = !P[c.dataset.opt]; syncMorphBox(); syncStale(); });
 }
 $('morph_t').addEventListener('input', () => { P.morph_t = +$('morph_t').value; syncMorphBox(); syncStale(); });
 $('front_width').addEventListener('input', () => { P.front_width = +$('front_width').value; syncMorphBox(); syncStale(); });
@@ -1452,7 +1599,7 @@ $('dropB').addEventListener('click', (e) => {
 $('fileB').addEventListener('change', async (e) => { if (e.target.files[0]) await loadFileB(e.target.files[0]); e.target.value = ''; });
 async function loadFileB(file) {
   S.objTextB = await file.text(); S.objNameB = file.name; P.shapeB = null;
-  status(`B: ${file.name} loaded. Press ▶ (frames) to morph ${objLabel()} → ${file.name}`);
+  status(`B: ${file.name} loaded. Press Run & play to morph ${objLabel()} → ${file.name}`);
   syncMorphBox(); syncStale();
 }
 
@@ -1485,7 +1632,7 @@ async function enterHome() {
   try {
     status(`Loading ${objLabel()}…`);
     await loadMesh();
-    status(`${objLabel()} ready. Press ▶ to encode and read it, or ${HOVER ? 'click' : 'tap'} it for settings.`);
+    status(`${objLabel()} ready. Press Run once to encode and read it, or ${HOVER ? 'click' : 'tap'} it for settings.`);
   } catch (err) { status(`⚠ ${err.message}`, true); } finally { S.loading = false; }
 }
 for (const b of document.querySelectorAll('[data-shape]')) b.addEventListener('click', () => chooseShape(b.dataset.shape));
@@ -1497,24 +1644,30 @@ $('logo').addEventListener('click', () => setScreen('landing'));
 // popover so it sits in the top layer, over an open dialog too.
 function showTip(el) {
   tipFor = el;
-  tipEl.textContent = el.dataset.tip;
-  // a setting's options (layer 3) show their label under the menu's title, top left,
-  // instead of beside the option
-  const inMenu = !!el.closest('#panel');
+  const tip = el.dataset.tip;
+  const greyed = el.getAttribute('aria-disabled') === 'true'; // its label is the reason it can't be used
+  const beside = !greyed && el.matches('.orb'); // a setting's option circle: the label sits to its left
+  // sentence case; beside a circle, a label breaks after a colon and before a bracketed aside
+  const text = tip[0].toUpperCase() + tip.slice(1);
+  tipEl.textContent = beside ? text.replace(': ', ':\n').replace(' (', '\n(') : text;
   const c = (el.getBoundingClientRect().left + el.getBoundingClientRect().right) / 2;
-  tipEl.style.textAlign = inMenu ? 'left' : c < innerWidth / 3 ? 'right' : c > (2 * innerWidth) / 3 ? 'left' : 'center'; // before measuring
+  tipEl.style.textAlign = beside || greyed ? 'right' : c < innerWidth / 3 ? 'right' : c > (2 * innerWidth) / 3 ? 'left' : 'center'; // before measuring
   if (!tipEl.matches(':popover-open')) tipEl.showPopover();
   const t = tipEl.getBoundingClientRect(), gap = 6;
+  const r = el.getBoundingClientRect();
+  const mid = (r.left + r.right) / 2, third = innerWidth / 3;
   let x0, y;
-  if (inMenu) {
-    const title = $('menuTitle').getBoundingClientRect();
-    [x0, y] = [title.left, title.bottom + 3 * gap];
+  if (greyed) { // why a control is greyed: always in the bottom-right corner (above any colour key there)
+    const cs = getComputedStyle(app), edge = parseFloat(cs.getPropertyValue('--edge')) || 24, bottom = parseFloat(cs.getPropertyValue('--bottom')) || 24;
+    const keys = [...document.querySelectorAll('.legend:not([hidden])')].map((l) => l.getBoundingClientRect().top);
+    x0 = innerWidth - edge - t.width;
+    y = (keys.length ? Math.min(...keys) - 2 * gap : innerHeight - bottom) - t.height;
+  } else if (beside) { // left of the circle, centred on its middle
+    [x0, y] = [r.left - 3 * gap - t.width, (r.top + r.bottom) / 2 - t.height / 2];
   } else {
-    const r = el.getBoundingClientRect();
     y = r.top - gap - t.height >= 4 ? r.top - gap - t.height : r.bottom + gap; // above, or below if no room
     // grow away from the middle of the window, where the object sits: a button on the
     // left lines the label up with its right edge, one on the right with its left edge
-    const mid = (r.left + r.right) / 2, third = innerWidth / 3;
     x0 = mid < third ? r.right - t.width : mid > 2 * third ? r.left : mid - t.width / 2;
   }
   const x = Math.min(Math.max(x0, 4), innerWidth - t.width - 4);
@@ -1530,11 +1683,6 @@ document.addEventListener('pointerdown', hideTip);
 document.documentElement.addEventListener('pointerleave', hideTip);
 addEventListener('blur', hideTip);
 $('help').addEventListener('click', () => $('helpDialog').showModal());
-// a click on the backdrop (outside the box) closes it
-$('helpDialog').addEventListener('click', (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.currentTarget.close();
-});
 
 let dragDepth = 0;
 addEventListener('dragenter', (e) => { if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return; e.preventDefault(); dragDepth++; app.classList.add('dragging'); $('dropOverlay').hidden = false; });
@@ -1542,7 +1690,7 @@ addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; app
 addEventListener('dragover', (e) => {
   e.preventDefault();
   $('dropB').classList.toggle('over', !!e.target.closest?.('#dropB'));
-  $('dropOverlay').querySelector('p').textContent = e.target.closest?.('#dropB') ? 'drop mesh B' : 'drop to load';
+  $('dropOverlay').querySelector('p').textContent = e.target.closest?.('#dropB') ? 'Drop mesh B' : 'Drop to load';
 });
 addEventListener('drop', async (e) => {
   e.preventDefault();
@@ -1596,35 +1744,52 @@ $('play').addEventListener('click', () => {
   if (S.playing && S.step + 1 >= S.seq.length) S.step = 0;
   syncPlay();
 });
+// the second run button says what a click will do: run the frames (none yet, or the
+// settings have changed since), or pause / play the frames already run
 function syncPlay() {
+  const fresh = S.run === runKey() && S.frames.length > 1;
   $('play').classList.toggle('playing', S.playing);
+  $('play').textContent = !fresh ? 'Run & play' : S.playing ? 'Pause' : 'Play';
+  $('play').setAttribute('aria-label', !fresh ? 'Run and play: run the frames, then play them' : S.playing ? 'Pause' : 'Play');
 }
 // the run button glows while the settings differ from the last run
-function syncStale() { $('run').classList.toggle('stale', !!S.mesh && S.run !== runKey()); }
+function syncStale() { $('run').classList.toggle('stale', !!S.mesh && S.run !== runKey()); syncPlay(); }
 
 // ---------- HUD and drawer
 // Noise simulation runs ~9× slower on the web function than on a laptop, so some work
 // cannot finish inside its 300 s limit (the server refuses it too: api/tessa.py too_slow).
 const CHIPS = ['phoenix', 'fez'];
 const noisy = () => P.backend !== 'noiseless';
+// A tool that can't run right now stays greyed but still shows, on hover, why not (its
+// reason as the hover label); a click on it does nothing.
+function setTool(id, reason) {
+  const b = $(id);
+  b.setAttribute('aria-disabled', !!reason);
+  if (reason) b.dataset.tip = reason; else delete b.dataset.tip;
+}
 function syncHud() {
   const morph = P.mode === 'morph', chip = CHIPS.includes(P.backend);
-  $('edges').disabled = S.busy || morph || !S.mesh || chip;
-  $('edges').title = morph ? 'Edge readouts compare against one fixed mesh: not in morph mode'
-    : chip ? `Edge readouts on the ${P.backend} chip take over a minute on the web: use noiseless or flat noise, or the desktop app` : '';
-  $('curves').disabled = S.busy || morph || !S.mesh || noisy();
-  $('curves').title = morph ? 'Curves compare against one fixed mesh: not in morph mode'
-    : noisy() ? `Curves with ${P.backend} noise take minutes on the web: switch backend to noiseless, or use the desktop app` : '';
-  $('why').disabled = S.busy || !S.mesh || (morph && !bLabel());
-  $('obj').disabled = !S.seq.length;
-  $('qmapOn').disabled = !S.data;
-  $('viewToggle').disabled = false;
+  const base = S.busy ? 'Busy: wait for the current run to finish' : !S.mesh ? 'Load an object first' : '';
+  setTool('edges', base || (morph ? 'Edge readouts compare against one fixed mesh: not in morph mode'
+    : chip ? `Edge readouts on the ${P.backend} chip take over a minute on the web: use noiseless or flat noise, or the desktop app` : ''));
+  setTool('curves', base || (morph ? 'Curves compare against one fixed mesh: not in morph mode'
+    : noisy() ? `Curves with ${P.backend} noise take minutes on the web: switch backend to noiseless, or use the desktop app` : ''));
+  setTool('why', base || (morph && !bLabel() ? 'Morph: add a second mesh first' : ''));
+  setTool('obj', S.seq.length ? '' : 'Run the object first, then download the result');
+  setTool('qmapOn', S.data ? '' : 'Run the object first to see its qubit map');
+  setTool('viewToggle', '');
 }
+// clicks on a tool that can't run are stopped before they reach it
+$('hud').addEventListener('click', (e) => {
+  if (e.target.closest('button[aria-disabled="true"]')) { e.stopImmediatePropagation(); e.preventDefault(); }
+}, true);
 $('why').onclick = why;
 $('curves').onclick = curves;
 $('edges').onclick = readEdges;
 $('obj').onclick = downloadObj;
-$('qmapOn').onclick = () => { qmapOn = !qmapOn; $('qmapOn').setAttribute('aria-pressed', qmapOn); setFocus(null); };
+function setMapOpen(on) { qmapOn = on; $('qmapOn').setAttribute('aria-pressed', on); setFocus(null); }
+$('qmapOn').onclick = () => setMapOpen(!qmapOn);
+$('qmapClose').addEventListener('click', () => setMapOpen(false));
 // The tools menu: closed behind its handle by default; the handle slides it in from the right.
 function setSide(open) {
   $('side').classList.toggle('open', open);
@@ -1639,7 +1804,16 @@ $('viewToggle').onclick = () => {
   const open = $('drawer').hidden;
   $('drawer').hidden = !open;
   $('viewToggle').setAttribute('aria-expanded', open);
+  placeDrawer();
 };
+// the View drawer sits just left of the tool pills (a 24px gap), clear of the object; on
+// small screens the stylesheet places it instead
+function placeDrawer() {
+  const d = $('drawer');
+  if (d.hidden) return;
+  if (compact) { d.style.right = ''; return; }
+  d.style.right = `${innerWidth - $('hud').getBoundingClientRect().left + 24}px`;
+}
 
 const DRAWER_RANGES = ['gain', 'between', 'fps', 'headroom'];
 function syncDrawer() {
@@ -1696,7 +1870,7 @@ function frame(now) {
 }
 
 // touch screens have no hover: say "tap" instead
-if (!HOVER) $('hint').textContent = 'tap for settings';
+if (!HOVER) $('hint').textContent = 'Tap for settings';
 
 window.tessa3d = { state: S, settings: P }; // read-only handle for debugging in the console
 fitStage();
