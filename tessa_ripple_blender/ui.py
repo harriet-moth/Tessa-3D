@@ -51,18 +51,23 @@ class TESSA_PT_encoding(_Tessa, bpy.types.Panel):
     def draw(self, context):
         s, col = context.scene.tessa, self.layout.column()
         col.use_property_split = True
-        col.prop(s, "mode")
+        sub = col.column()
+        sub.enabled = s.payload != "spherical"  # spherical fills θ and φ itself: Mode θ only
+        sub.prop(s, "mode")
         col.prop(s, "payload")
-        if s.payload == "spherical" and s.mode != "theta":
-            col.label(text="Spherical fills θ and φ itself: use Mode θ (Z)", icon="ERROR")
+        if s.payload == "spherical":
+            col.label(text="Spherical fills θ and φ itself: Mode θ (Z) only", icon="INFO")
         col.prop(s, "layout")
-        if props.reads_one_field(s):
-            col.prop(s, "readout")
+        sub = col.column()
+        sub.enabled = props.reads_one_field(s)
+        sub.prop(s, "readout")
         col.prop(s, "clamp_theta")
-        if s.mode == "split":
-            col.prop(s, "clamp_phi")
-        if s.payload == "spectral":
-            col.prop(s, "spectral_k")
+        sub = col.column()
+        sub.enabled = s.mode == "split"
+        sub.prop(s, "clamp_phi")
+        sub = col.column()
+        sub.enabled = s.payload == "spectral"
+        sub.prop(s, "spectral_k")
         col.prop(s, "compression")
         col.prop(s, "quant_bits")
         col.prop(s, "headroom")
@@ -101,16 +106,18 @@ class TESSA_PT_morph(_Tessa, bpy.types.Panel):
         col.prop(s, "interference")
         col.prop(s, "morph_frames", expand=True)
         col.prop(s, "morph_t")
-        if s.payload == "radial":
-            col.prop(s, "a_dirs_only")
-        if not s.interference and s.payload != "spectral":
-            col.prop(s, "morph_front")
-            if s.morph_front:
-                col.prop(s, "front_width")
-                row = col.row(align=True)
-                row.label(text="Source: " + ("auto" if s.front_source < 0 else f"vertex {s.front_source}"))
-                row.operator("tessa.front_source", text="Selected", icon="VERTEXSEL").auto = False
-                row.operator("tessa.front_source", text="Auto").auto = True
+        sub = col.column()
+        sub.enabled = s.payload == "radial"
+        sub.prop(s, "a_dirs_only")
+        sub = col.column()
+        sub.enabled = not s.interference and s.payload != "spectral"  # the front needs the basis sweep
+        sub.prop(s, "morph_front")
+        if s.morph_front:
+            sub.prop(s, "front_width")
+            row = sub.row(align=True)
+            row.label(text="Source: " + ("auto" if s.front_source < 0 else f"vertex {s.front_source}"))
+            row.operator("tessa.front_source", text="Selected", icon="VERTEXSEL").auto = False
+            row.operator("tessa.front_source", text="Auto").auto = True
 
 
 class TESSA_PT_output(_Tessa, bpy.types.Panel):

@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 # Identity
 id = "tessa_ripple"
-version = "0.2.0"
+version = "0.3.0"
 name = "Tessa Ripple"
 tagline = "Encode mesh vertices with Tessa and read them back"
 maintainer = "Harriet Fisher"

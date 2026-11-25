@@ -44,6 +44,9 @@ COLOURS = [  # the desktop app's Colour modes that hold still (its front colour 
 ]
 
 
+MORPH_CLAMP = 0.15  # Clamp θ (fraction of π) a switch to Morph starts from
+
+
 def _update(part):
     """A property update that re-writes one part of the last result, without a readout.
 
@@ -58,6 +61,28 @@ def _update(part):
         from . import ops
         ops.reapply(context, part)
     return update
+
+
+def _payload_changed(self, context):
+    """Spherical fills θ and φ itself, so it forces Mode θ (the UI greys Mode out meanwhile).
+
+    Args:
+        self: The settings (``scene.tessa``).
+        context: Blender context.
+    """
+    if self.payload == "spherical" and self.mode != "theta":
+        self.mode = "theta"
+
+
+def _mode_changed(self, context):
+    """Morph starts with Clamp θ at ``MORPH_CLAMP`` (only while it is still at Tessa's default).
+
+    Args:
+        self: The settings (``scene.tessa``).
+        context: Blender context.
+    """
+    if self.mode == "morph" and self.clamp_theta == 0:
+        self.clamp_theta = MORPH_CLAMP
 
 
 def _get_fps(self) -> int:
@@ -111,9 +136,10 @@ class TessaSettings(bpy.types.PropertyGroup):
     """Every Tessa Ripple setting, stored on the scene as ``scene.tessa``."""
 
     # encoder (changing any re-encodes)
-    payload: EnumProperty(name="Payload", items=PAYLOADS, default="radial")
+    payload: EnumProperty(name="Payload", items=PAYLOADS, default="radial",
+                           update=_payload_changed)
     layout: EnumProperty(name="Layout", items=LAYOUTS, default="mesh")
-    mode: EnumProperty(name="Mode", items=MODES, default="theta")
+    mode: EnumProperty(name="Mode", items=MODES, default="theta", update=_mode_changed)
     clamp_theta: FloatProperty(name="Clamp θ (π)", min=0, max=0.45, default=0,
                                description="θ clamp as a fraction of π; 0 uses Tessa's default")
     clamp_phi: FloatProperty(name="Clamp φ (π)", min=0, max=0.45, default=0,
