@@ -20,6 +20,11 @@ dev = ["pytest>=8"]
 tessa-ripple = "tessa_ripple.app:main"
 tessa-ripple-hw = "tessa_ripple.hardware:main"
 
+[tool.uv]
+# fonttools 4.69.0 (a matplotlib dependency) was published with cp311 wheels only, no sdist:
+# it cannot install on Vercel's Python 3.12. Drop this once a fixed release is out.
+constraint-dependencies = ["fonttools!=4.69.0"]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
