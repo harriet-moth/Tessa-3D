@@ -84,6 +84,27 @@ def prepare():
     import qiskit  # noqa: F401
 
 
+def warm():
+    """Load everything a first run needs, so that run starts as fast as later ones.
+
+    Importing the core (which pulls in Tessa, scipy and qiskit-aer) and starting
+    Aer's first simulation cost several seconds, which otherwise land in the first run.
+    Call it from a worker thread *after* :func:`prepare` has run on the main thread.
+
+    Raises:
+        ImportError: A bundled wheel is missing (the caller ignores it: the first run
+        then reports the same error to the user).
+    """
+    from .core import animate, bridge, interfere  # noqa: F401  (the imports are the point)
+    from qiskit import QuantumCircuit
+    from qiskit_aer import AerSimulator
+
+    qc = QuantumCircuit(1)
+    qc.h(0)
+    qc.measure_all()
+    AerSimulator().run(qc, shots=1).result()
+
+
 def _digest(verts, faces) -> str:
     """Hash of a mesh's positions and faces, for the encoding cache.
 

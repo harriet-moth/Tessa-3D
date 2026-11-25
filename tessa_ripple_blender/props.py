@@ -28,6 +28,11 @@ BACKENDS = [
     ("fez", "ibm_fez", "Whole-chip calibration snapshot"),
 ]
 BACKEND_NAMES = {"flat_noise": "flat noise"}  # Blender identifier -> bridge.BACKENDS
+READOUTS = [  # how a Mode θ encoding is read (bridge.READOUTS)
+    ("z", "Z", "Reads θ in Z: one measurement setting"),
+    ("bloch", "Bloch", "Reads θ in Z, X and Y as a direction: noise shrinks it, not its angle"),
+    ("snap", "Snap", "64 points on the Bloch sphere, read back to the nearest: exact while noise allows"),
+]
 PLACEMENTS = [("quality", "Quality", "Best data qubits first"), ("graph", "Graph", "Tessa's own order")]
 DRR = [(m, m.replace("_", " ").title(), "") for m in
        ("none", "min_max", "percentile", "mean_std", "abs_max", "min_avg_max")]
@@ -53,6 +58,40 @@ def _update(part):
         from . import ops
         ops.reapply(context, part)
     return update
+
+
+def _get_fps(self) -> int:
+    """The scene's playback rate (the property reads it live, so it never goes stale).
+
+    Args:
+        self: The settings (``scene.tessa``).
+
+    Returns:
+        int: ``scene.render.fps``.
+    """
+    return self.id_data.render.fps
+
+
+def _set_fps(self, value: int):
+    """Set the scene's playback rate.
+
+    Args:
+        self: The settings (``scene.tessa``).
+        value: Frames per second.
+    """
+    self.id_data.render.fps = value
+
+
+def reads_one_field(s) -> bool:
+    """Whether the Readout setting applies: one θ field, not spherical.
+
+    Args:
+        s: The settings (``scene.tessa``).
+
+    Returns:
+        bool: True for Mode θ with a payload other than spherical.
+    """
+    return s.mode == "theta" and s.payload != "spherical"
 
 
 def _is_mesh(self, obj):
@@ -86,6 +125,8 @@ class TessaSettings(bpy.types.PropertyGroup):
                             description="Fractional padding on the value range")
     spectral_k: IntProperty(name="Spectral k", min=0, max=500, default=0,
                             description="Modes to encode; 0 picks the smallest k that meets the tolerance")
+    readout: EnumProperty(name="Readout", items=READOUTS, default="z",
+                          description="How Mode θ is read (needs Mode θ and a non-spherical payload)")
     # readout
     backend: EnumProperty(name="Backend", items=BACKENDS, default="noiseless")
     placement: EnumProperty(name="Placement", items=PLACEMENTS, default="quality")
@@ -126,6 +167,17 @@ class TessaSettings(bpy.types.PropertyGroup):
                             description="Timeline frames between successive readouts (blended linearly)")
     colour: EnumProperty(name="Colour", items=COLOURS, default="error", update=_update("colour"),
                          description="What the tessa_colour attribute shows")
+    loop: BoolProperty(name="Loop", default=False, update=_update("timeline"),
+                       description="Glide from the last readout back to the first (or to the original), "
+                                   "and end the timeline there so playback loops seamlessly")
+    from_original: BoolProperty(name="Start from original", default=False, update=_update("timeline"),
+                                description="Begin the timeline on the unmodified mesh, then glide to the "
+                                            "first readout")
+    ease: BoolProperty(name="Ease in-betweens", default=False, update=_update("timeline"),
+                       description="Ease in and out between readouts (as the web app) instead of "
+                                   "blending linearly")
+    fps: IntProperty(name="Speed (fps)", min=1, max=60, get=_get_fps, set=_set_fps,
+                     description="The scene's playback rate")
 
     def params(self) -> dict:
         """Keyword arguments for ``bridge.Params`` (as the desktop app's ``params``).
@@ -142,6 +194,7 @@ class TessaSettings(bpy.types.PropertyGroup):
             clamp=clamp(self.clamp_theta),
             clamp_b=clamp(self.clamp_theta if morph else self.clamp_phi),
             compression=self.compression, quant_bits=self.quant_bits or None, headroom=self.headroom,
+            readout=self.readout if reads_one_field(self) else "z",
             backend=BACKEND_NAMES.get(self.backend, self.backend), placement=self.placement,
             shared_topology=self.shared_topology, shots=2 ** self.shots_log2,
             noise_strength=self.noise_strength, seed=self.seed, morph_t=self.morph_t,

@@ -107,6 +107,28 @@ def tessa_keys(obj) -> list:
     return [kb for kb in sk.key_blocks if kb.name.startswith(KEY_PREFIX)] if sk else []
 
 
+def _key_fcurves(obj) -> list:
+    """The F-curves that animate Tessa's keys (other shape-key animation is left out).
+
+    Args:
+        obj: A mesh object.
+
+    Returns:
+        list[bpy.types.FCurve]: Empty when there is no such animation or the action
+        has an unexpected layout.
+    """
+    sk = obj.data.shape_keys
+    ad = sk.animation_data if sk else None
+    if not ad or not ad.action:
+        return []
+    try:
+        from bpy_extras import anim_utils
+        bag = anim_utils.action_get_channelbag_for_slot(ad.action, ad.action_slot)
+        return [fc for fc in bag.fcurves if fc.data_path.startswith(f'key_blocks["{KEY_PREFIX}')]
+    except Exception:  # unexpected action layout
+        return []
+
+
 def _drop_key_animation(obj):
     """Remove the F-curves that animate Tessa's keys (other shape-key animation stays).
 
@@ -150,7 +172,7 @@ def clear(obj):
     obj.data.update()
 
 
-def write_frames(obj, scene, result, gain: float, step: int, colour: str):
+def write_frames(obj, scene, result, gain: float, step: int, colour: str, **playback):
     """One shape key per readout, keyframed in turn, plus the per-vertex attributes.
 
     Args:
@@ -160,6 +182,7 @@ def write_frames(obj, scene, result, gain: float, step: int, colour: str):
         gain: See :func:`set_gain`.
         step: See :func:`set_timeline`.
         colour: See :func:`write_attributes`.
+        **playback: ``loop``, ``original`` and ``ease`` for :func:`set_timeline`.
     """
     clear(obj)
     if not obj.data.shape_keys:
@@ -167,7 +190,7 @@ def write_frames(obj, scene, result, gain: float, step: int, colour: str):
     for i in range(len(result["decoded"])):
         obj.shape_key_add(name=f"{KEY_PREFIX}{i:03d}", from_mix=False).slider_max = 1.0
     set_gain(obj, result, gain)
-    set_timeline(obj, scene, step)
+    set_timeline(obj, scene, step, **playback)
     write_attributes(obj.data, result, colour)
 
 
@@ -201,39 +224,63 @@ def set_gain(obj, result, gain: float):
     obj.data.update()
 
 
-def set_timeline(obj, scene, step: int):
+def set_timeline(obj, scene, step: int, loop: bool = False, original: bool = False, ease: bool = False):
     """Keyframe the Tessa keys ``step`` frames apart from the scene's start frame.
 
-    One key: its value is set to 1, without animation. Several: key i is 1 at frame
-    start + i * step and 0 at its neighbours' frames (the first and last hold before
-    and after the run), so the shape blends linearly from one readout to the next, and
-    the scene's end frame is set to the last readout so playback loops over exactly them.
+    One key: its value is set to 1, without animation. Several: key i is 1 at its
+    readout's frame and 0 at its neighbours' frames (the first and last hold before and
+    after the run), so the shape blends from one readout to the next.
+
+    ``original`` puts the unmodified mesh on the start frame, so readout 0 sits one step
+    later. ``loop`` adds one more step that glides from the last readout back to where
+    the run began (readout 0, or the original); the scene's end frame is then one frame
+    short of that, so playback wraps without holding a frame twice. Otherwise the end
+    frame is the last readout. ``ease`` eases in and out of every readout (sine) instead
+    of blending linearly; the two weights still sum to 1, so it is a true ease between
+    the two shapes.
 
     Args:
         obj: A mesh object with Tessa keys.
         scene: The scene whose frame range is set.
         step: Timeline frames between successive readouts.
+        loop: Glide back to the start after the last readout.
+        original: Start from the unmodified mesh.
+        ease: Ease between readouts instead of blending linearly.
     """
     _drop_key_animation(obj)
     keys = tessa_keys(obj)
     if len(keys) == 1:
         keys[0].value = 1.0
         return
-    start = scene.frame_start
+    n, start = len(keys), scene.frame_start
+    first = start + (step if original else 0)  # readout 0's frame
+    after = first + n * step                   # the frame the loop returns to the start on
     prefs = bpy.context.preferences.edit
     old = prefs.keyframe_new_interpolation_type
     prefs.keyframe_new_interpolation_type = "LINEAR"
     try:
         for i, kb in enumerate(keys):
-            f = start + i * step
-            for frame, value in ((f - step, 0.0), (f, 1.0), (f + step, 0.0)):
-                if (frame < f and i == 0) or (frame > f and i == len(keys) - 1):
-                    continue
+            f = first + i * step
+            frames = [(f, 1.0)]
+            if i > 0 or original:
+                frames.insert(0, (f - step, 0.0))
+            if i < n - 1 or loop:
+                frames.append((f + step, 0.0))
+            if loop and i == 0 and not original:  # back to readout 0, in the last step only
+                if after - step != f + step:
+                    frames.append((after - step, 0.0))
+                frames.append((after, 1.0))
+            for frame, value in frames:
                 kb.value = value
                 kb.keyframe_insert("value", frame=frame)
     finally:
         prefs.keyframe_new_interpolation_type = old
-    scene.frame_end = start + (len(keys) - 1) * step
+    if ease:
+        for fc in _key_fcurves(obj):
+            for kp in fc.keyframe_points:
+                kp.interpolation, kp.easing = "SINE", "EASE_IN_OUT"
+            fc.update()
+    scene.frame_end = after - 1 if loop else first + (n - 1) * step
 
 
 def _ramp(x, stops) -> np.ndarray:

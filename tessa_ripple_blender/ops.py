@@ -11,7 +11,7 @@ from bpy.props import BoolProperty, StringProperty
 
 from . import engine, mesh_io
 
-STATE = {"running": False, "text": "", "frac": 0.0, "cancel": False, "summary": []}
+STATE = {"running": False, "text": "", "frac": 0.0, "cancel": False, "summary": [], "sec_per_readout": None}
 RESULTS = {}  # object name -> last engine result (to re-apply gain / spacing / colour, and export)
 LARGE = 2000  # vertices: above this, warn that a run will be slow
 
@@ -36,13 +36,29 @@ def frames_hint(s) -> str:
         s: The settings (``scene.tessa``).
 
     Returns:
-        str: One line.
+        str: One line, with a time estimate once a run has measured the seconds per
+        readout (a guide only: it holds for the settings of that run).
     """
     if s.mode == "morph" and s.morph_frames == "sweep":
-        return f"A → B over {s.frames} frames"
-    if s.mode == "morph":
-        return f"{s.frames} frames of readout noise at t = {s.morph_t:.2f}"
-    return f"{s.frames} frames of shot-to-shot readout variance"
+        text = f"A → B over {s.frames} frames"
+    elif s.mode == "morph":
+        text = f"{s.frames} frames of readout noise at t = {s.morph_t:.2f}"
+    else:
+        text = f"{s.frames} frames of shot-to-shot readout variance"
+    per = STATE["sec_per_readout"]
+    return text if per is None else f"{text} (≈ {max(1, round(per * s.frames))} s, from the last run)"
+
+
+def playback(s) -> dict:
+    """The timeline options of ``mesh_io.set_timeline``.
+
+    Args:
+        s: The settings (``scene.tessa``).
+
+    Returns:
+        dict: ``loop``, ``original`` and ``ease`` as keyword arguments.
+    """
+    return dict(loop=s.loop, original=s.from_original, ease=s.ease)
 
 
 def make_job(context, frames: int) -> engine.Job:
@@ -99,7 +115,7 @@ def summary(result, scene=None, step: int = 1) -> list[str]:
     if n > 1 and scene is not None:
         start = scene.frame_start
         what = "A → B" if result["ts"] and result["ts"][0] != result["ts"][-1] else "readout noise"
-        lines.append(f"Timeline {start}–{start + (n - 1) * step}: {what} (Space to play)")
+        lines.append(f"Timeline {start}–{scene.frame_end}: {what} (Space to play)")
     if result["match"]:
         m = result["match"]
         lines.append(f"B matched by {m['method']}, coverage {100 * m['coverage']:.0f} %")
@@ -133,11 +149,11 @@ def reapply(context, part: str):
         RESULTS.pop(obj.name)
         return
     if not mesh_io.fits(obj, result):
-        mesh_io.write_frames(obj, scene, result, s.gain, s.frame_step, s.colour)
+        mesh_io.write_frames(obj, scene, result, s.gain, s.frame_step, s.colour, **playback(s))
     elif part == "gain":
         mesh_io.set_gain(obj, result, s.gain)
     elif part == "timeline":
-        mesh_io.set_timeline(obj, scene, s.frame_step)
+        mesh_io.set_timeline(obj, scene, s.frame_step, **playback(s))
     else:
         mesh_io.write_attributes(obj.data, result, s.colour)
     STATE["summary"] = summary(result, scene, s.frame_step)
@@ -269,7 +285,9 @@ class _Run:
             self.report({"ERROR"}, "The mesh changed during the run; run again")
             return {"CANCELLED"}
         RESULTS[obj.name] = result
-        mesh_io.write_frames(obj, context.scene, result, s.gain, s.frame_step, s.colour)
+        mesh_io.write_frames(obj, context.scene, result, s.gain, s.frame_step, s.colour, **playback(s))
+        if len(result["decoded"]) > 1:  # one readout also pays for the encode: no guide to many
+            STATE["sec_per_readout"] = result["seconds"] / len(result["decoded"])
         if len(result["decoded"]) > 1:
             context.scene.frame_set(context.scene.frame_start)
         STATE["summary"] = summary(result, context.scene, s.frame_step)

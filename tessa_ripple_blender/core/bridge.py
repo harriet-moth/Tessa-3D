@@ -28,7 +28,7 @@ from ..tessa import (DYNAMIC_RANGE_METHODS, Lattice, backend_rates, build_averag
                    decode_from_counts, encode, encode_symbols, graph_from_coupling, measurement_circuits,
                    prepare_field, probe_qubits, rectangular_layout, restore_field, slot_order,
                    square_lattice_edges, symbols_from_counts, transpile_to_backend)
-from ..tessa.backends import counts_of, device_of
+from ..tessa.backends import device_of
 from ..tessa.backends.aer import _TWO_QUBIT_GATES, _aer_sampler, topology_device
 from ..tessa.codec import _check_traceable, _measured, _normalise, _trace_halo
 from ..tessa.core.mode import DEFAULT_CLAMP, get_mode
@@ -1712,33 +1712,79 @@ def values_from_counts(e: Encoded, counts) -> np.ndarray:
     return _join(e, a, b)
 
 
-def read_hardware(e: Encoded, sampler, shots: int, device=None, optimization_level: int = 1):
-    """One readout on a device: every :func:`hardware_circuits` circuit transpiled onto it
-    with the identity layout (Tessa's ``transpile_to_backend``: no SWAPs), all in one
-    job, decoded with :func:`values_from_counts`.
+HARDWARE_SHOTS = 100_000  # most shots per circuit in one hardware job (as Tessa's pipeline)
+
+
+def submit_hardware(e: Encoded, sampler, shots: int, frames: int = 1, device=None, optimization_level: int = 1):
+    """Submit one job of every :func:`hardware_circuits` circuit, transpiled onto the
+    device with the identity layout (Tessa's ``transpile_to_backend``: no SWAPs), each
+    sampled ``frames`` × ``shots`` times: :func:`hardware_frames` cuts it into frames.
 
     Nothing here decides to spend hardware time: the caller passes the sampler (e.g.
-    ``tessa.ibm_sampler``), and running it submits the job.
+    ``tessa.ibm_sampler``), and this call submits the job.
 
     Args:
         e: The encoding (a chip graph for a chip; a lattice runs on a simulator).
         sampler: A SamplerV2-like ``run(circuits, shots=...)``.
-        shots: Shots per circuit.
+        shots: Shots per circuit per frame.
+        frames: Frames (frames × shots at most HARDWARE_SHOTS).
         device: The backend to transpile for; None asks ``sampler`` (Tessa's ``device_of``).
         optimization_level: Transpiler optimisation.
 
     Returns:
-        tuple: ``(raw, counts, reports)``: (N*comps,) values, per run ``{basis: counts}``,
-        and Tessa's transpile report per circuit (depths, SWAPs, two-qubit gates).
+        tuple: ``(job, reports)``: the submitted job and Tessa's transpile report per
+        circuit (depths, SWAPs, two-qubit gates).
+
+    Raises:
+        ValueError: frames × shots over HARDWARE_SHOTS.
+    """
+    if frames * shots > HARDWARE_SHOTS:
+        raise ValueError(f"{frames} frames × {shots:,} shots is over {HARDWARE_SHOTS:,} shots per circuit")
+    target = sampler if device is None else device
+    transpiled, reports = zip(*(transpile_to_backend(qc, target, optimization_level)
+                                for _, _, qc in hardware_circuits(e)))
+    return sampler.run(list(transpiled), shots=shots * frames), list(reports)
+
+
+def hardware_counts(e: Encoded, result, shots: int, frames: int = 1) -> list:
+    """A finished job's counts, per frame and run: ``[frame][run][basis] -> counts``.
+
+    Args:
+        e: The encoding the job was submitted for (:func:`submit_hardware`).
+        result: The job's SamplerV2 result, one pub per :func:`hardware_circuits` circuit.
+        shots: Shots per frame.
+        frames: Frames in the job.
+
+    Returns:
+        list: Per frame, per run, ``{basis: counts}`` (:func:`values_from_counts`'s input).
     """
     jobs = hardware_circuits(e)
-    target = sampler if device is None else device
-    transpiled, reports = zip(*(transpile_to_backend(qc, target, optimization_level) for _, _, qc in jobs))
-    result = sampler.run(list(transpiled), shots=shots).result()
-    counts = [{} for _ in range(e.runs)]
-    for i, (k, basis, _) in enumerate(jobs):
-        counts[k][basis] = counts_of(result, i)
-    return values_from_counts(e, counts), counts, list(reports)
+    per_pub = [_frame_counts(result[i].data.meas, shots, frames) for i in range(len(jobs))]
+    out = [[{} for _ in range(e.runs)] for _ in range(frames)]
+    for (k, basis, _), by_frame in zip(jobs, per_pub, strict=True):
+        for f in range(frames):
+            out[f][k][basis] = by_frame[f]
+    return out
+
+
+def read_hardware(e: Encoded, sampler, shots: int, device=None, optimization_level: int = 1):
+    """One readout on a device, waited for: :func:`submit_hardware`, then
+    :func:`values_from_counts` on its counts.
+
+    Args:
+        e: The encoding.
+        sampler: A SamplerV2-like ``run(circuits, shots=...)``.
+        shots: Shots per circuit.
+        device: The backend to transpile for; None asks ``sampler``.
+        optimization_level: Transpiler optimisation.
+
+    Returns:
+        tuple: ``(raw, counts, reports)``: (N*comps,) values, per run ``{basis: counts}``,
+        and Tessa's transpile report per circuit.
+    """
+    job, reports = submit_hardware(e, sampler, shots, 1, device, optimization_level)
+    counts = hardware_counts(e, job.result(), shots)[0]
+    return values_from_counts(e, counts), counts, reports
 
 
 def _alpha_grid(e: Encoded, alpha) -> np.ndarray:

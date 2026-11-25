@@ -2,7 +2,7 @@
 
 import bpy
 
-from . import ops
+from . import ops, props
 
 
 class _Tessa:
@@ -23,7 +23,8 @@ class TESSA_PT_main(_Tessa, bpy.types.Panel):
         n = len(obj.data.vertices)
         col.label(text=f"A: {obj.name}  ({n} vertices)", icon="MESH_DATA")
         if n > ops.LARGE:
-            col.label(text="Large mesh: expect many circuits per readout", icon="ERROR")
+            col.label(text="Large mesh: many circuits per readout. Apply a Decimate", icon="ERROR")
+            col.label(text="modifier first to speed it up", icon="BLANK1")
         if context.mode != "OBJECT":
             col.label(text="Switch to Object Mode to run", icon="INFO")
         s = context.scene.tessa
@@ -55,6 +56,8 @@ class TESSA_PT_encoding(_Tessa, bpy.types.Panel):
         if s.payload == "spherical" and s.mode != "theta":
             col.label(text="Spherical fills θ and φ itself: use Mode θ (Z)", icon="ERROR")
         col.prop(s, "layout")
+        if props.reads_one_field(s):
+            col.prop(s, "readout")
         col.prop(s, "clamp_theta")
         if s.mode == "split":
             col.prop(s, "clamp_phi")
@@ -119,6 +122,10 @@ class TESSA_PT_output(_Tessa, bpy.types.Panel):
         col.use_property_split = True
         col.prop(s, "gain")
         col.prop(s, "frame_step")
+        col.prop(s, "fps")
+        col.prop(s, "loop")
+        col.prop(s, "from_original")
+        col.prop(s, "ease")
         col.prop(s, "colour")
         if s.colour == "qubit" and s.payload == "spectral":
             col.label(text="Spectral: qubits hold modes, not vertices", icon="INFO")

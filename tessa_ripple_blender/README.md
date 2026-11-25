@@ -18,7 +18,17 @@ View3D > N > **Tessa**. Select a mesh (A) in Object Mode, choose settings, then:
   - Morph with *Noise at t*, or any other mode: every frame is a fresh readout
     (seed, seed + 1, …), so the mesh moves only by the shot-to-shot readout variance.
 
-Esc (or Cancel) stops a run after the current readout.
+Esc (or Cancel) stops a run after the current readout. Make frames shows an estimate
+of its time from the last multi-frame run, and the first run after Blender starts is as
+fast as later ones: qiskit and the core load in the background a moment after start-up.
+
+- **Readout** (Mode θ, non-spherical payloads): *Z*, *Bloch* or *Snap*, as the desktop app.
+- **Output > Loop / Start from original / Ease in-betweens / Speed (fps)**: playback, as the
+  web app's drawer. *Start from original* puts the unmodified mesh on the start frame;
+  *Loop* adds a final glide back to the start and ends the timeline one frame before it, so
+  playback wraps without holding a frame twice; *Ease* eases in and out of every readout
+  instead of blending linearly; *Speed* is the scene's frame rate. All re-apply to the
+  last result without a new readout.
 
 - **Gain** 1 shows the true decoded positions; above 1 exaggerates the deviation.
   Gain, timeline spacing and colour re-apply to the last result without a new readout,
